@@ -7,6 +7,8 @@ bin="$1"
 port=3799
 home=$(mktemp -d)
 printf '{:port %s :run-at nil}\n' "$port" > "$home/config.edn"
+# the plugins packaged next to the binary, which have to load in it
+[ -d plugins ] && cp -r plugins "$home/plugins"
 # a Windows binary reads a Windows path
 if command -v cygpath >/dev/null; then home_arg=$(cygpath -w "$home"); else home_arg="$home"; fi
 
@@ -25,4 +27,11 @@ done
 kill "$pid" 2>/dev/null
 command -v taskkill >/dev/null && taskkill //F //IM "$(basename "$bin")" >/dev/null 2>&1
 cat smoke.log
-if [ "$ok" = 1 ]; then echo "smoke: served a page"; else echo "smoke: no page after 60s"; exit 1; fi
+if [ "$ok" != 1 ]; then echo "smoke: no page after 60s"; exit 1; fi
+echo "smoke: served a page"
+for p in plugins/*/; do
+  [ -d "$p" ] || continue
+  p=$(basename "$p")
+  grep -q "loaded plugin $p" smoke.log || { echo "smoke: plugin $p didn't load"; exit 1; }
+  echo "smoke: loaded plugin $p"
+done

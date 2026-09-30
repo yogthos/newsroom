@@ -24,7 +24,7 @@
   Nothing is needed under :plugins, though reddit turns some user agents
   away, so one can be set there:
 
-    :plugins {:reddit {:user-agent \"newsroom/0.1 (by /u/you)\"}}"
+    :plugins {:reddit {:user-agent \"newsroom/0.2 (by /u/you)\"}}"
   (:require [clojure.string :as str]
             [newsroom.plugin :as plugin]))
 

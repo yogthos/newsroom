@@ -73,6 +73,7 @@ jobs:
           exe=newsroom
           cp "$exe" README.md "$name/"
           cp examples/config.edn "$name/config.example.edn"
+          cp -r plugins "$name/plugins"
           echo "PKG_DIR=$name" >> "$GITHUB_ENV"
           echo "PKG_EXE=$exe" >> "$GITHUB_ENV"
 
@@ -99,7 +100,7 @@ jobs:
             --verify-tag \
             --notes "Standalone binaries for macOS (arm64) and Linux (x86_64).
 
-          Unpack the archive and run \`newsroom\`, then open http://127.0.0.1:3000. The first run writes its config to \`~/.config/newsroom\`, and \`config.example.edn\` shows every option. The default model is DeepSeek, which reads \`DEEPSEEK_API_KEY\`.
+          Unpack the archive and run \`newsroom\`, then open http://127.0.0.1:3000. The first run writes its config to \`~/.config/newsroom\`, and \`config.example.edn\` shows every option. The plugins in \`plugins/\` add sources newsroom doesn't read itself; copy a plugin's folder to \`~/.config/newsroom/plugins/\` to use it. The default model is DeepSeek, which reads \`DEEPSEEK_API_KEY\`.
 
           Runtime libraries: Linux needs sqlite3, libxml2 and OpenSSL 3, which most distributions have. macOS needs OpenSSL 3 (\`brew install openssl@3\`).
 
