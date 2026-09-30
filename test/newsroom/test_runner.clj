@@ -7,6 +7,7 @@
             [newsroom.markdown-test]
             [newsroom.news-spec]
             [newsroom.pipeline-test]
+            [newsroom.plugin-test]
             [newsroom.sources-test]
             [newsroom.store-test]
             [newsroom.ui-test]))
@@ -19,6 +20,7 @@
     newsroom.markdown-test
     newsroom.store-test
     newsroom.pipeline-test
+    newsroom.plugin-test
     newsroom.sources-test
     newsroom.ui-test])
 

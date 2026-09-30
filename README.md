@@ -22,9 +22,39 @@ The model needs an API key. DeepSeek is the default and reads `DEEPSEEK_API_KEY`
 
 ## Making it yours
 
-Everything you'd want to change lives in `~/.config/newsroom`. The sources, schedule and model are all in `config.edn`, while `prompt.md` holds the instructions the model gets, so that's the file to edit when you want a different kind of briefing. A source can be an RSS feed or a web search, and a site with no feed can still be read by scraping the story links off its front page. [`examples/config.edn`](examples/config.edn) walks through every kind of source and every model provider. To follow a source newsroom doesn't know about, drop a `.clj` file into `plugins/` that teaches it a new source type.
+Everything you'd want to change lives in `~/.config/newsroom`. The sources, schedule and model are all in `config.edn`, while `prompt.md` holds the instructions the model gets, so that's the file to edit when you want a different kind of briefing. A source can be an RSS feed or a web search, and a site with no feed can still be read by scraping the story links off its front page. [`examples/config.edn`](examples/config.edn) walks through every kind of source and every model provider. To follow a source newsroom doesn't know about, like a Slack or Telegram channel, add a plugin.
 
 Each day goes into a sqlite database and gets written out as a markdown file in `briefings/` too. Only the last 100 days are kept, which stops a long-running server from slowly eating the disk, and you can set `:keep-days` to -1 if you'd rather keep everything.
+
+## Plugins
+
+A plugin is a folder in `~/.config/newsroom/plugins/` holding Clojure namespaces named after it, so `plugins/slack/core.clj` is `slack.core`. Every namespace in the folder gets loaded when newsroom starts, and a plugin that fails to load is reported and skipped. Plugins are written against `newsroom.plugin`: `defsource` adds a source type, `config` returns the plugin's settings, `get-json` and `post-json` talk to JSON APIs, and `item` builds the items a source hands back. `jolt.http-client` and `clojure.data.json` can be required directly for anything else.
+
+The settings live in `config.edn` under `:plugins`, keyed by the folder name, and a `"${VAR}"` string there is read from the environment. Settings that change from one source to the next, like which channel to read, go on the source itself, since the plugin gets the whole source map.
+
+```clojure
+:plugins {:slack {:token "${SLACK_BOT_TOKEN}" :workspace "acme"}}
+:sources [{:type :slack :name "Slack #news" :channel "C0123456789"}]
+```
+
+A source type is a function from the source map and the run's context to a list of items:
+
+```clojure
+(ns slack.core
+  (:require [newsroom.plugin :as plugin]))
+
+(plugin/defsource :slack [source ctx]
+  (let [{:keys [token]} (plugin/config :slack)]
+    (plugin/emit! ctx (str "Reading " (plugin/source-name source)))
+    (for [m (:messages (plugin/get-json "https://slack.com/api/conversations.history"
+                                        {:headers {"Authorization" (str "Bearer " token)}
+                                         :query-params {"channel" (:channel source)}}))]
+      (plugin/item source {:title (:text m) :url "..." :summary (:text m)}))))
+```
+
+`emit!` shows what the plugin is doing in the sidebar while a run goes. A plugin small enough for one file can also be a single `plugins/<name>.clj`.
+
+[`examples/plugins/slack`](examples/plugins/slack/core.clj) is the full version of that plugin, and a reasonable place to start writing your own.
 
 ## Tests
 

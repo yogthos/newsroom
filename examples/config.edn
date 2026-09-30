@@ -75,10 +75,18 @@
              {:name "CCTV" :query "site:english.cctv.com news {{date}}"}]}
 
   ;; --- a plugin -------------------------------------------------------------
-  ;; A source type of your own, from a file in plugins/. The whole map is
-  ;; handed to the plugin, so it can take any keys it likes.
-  ;; {:type :telegram :name "Some channel" :channel "@example"}
+  ;; A source type of your own, from a plugin in plugins/. The whole map is
+  ;; handed to the plugin, so it can take any keys it likes. This one is
+  ;; examples/plugins/slack, copied to plugins/slack.
+  ;; {:type :slack :name "Slack #news" :channel "C0123456789"}
   ]
+
+ ;; --- plugin settings ------------------------------------------------------
+ ;; Each plugin's settings, under the name of its folder in plugins/. A
+ ;; string written as "${VAR}" is read from the environment.
+ :plugins
+ {:slack {:token "${SLACK_BOT_TOKEN}"
+          :workspace "acme"}}
 
  ;; --- models ---------------------------------------------------------------
  ;; Endpoints are declared under :providers by alias. An alias named after a

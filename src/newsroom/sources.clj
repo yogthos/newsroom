@@ -8,13 +8,8 @@
   An adapter reports what it is doing with `emit!`, which the page shows
   live while a run goes.
 
-  :rss, :scrape and :web-search are built in. A plugin adds a type:
-
-    (ns my.telegram
-      (:require [newsroom.sources :as sources]))
-
-    (defmethod sources/fetch-items :telegram [source {:keys [day]}]
-      ...)"
+  :rss, :scrape and :web-search are built in. A plugin adds a type with
+  newsroom.plugin/defsource."
   (:require [jolt.time]
             [clojure.data.json :as json]
             [clojure.string :as str]

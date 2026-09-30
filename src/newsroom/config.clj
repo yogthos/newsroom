@@ -3,7 +3,8 @@
 
     config.edn        sources, schedule, providers (see resources/defaults)
     prompt.md         the analysis prompt, {{date}} and {{sources}} filled in
-    plugins/*.clj     loaded at startup; a plugin adds a source type
+    plugins/          loaded at startup; a plugin adds source types, see
+                      newsroom.plugin
     newsroom.sqlite3  the gathered items and the briefings, by day
 
   The first run writes the defaults, so there is always a file to edit."
@@ -53,20 +54,3 @@
 
 (defn db-file [config]
   (or (:db config) (path "newsroom.sqlite3")))
-
-(defn load-plugins!
-  "Load every plugins/*.clj, in name order. A plugin that fails to load is
-  reported and skipped rather than keeping the server down."
-  []
-  (let [dir (io/file (path "plugins"))
-        files (when (.exists dir)
-                (sort-by #(.getName %)
-                         (filter #(str/ends-with? (.getName %) ".clj") (.listFiles dir))))]
-    (doall
-     (for [f files]
-       (try (load-file (.getPath f))
-            {:plugin (.getName f) :ok true}
-            (catch Throwable e
-              (binding [*out* *err*]
-                (println "plugin" (.getName f) "failed to load:" (ex-message e)))
-              {:plugin (.getName f) :ok false :error (ex-message e)}))))))

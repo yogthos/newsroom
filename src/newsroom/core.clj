@@ -15,6 +15,7 @@
             [newsroom.config :as config]
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
+            [newsroom.plugin :as plugin]
             [newsroom.store :as store]
             [newsroom.ui :as ui]))
 
@@ -85,7 +86,7 @@
   []
   (config/ensure-home!)
   (let [cfg (config/load-config)
-        plugins (config/load-plugins!)
+        plugins (plugin/load-all! (config/path "plugins") cfg)
         st (store/open (config/db-file cfg))
         _ (reset! system {:config cfg :store st})
         pruned (pipeline/prune-days! (ctx))
