@@ -17,9 +17,9 @@
 
     :plugins {:slack {:token \"${SLACK_BOT_TOKEN}\" :workspace \"acme\"}}
 
-  A plugin adds source types with `defsource`. The whole source map from
-  :sources is handed over too, so settings that differ per source, like which
-  channel to read, go there:
+  A plugin adds source types with `defsource`, and can name their sources
+  with `defname`. The whole source map from :sources is handed over too, so
+  settings that differ per source, like which channel to read, go there:
 
     (ns slack.core
       (:require [newsroom.plugin :as plugin]))
@@ -82,6 +82,13 @@
   [type [source ctx] & body]
   `(defmethod sources/fetch-items ~type [~source ~ctx] ~@body))
 
+(defmacro defname
+  "Say what a source of `type` is called when it has no :name, so that two
+  sources of the type don't share a name. Without it, a source goes by its
+  :url, else its type."
+  [type [source] & body]
+  `(defmethod sources/default-name ~type [~source] ~@body))
+
 (def emit!
   "(emit! ctx text) or (emit! ctx text {:url ... :level :error}): show what the
   source is doing on the page while a run goes."
@@ -91,6 +98,15 @@
   "The body of a URL as text, (fetch-text url {:timeout-ms :user-agent});
   throws on a status other than 2xx."
   sources/fetch-text)
+
+(def parse-xml
+  "An XML document's text, an RSS or Atom feed say, as a clojure.xml tree."
+  sources/parse-xml)
+
+(def page-meta
+  "What an article page's HTML says about itself in its meta tags:
+  {:title :description :published}, each nil when the page doesn't say."
+  feed/page-meta)
 
 (def source-name
   "The name a source's items are credited to."

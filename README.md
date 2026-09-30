@@ -28,7 +28,7 @@ Each day goes into a sqlite database and gets written out as a markdown file in 
 
 ## Plugins
 
-A plugin is a folder in `~/.config/newsroom/plugins/` holding Clojure namespaces named after it, so `plugins/slack/core.clj` is `slack.core`. Every namespace in the folder gets loaded when newsroom starts, and a plugin that fails to load is reported and skipped. Plugins are written against `newsroom.plugin`: `defsource` adds a source type, `config` returns the plugin's settings, `get-json` and `post-json` talk to JSON APIs, and `item` builds the items a source hands back. `jolt.http-client` and `clojure.data.json` can be required directly for anything else.
+A plugin is a folder in `~/.config/newsroom/plugins/` holding Clojure namespaces named after it, so `plugins/slack/core.clj` is `slack.core`. Every namespace in the folder gets loaded when newsroom starts, and a plugin that fails to load is reported and skipped. A plugin small enough for one file can also be a single `plugins/<name>.clj`. Plugins are written against `newsroom.plugin`: `defsource` adds a source type, `config` returns the plugin's settings, `get-json` and `post-json` talk to JSON APIs, `fetch-text`, `parse-xml` and `page-meta` read feeds and article pages, and `item` builds the items a source hands back. `jolt.http-client` and `clojure.data.json` can be required directly for anything else.
 
 The settings live in `config.edn` under `:plugins`, keyed by the folder name, and a `"${VAR}"` string there is read from the environment. Settings that change from one source to the next, like which channel to read, go on the source itself, since the plugin gets the whole source map.
 
@@ -52,9 +52,12 @@ A source type is a function from the source map and the run's context to a list 
       (plugin/item source {:title (:text m) :url "..." :summary (:text m)}))))
 ```
 
-`emit!` shows what the plugin is doing in the sidebar while a run goes. A plugin small enough for one file can also be a single `plugins/<name>.clj`.
+`emit!` shows what the plugin is doing in the sidebar while a run goes, and `defname` says what a source is called when it has no `:name`, which matters because the sidebar tracks sources by name, so two sources of one type need different ones.
 
-[`examples/plugins/slack`](examples/plugins/slack/core.clj) is the full version of that plugin, and a reasonable place to start writing your own.
+The repo's [`plugins/`](plugins) folder has two that work as they are. To use one, copy its folder into `~/.config/newsroom/plugins/`.
+
+- [`reddit`](plugins/reddit/core.clj) reads subreddit feeds, like `{:type :reddit :subreddit ["technology" "worldnews"]}`, and follows each post to the story it links to. The items are the articles themselves, with the outlet's headline and description, and text posts and reddit-hosted images and videos are skipped. Reddit only lets a client read about one feed a minute without logging in, so list every subreddit in one source rather than adding a source per subreddit.
+- [`slack`](plugins/slack/core.clj) is the full version of the plugin above. It reads a channel with a bot token.
 
 ## Tests
 

@@ -36,8 +36,18 @@
                        "; known: " (str/join ", " (map pr-str (remove #{:default} (keys (methods fetch-items))))))
                   {:source source})))
 
-(defn source-name [source]
-  (or (:name source) (:url source) (some-> (:type source) name)))
+(defmulti default-name
+  "What a source of this type is called when it has no :name of its own."
+  :type)
+
+(defmethod default-name :default [source]
+  (or (:url source) (some-> (:type source) name)))
+
+(defn source-name
+  "What a source is called on the page and in its items. Two sources of a
+  run need different names, since its status is kept by name."
+  [source]
+  (or (:name source) (default-name source)))
 
 (def default-user-agent "newsroom/0.1 (+https://github.com/yogthos/newsroom)")
 
@@ -56,13 +66,18 @@
 
 ;; --- rss ---------------------------------------------------------------------------
 
+(defn parse-xml
+  "An XML document's text as a clojure.xml tree."
+  [text]
+  ;; libxml2 refuses a document with anything before the prolog
+  (xml/parse (subs text (or (str/index-of text "<") 0))))
+
 (defmethod fetch-items :rss [source {:keys [config] :as ctx}]
   (emit! ctx (str "Reading " (source-name source)) {:url (:url source)})
   (let [body (fetch-text (:url source) {:timeout-ms (:source-timeout-ms config 30000)
                                        :user-agent (:user-agent source)})
-        ;; libxml2 refuses a document with anything before the prolog
-        body (subs body (or (str/index-of body "<") 0))]
-    (feed/feed-items (xml/parse body) (source-name source))))
+        doc (parse-xml body)]
+    (feed/feed-items doc (source-name source))))
 
 ;; --- scraping -----------------------------------------------------------------------
 ;; A page with no feed: the links on it whose URL matches :link-pattern are its

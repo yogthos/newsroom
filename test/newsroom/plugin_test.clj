@@ -108,7 +108,7 @@
 ;; --- the example plugin ------------------------------------------------------------
 
 (deftest the-example-slack-plugin-reads-a-channel
-  (let [report (by-name (plugin/load-all! "examples/plugins"
+  (let [report (by-name (plugin/load-all! "plugins"
                                           {:plugins {:slack {:token "xoxb-1" :workspace "acme"}}}))
         seen (atom nil)]
     (is (:ok (report "slack")) (:error (report "slack")))
@@ -132,3 +132,114 @@
                  :summary "Tariffs up again Details in the thread here"
                  :published "2026-09-30T00:00:00Z"}]
                items))))))
+
+;; --- the reddit plugin -------------------------------------------------------------
+
+(defn- entry [id title link published & [sub]]
+  (str "<entry><id>" id "</id><title>" title "</title>"
+       "<category term=\"" (or sub "technology") "\" label=\"r/" (or sub "technology") "\"/>"
+       "<content type=\"html\">"
+       (-> (str "<table><tr><td> submitted by <a href=\"https://www.reddit.com/user/x\"> /u/x </a><br/>"
+                "<span><a href=\"" link "\">[link]</a></span> "
+                "<span><a href=\"https://www.reddit.com/r/technology/comments/" id "/\">[comments]</a></span>"
+                "</td></tr></table>")
+           (str/replace "&" "&amp;") (str/replace "<" "&lt;") (str/replace ">" "&gt;") (str/replace "\"" "&quot;"))
+       "</content>"
+       "<link href=\"https://www.reddit.com/r/technology/comments/" id "/\" />"
+       "<published>" published "</published></entry>"))
+
+(def ^:private reddit-feed
+  (str "<?xml version=\"1.0\" encoding=\"UTF-8\"?><feed xmlns=\"http://www.w3.org/2005/Atom\">"
+       "<title>/r/Technology</title>"
+       (entry "t3_a" "Reddit's own words about it" "https://news.e.com/story?a=1&amp;b=2" "2026-09-30T13:12:35+00:00")
+       (entry "t3_b" "Ask r/technology: what now?" "https://www.reddit.com/r/technology/comments/t3_b/" "2026-09-30T12:00:00+00:00")
+       (entry "t3_c" "A paywalled one" "https://paywall.e.com/x" "2026-09-30T11:00:00+00:00")
+       (entry "t3_d" "The first story again" "https://news.e.com/story?a=1&amp;b=2" "2026-09-30T10:00:00+00:00")
+       "</feed>"))
+
+(def ^:private article
+  (str "<html><head><meta property=\"og:title\" content=\"The story's own headline\">"
+       "<meta property=\"og:description\" content=\"What happened, in the outlet's words.\">"
+       "<meta property=\"article:published_time\" content=\"2026-09-30T09:00:00Z\"></head></html>"))
+
+(deftest the-reddit-plugin-follows-links-to-the-stories
+  (let [report (by-name (plugin/load-all! "plugins" {}))
+        fetched (atom [])]
+    (is (:ok (report "reddit")) (:error (report "reddit")))
+    (with-redefs [http/get (fn [url _]
+                             (swap! fetched conj url)
+                             (cond
+                               (= url "https://www.reddit.com/r/technology.rss") {:status 200 :body reddit-feed}
+                               (str/starts-with? url "https://news.e.com/") {:status 200 :body article}
+                               :else {:status 403 :body "no"}))]
+      (let [events (atom [])
+            items (sources/fetch-items {:type :reddit :subreddit "technology"}
+                                       {:day "2026-09-30" :config {}
+                                        :emit #(swap! events conj %)})]
+        (testing "the story's page, not the reddit thread"
+          (is (= {:title "The story's own headline"
+                  :url "https://news.e.com/story?a=1&b=2"
+                  :source "r/technology"
+                  :summary "What happened, in the outlet's words."
+                  :published "2026-09-30T09:00:00Z"}
+                 (first items))))
+        (testing "a page that can't be read keeps the post's title and date"
+          (is (= {:title "A paywalled one"
+                  :url "https://paywall.e.com/x"
+                  :source "r/technology"
+                  :summary ""
+                  :published "2026-09-30T11:00:00+00:00"}
+                 (second items))))
+        (testing "self posts and repeated links are left out"
+          (is (= 2 (count items)))
+          (is (= 1 (count (filter #(str/starts-with? % "https://news.e.com/") @fetched)))))))))
+
+(deftest a-reddit-source-is-named-after-its-subreddit
+  (plugin/load-all! "plugins" {})
+  (is (= "r/technology" (sources/source-name {:type :reddit :subreddit "technology"})))
+  (is (= "Mine" (sources/source-name {:type :reddit :subreddit "technology" :name "Mine"})))
+  (is (= "https://www.reddit.com/r/a+b.rss"
+         (sources/source-name {:type :reddit :url "https://www.reddit.com/r/a+b.rss"}))))
+
+(deftest the-reddit-plugin-reads-a-feed-url-too
+  (let [_ (plugin/load-all! "plugins" {:plugins {:reddit {:user-agent "my-agent"}}})
+        seen (atom [])]
+    (with-redefs [http/get (fn [url req]
+                             (swap! seen conj [url (get-in req [:headers "User-Agent"])])
+                             {:status 200 :body "<feed xmlns=\"http://www.w3.org/2005/Atom\"></feed>"})]
+      (is (= [] (sources/fetch-items {:type :reddit :name "Top tech"
+                                      :url "https://www.reddit.com/r/technology/top.rss?t=day"}
+                                     {:day "2026-09-30" :config {}})))
+      (is (= [["https://www.reddit.com/r/technology/top.rss?t=day" "my-agent"]] @seen)))))
+
+(deftest several-subreddits-are-read-in-one-request
+  (plugin/load-all! "plugins" {})
+  (let [seen (atom [])
+        feed (str "<feed xmlns=\"http://www.w3.org/2005/Atom\">"
+                  (entry "t3_w" "World" "https://w.e.com/1" "2026-09-30T10:00:00+00:00" "worldnews")
+                  (entry "t3_t" "Tech" "https://t.e.com/1" "2026-09-30T10:00:00+00:00" "technology")
+                  "</feed>")
+        source {:type :reddit :subreddit ["worldnews" "technology"]}]
+    (with-redefs [http/get (fn [url _]
+                             (swap! seen conj url)
+                             (if (str/includes? url "reddit.com")
+                               {:status 200 :body feed}
+                               {:status 404 :body ""}))]
+      (is (= "r/worldnews+technology" (sources/source-name source)))
+      (is (= [["World" "r/worldnews"] ["Tech" "r/technology"]]
+             (map (juxt :title :source) (sources/fetch-items source {:day "2026-09-30" :config {}})))
+          "each story is credited to its own subreddit")
+      (is (= 1 (count (filter #(str/includes? % "reddit.com") @seen))))
+      (is (= "https://www.reddit.com/r/worldnews+technology.rss" (first @seen))))
+    (testing "a source with a :name credits its stories to that"
+      (with-redefs [http/get (fn [url _] {:status (if (str/includes? url "reddit.com") 200 404) :body feed})]
+        (is (= #{"Mine"} (set (map :source (sources/fetch-items (assoc source :name "Mine")
+                                                                {:day "2026-09-30" :config {}})))))))))
+
+(deftest a-rate-limited-reddit-feed-says-what-to-do
+  (plugin/load-all! "plugins" {})
+  (with-redefs [http/get (fn [_ _] {:status 429 :body ""})]
+    (let [e (try (sources/fetch-items {:type :reddit :subreddit "technology"} {:day "2026-09-30" :config {}})
+                 nil (catch Exception e e))]
+      (is (str/includes? (ex-message e) "429"))
+      (is (str/includes? (ex-message e) "one source")))))

@@ -245,10 +245,11 @@
         (re-seq #"(?is)<meta\s[^>]*>" (str html))))
 
 (defn page-meta
-  "What an article page says about itself in its meta tags: a description
-  and when it was published, each nil when the page doesn't say."
+  "What an article page says about itself in its meta tags: a title, a
+  description and when it was published, each nil when the page doesn't say."
   [html]
   (let [m (meta-tags html)]
-    {:description (or (get m "og:description") (get m "description") (get m "twitter:description"))
+    {:title (or (get m "og:title") (get m "twitter:title"))
+     :description (or (get m "og:description") (get m "description") (get m "twitter:description"))
      :published (or (get m "article:published_time") (get m "og:published_time")
                     (get m "datepublished") (get m "pubdate"))}))

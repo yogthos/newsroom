@@ -171,10 +171,10 @@
               <meta name=\"description\" content=\"Delegates met &amp; talked.\">
               <meta property=\"og:description\" content=\"Delegates met in Geneva.\">
               <meta property=\"article:published_time\" content=\"2026-09-30T08:00:00Z\"></head>"]
-    (is (= {:description "Delegates met in Geneva." :published "2026-09-30T08:00:00Z"}
+    (is (= {:title "Talks resume" :description "Delegates met in Geneva." :published "2026-09-30T08:00:00Z"}
            (feed/page-meta html))
         "og:description wins over the plain description"))
-  (is (= {:description "Plain one." :published nil}
+  (is (= {:title nil :description "Plain one." :published nil}
          (feed/page-meta "<meta content=\"Plain one.\" name=\"description\">"))
       "attribute order doesn't matter")
-  (is (= {:description nil :published nil} (feed/page-meta "<p>nothing</p>"))))
+  (is (= {:title nil :description nil :published nil} (feed/page-meta "<p>nothing</p>"))))

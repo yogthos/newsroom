@@ -76,9 +76,12 @@
 
   ;; --- a plugin -------------------------------------------------------------
   ;; A source type of your own, from a plugin in plugins/. The whole map is
-  ;; handed to the plugin, so it can take any keys it likes. This one is
-  ;; examples/plugins/slack, copied to plugins/slack.
+  ;; handed to the plugin, so it can take any keys it likes. These two are
+  ;; in plugins/ in the repo, and are used by copying their folders to
+  ;; plugins/ in the config directory.
   ;; {:type :slack :name "Slack #news" :channel "C0123456789"}
+  ;; reddit reads about one feed a minute, so its subreddits share a source
+  ;; {:type :reddit :subreddit ["technology" "worldnews"] :limit 10}
   ]
 
  ;; --- plugin settings ------------------------------------------------------
