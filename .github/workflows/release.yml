@@ -55,11 +55,33 @@ jobs:
       - name: Install jolt
         run: ci/install-jolt.sh "${JOLT_VERSION}" "${{ matrix.target }}"
 
+      # Windows has none of the libraries macOS and Linux supply: take them
+      # from MSYS2, which the runner has, with every DLL they load in turn.
+      # They go beside the exe in the archive, and on PATH only for the test
+      # and the build, so the smoke test shows the archive is enough.
+      - name: Native libraries (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          /c/msys64/usr/bin/pacman -S --noconfirm --needed \
+            mingw-w64-x86_64-libxml2 mingw-w64-x86_64-sqlite3 \
+            mingw-w64-x86_64-zlib mingw-w64-x86_64-openssl > /dev/null
+          mkdir -p natives
+          for dll in libxml2-*.dll libsqlite3-*.dll zlib1.dll libssl-3-x64.dll libcrypto-3-x64.dll; do
+            for f in /c/msys64/mingw64/bin/$dll; do
+              cp "$f" natives/
+              /c/msys64/usr/bin/bash -lc "ldd /mingw64/bin/$(basename "$f")" \
+                | awk '$3 ~ /^\/mingw64\/bin\// {print $3}' \
+                | while read -r d; do cp "/c/msys64$d" natives/; done
+            done
+          done
+          ls natives
+          echo "NATIVES=$(pwd)/natives" >> "$GITHUB_ENV"
+
       - name: Test
-        run: jolt -M:test
+        run: PATH="${NATIVES:+$NATIVES:}$PATH" jolt -M:test
 
       - name: Build binary
-        run: jolt build -m newsroom.core -o newsroom
+        run: PATH="${NATIVES:+$NATIVES:}$PATH" jolt build -m newsroom.core -o newsroom
 
       # Name from the ref: a tag's build carries its version, anything else
       # gets the bare name.
@@ -75,6 +97,7 @@ jobs:
           cp "$exe" README.md "$name/"
           cp examples/config.edn "$name/config.example.edn"
           cp -r plugins "$name/plugins"
+          [ -n "${NATIVES:-}" ] && cp "$NATIVES"/*.dll "$name/"
           echo "PKG_DIR=$name" >> "$GITHUB_ENV"
           echo "PKG_EXE=$exe" >> "$GITHUB_ENV"
 
