@@ -23,13 +23,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # No Windows row: jolt's fiber poller and ring-chez-adapter's server are
-        # POSIX-only (jolt-lang/jolt#1107), so the web server can't run there yet.
         include:
           - os: macos-latest
             target: aarch64-macos
           - os: ubuntu-latest
             target: x86_64-linux
+          - os: windows-latest
+            target: x86_64-windows
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -71,6 +71,7 @@ jobs:
           esac
           mkdir -p "$name"
           exe=newsroom
+          [ -f newsroom.exe ] && exe=newsroom.exe
           cp "$exe" README.md "$name/"
           cp examples/config.edn "$name/config.example.edn"
           cp -r plugins "$name/plugins"
@@ -87,8 +88,14 @@ jobs:
 
       - name: Archive
         run: |
-          tar czf "${PKG_DIR}.tar.gz" "$PKG_DIR"
-          echo "PKG=${PKG_DIR}.tar.gz" >> "$GITHUB_ENV"
+          # a zip for Windows, which has no tar.gz handling of its own
+          if [ "${{ runner.os }}" = Windows ]; then
+            7z a -tzip "${PKG_DIR}.zip" "$PKG_DIR" > /dev/null
+            echo "PKG=${PKG_DIR}.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "${PKG_DIR}.tar.gz" "$PKG_DIR"
+            echo "PKG=${PKG_DIR}.tar.gz" >> "$GITHUB_ENV"
+          fi
 
       - name: Publish to release
         if: startsWith(github.ref, 'refs/tags/')
