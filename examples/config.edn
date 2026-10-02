@@ -16,7 +16,10 @@
  :run-every-hours 24
 
  ;; Days of briefings to keep. Older days are deleted with their sources and
- ;; markdown files after each new briefing. -1 keeps everything.
+ ;; markdown files after each new briefing. -1 keeps everything. What the
+ ;; digests need, each source's coverage, the story notes and the days'
+ ;; standfirsts, is kept four months longer, so a month's digest can always
+ ;; be compared with the four months before it.
  :keep-days 100
 
  ;; How far back an item's date may be, in days before the briefing's day.
@@ -57,24 +60,25 @@
  :trend-days 7
  :half-life-days 2
 
+ ;; After each briefing the model keeps a running note on every storyline
+ ;; the briefing cited, and keeps the notes it already has up to date; a
+ ;; story the briefing passed over starts none. A note is a stable title, a
+ ;; summary of where the story stands, and up to this many dated facts, each
+ ;; tied to the report it came from. Each day's reports are compacted into
+ ;; the note, so repeats merge and superseded details drop out. The briefing
+ ;; gets the notes of the stories still running as background, and the
+ ;; digests cite the notes' facts. It costs one more model call a day; a
+ ;; :notes role in :roles can point it at a cheaper model. nil turns the
+ ;; notes off.
+ :story-notes 12
+
  ;; Digests written from the stored days: a week's once the week is over
  ;; (weeks run Monday to Sunday), a month's once the month is. Each ranks
  ;; the storylines of the period by their coverage and says which are
- ;; emerging, persistent or fading against the four periods before it.
- ;; digest.md is their prompt, and :digest-stories how many storylines it
- ;; is given. [] turns them off.
- ;; After each briefing the model keeps a running note on every storyline
- ;; the briefing cited, and keeps the notes it already has up to date (a
- ;; story the briefing passed over starts none): a stable title, a summary of where it
- ;; stands, and up to this many dated facts, each tied to the report it came
- ;; from. Each day's reports are compacted into the note, so repeats merge
- ;; and superseded details drop out. The briefing gets the notes of the
- ;; stories still running as background, and the digests cite the notes'
- ;; facts, which are kept with the coverage, four months past :keep-days.
- ;; It costs one more model call a day; a :notes role in :roles can point it
- ;; at a cheaper model. nil turns the notes off.
- :story-notes 12
-
+ ;; emerging, persistent or fading against the four periods before it, then
+ ;; the model writes it from the storylines' notes and each day's
+ ;; standfirst. digest.md is their prompt, and :digest-stories how many
+ ;; storylines it is given. [] turns them off.
  :digests [:week :month]
  :digest-stories 15
 
@@ -190,5 +194,9 @@
  ;;   :timeout-ms 600000    how long a read may wait on the model
  ;;   :reasoning-effort     "low", "high" and so on, where the model has it
 
- ;; Which provider writes the briefing.
- :roles {:analyst :deepseek}}
+ ;; Which provider does each job. :analyst writes the briefing and the
+ ;; digests. :notes keeps the story notes, the analyst when it's left out;
+ ;; it's routine extraction, so a cheaper or faster model does well here.
+ :roles {:analyst :deepseek
+         ;; :notes :glm
+         }}

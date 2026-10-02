@@ -68,6 +68,29 @@
                 item)))
           items)))
 
+(defn follow-day
+  "A day's stored sources, each with the storyline it belongs to as
+  :story, for a day stored before storylines were kept. A source joins the
+  storyline of the days before it is closest to, or one an earlier source
+  of the same day started, when within `threshold`; else it starts its own,
+  named by its day and number. Copies of a story from several outlets were
+  separate sources then, so they join one storyline this way. A source that
+  already has a storyline keeps it."
+  [day sources lines threshold]
+  (first
+   (reduce (fn [[out today] {:keys [n story] v :vector :as s}]
+             (let [candidates (concat (map (juxt :story :centroid) lines)
+                                      (map (fn [[id vs]] [id (embed/centroid vs)]) today))
+                   [sim id] (when (and v (nil? story))
+                              (some->> (seq candidates)
+                                       (map (fn [[id c]] [(embed/cosine v c) id]))
+                                       (apply max-key first)))
+                   story (or story (if (and sim (>= sim threshold)) id (str day "/" n)))]
+               [(conj out (assoc s :story story))
+                (if v (update today story (fnil conj []) v) today)]))
+           [[] {}]
+           sources)))
+
 (defn- decay [age half-life]
   (m/pow 2.0 (- (/ (double age) half-life))))
 

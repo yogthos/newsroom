@@ -106,9 +106,10 @@
 
 (defn- digest-panel
   "What the desk says about a digest being written or just written."
-  [{:keys [state error items cited provider model]} {:keys [kind period]}]
+  [{:keys [state error items cited provider model nothing]} {:keys [kind period]}]
   (let [label (pipeline/period-label kind period)]
-    (case state
+    (case (if nothing :nothing state)
+      :nothing [:p.muted "Nothing to digest for " label ": " nothing "."]
       :starting [:p "Reading the briefings for " label "…"]
       :analysing [:p "Writing the digest for " label " from " items " storylines with " provider
                   (when model [:span.muted " (" model ")"]) "…"]

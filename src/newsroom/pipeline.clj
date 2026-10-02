@@ -269,6 +269,34 @@
   (let [model @embed-model]
     (mapv (fn [i] (assoc i :vector (embed/embed model (embed-text i)))) items)))
 
+(defn- follow-old-days!
+  "Storylines for the days from `from` to `to` that were stored before
+  they were kept: oldest first, each day's sources are embedded and linked
+  to the storylines of the :trend-days before, as a run would have linked
+  them, so the days count toward the ranking and the digests. Returns how
+  many days were followed; none when :story-threshold is nil. Blocks."
+  [store config from to]
+  (let [threshold (get config :story-threshold 0.6)
+        days (when threshold (store/days-without-storylines store from to))]
+    (doseq [d days]
+      (let [own (mapv #(cond-> % (nil? (:vector %)) (assoc :vector (embed/embed @embed-model (embed-text %))))
+                      (store/sources-between store d d))
+            lines (trends/storylines (store/sources-between store (minus-days d (:trend-days config 7))
+                                                            (minus-days d 1)))]
+        (store/set-storylines! store d (trends/follow-day d own lines threshold))))
+    (count days)))
+
+(defn- follow-old-days
+  "Task: follow-old-days! on the blocking pool, saying so when there are
+  days to follow."
+  [{:keys [config store run-id]} from to]
+  (m/sp
+    (let [n (m/? (m/via m/blk (follow-old-days! store config from to)))]
+      (when (pos? n)
+        (log! run-id {:text (str "Followed the stories through " n
+                                 (if (= 1 n) " day" " days") " stored before storylines were kept")}))
+      n)))
+
 (defn- follow-stories
   "The items linked to the storylines of the last :trend-days (7 by
   default) before `day`, then ranked by how widely and how long their
@@ -347,6 +375,8 @@
                 (log! run-id {:text (str "Left out " (- (count gathered) (count fresh))
                                          " stories already in the briefings up to "
                                          (sources/long-date (:day earlier)))}))
+            _ (when (:story-threshold config)
+                (m/? (follow-old-days ctx (minus-days day (:trend-days config 7)) (minus-days day 1))))
             threshold (:dupe-threshold config)
             embedded-items (if (or threshold (:story-threshold config))
                              (embed-items fresh)
@@ -485,6 +515,7 @@
       (log! run-id {:text (str "Reading the briefings for " label)})
       (let [[from to] (trends/period-range kind period)
             [base-from base-to] (trends/baseline-range kind period)
+            _ (m/? (follow-old-days ctx base-from to))
             window (store/coverage-between store from to)
             _ (when (empty? window)
                 (throw (ex-info (str "there are no briefings for " label) {})))
@@ -567,9 +598,11 @@
                       (swap! current #(when-not (= token (:token %)) %)))
             cancel ((make-task token)
                     (fn [summary] (finish! (assoc summary :state :done)))
-                    (fn [e] (finish! (if (interrupted? e)
-                                       {:state :cancelled}
-                                       {:state :failed :error (or (ex-message e) (str e))}))))]
+                    (fn [e] (finish! (cond
+                                       (interrupted? e) {:state :cancelled}
+                                       ;; a period with nothing worth a digest isn't a failure
+                                       (::nothing-to-digest (ex-data e)) {:state :done :nothing (ex-message e)}
+                                       :else {:state :failed :error (or (ex-message e) (str e))}))))]
         (swap! current #(if (= token (:token %)) (assoc % :cancel cancel) %))
         true))))
 

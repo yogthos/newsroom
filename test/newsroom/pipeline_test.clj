@@ -6,7 +6,8 @@
             [newsroom.embed :as embed]
             [newsroom.pipeline :as pipeline]
             [newsroom.sources :as sources]
-            [newsroom.store :as store]))
+            [newsroom.store :as store]
+            [newsroom.ui :as ui]))
 
 (defn- item [n day]
   {:title (str "Story " n) :url (str "https://e.com/" n) :source "Fixture"
@@ -314,6 +315,43 @@
                            :cited [1] :markdown d :model "m" :provider "p"}))
     (is (= {:digest {:kind :month :period "2026-09"} :items 2 :cited 1}
            (m/? (pipeline/digest-task c :month "2026-09"))))))
+
+(deftest days-stored-before-storylines-are-followed-for-a-digest
+  ;; as the main branch stored them: no storylines, no embeddings, and
+  ;; every outlet's copy a source of its own
+  (let [prompts (atom [])
+        c (digest-ctx (fn [_ req] (swap! prompts conj (-> req :messages first :content))
+                        {:content "# September\n\n## Overview\n\nRates [1]." :model "fake"}))
+        st (:store c)
+        source (fn [n outlet title] {:n n :title title :url (str "https://" outlet ".org/" n) :source outlet
+                                     :summary "The central bank left its benchmark rate unchanged." :published nil})]
+    (doseq [[d fed] [["2026-09-28" "Federal Reserve holds interest rates steady"]
+                     ["2026-09-29" "Federal Reserve keeps interest rates on hold again"]]]
+      (store/save-day! st {:day d
+                           :sources (cond-> [(source 1 "wire" fed)
+                                             (source 2 "paper" (str fed ", citing inflation"))]
+                                      (= d "2026-09-28")
+                                      (conj (assoc (source 3 "blog" "Local bakery wins a bread award")
+                                                   :summary "A family bakery took first prize at the fair.")))
+                           :cited [] :markdown d :model "m" :provider "p"}))
+    (m/? (pipeline/digest-task c :month "2026-09"))
+    (let [prompt (first @prompts)]
+      (is (str/includes? prompt "4 outlet reports over 2 days") "both outlets' copies on both days, as one storyline")
+      (is (not (str/includes? prompt "bakery")) "a one-off stays out"))
+    (is (empty? (store/days-without-storylines st "2026-09-01" "2026-09-30")) "and the days keep their storylines")
+    (is (some #(str/includes? (:text %) "Followed the stories through 2 days stored before storylines were kept")
+              (:events @pipeline/status)))))
+
+(deftest a-period-with-nothing-to-digest-is-not-a-failure
+  (let [c (digest-ctx (fn [_ _] {:content "x" :model "fake"}))]
+    (store/save-day! (:store c) {:day "2026-09-28" :cited [] :markdown "x" :model "m" :provider "p"
+                                 :sources [{:n 1 :title "Lone story" :url "https://one.org/1" :source "One"
+                                            :summary "" :published nil :story "2026-09-28/1"}]})
+    (is (pipeline/start-digest! c :month "2026-09"))
+    (loop [i 0] (when (and (pipeline/running?) (< i 100)) (Thread/sleep 50) (recur (inc i))))
+    (is (= :done (:state @pipeline/status)))
+    (is (str/includes? (:nothing @pipeline/status) "no story in September 2026"))
+    (is (str/includes? (ui/page (:store c) "2026-09-28") "Nothing to digest for September 2026"))))
 
 (deftest a-period-with-no-briefings-has-no-digest
   (let [c (digest-ctx (fn [_ _] {:content "x" :model "fake"}))

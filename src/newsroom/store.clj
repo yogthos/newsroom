@@ -276,6 +276,26 @@
                    :outlets (long (:outlets r)) :cited? (= 1 (:cited r))})
           (jdbc/fetch conn ["select * from coverage where day >= ? and day <= ? order by day, n" from to]))))
 
+(defn days-without-storylines
+  "The days from `from` to `to` with sources stored before storylines were
+  kept, oldest first."
+  [store from to]
+  (with-db [conn store]
+    (mapv :day (jdbc/fetch conn ["select distinct day from sources
+                                  where story is null and day >= ? and day <= ? order by day" from to]))))
+
+(defn set-storylines!
+  "Store the storyline and embedding of each of a day's `sources`, in the
+  sources and in their coverage."
+  [store day sources]
+  (with-db [conn store]
+    (jdbc/atomic conn
+      (doseq [{:keys [n story] v :vector} sources]
+        (jdbc/execute! conn ["update sources set story = ?, vector = coalesce(?, vector) where day = ? and n = ?"
+                             story (embed/encode v) day n])
+        (jdbc/execute! conn ["update coverage set story = ? where day = ? and n = ?" story day n]))))
+  nil)
+
 (defn standfirsts-between
   "The standfirsts of the days from `from` to `to`, both inclusive, as
   {:day :tldr}: kept as long as the coverage."
