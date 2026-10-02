@@ -23,6 +23,38 @@
         (is (= [1 3] (map :n (:cited day))) "the sources the briefing cites"))
       (finally (store/close db)))))
 
+(deftest a-day-with-a-tldr-and-corroborated-source-round-trips
+  (let [db (fresh)]
+    (try
+      (store/save-day! db {:day "2026-09-30"
+                           :sources [(assoc (first sources) :also ["AP" "Reuters"])]
+                           :cited [1] :tldr "Rates up, tech down"
+                           :markdown "# The day\n\n> Rates up, tech down" :model "m" :provider "p"})
+      (let [day (store/day db "2026-09-30")]
+        (is (= "Rates up, tech down" (:tldr day)))
+        (is (= ["AP" "Reuters"] (:also (first (:sources day))))))
+      (is (= [{:day "2026-09-30" :tldr "Rates up, tech down"}] (store/archive db)))
+      (finally (store/close db)))))
+
+(deftest source-health-rolls-up-over-runs
+  (let [db (fresh)]
+    (try
+      (store/record-source-health! db [{:source "BBC World" :error nil}
+                                       {:source "Dead feed" :error "timed out after 30s"}])
+      (let [h (into {} (map (juxt :name identity)) (store/source-health db))]
+        (is (= 0 (:consecutive-failures (h "BBC World"))))
+        (is (string? (:last-ok (h "BBC World"))))
+        (is (= 1 (:consecutive-failures (h "Dead feed"))))
+        (is (= "timed out after 30s" (:last-error (h "Dead feed"))))
+        (is (nil? (:last-ok (h "Dead feed")))))
+      (testing "failures accumulate until a success resets them"
+        (store/record-source-health! db [{:source "Dead feed" :error "connection refused"}])
+        (store/record-source-health! db [{:source "Dead feed" :error nil}])
+        (let [h (into {} (map (juxt :name identity)) (store/source-health db))]
+          (is (= 0 (:consecutive-failures (h "Dead feed"))))
+          (is (nil? (:last-error (h "Dead feed"))))))
+      (finally (store/close db)))))
+
 (deftest saving-a-day-again-replaces-it
   (let [db (fresh)]
     (try

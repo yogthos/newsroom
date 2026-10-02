@@ -125,8 +125,11 @@ out.
 
 ## Format
 
-- Start with a `#` title for the day, then use a `##` heading for each part
-  of the structure above and `###` for themes within a part.
+- Start with a `#` title for the day, then a `>` blockquote of one sentence
+  that says what kind of day it was and what drove it, then use a `##`
+  heading for each part of the structure above and `###` for themes within
+  a part. The blockquote is the standfirst shown in the archive, so it must
+  stand alone.
 - Put the graph at the start of "How it all connects", as a fenced code block
   marked `mermaid`. Group its nodes by domain with one subgraph each for
   politics, economics, and science and technology, and draw the edges between

@@ -35,6 +35,25 @@
         (is (str/includes? page "deepseek / deepseek-v4-flash"))
         (is (str/includes? page "src=\"/js/diagrams.js\"") "the page can draw diagrams")))))
 
+(deftest the-archive-shows-each-days-standfirst-and-the-desk-shows-feed-health
+  (let [st (store/open "sqlite::memory:")]
+    (try
+      (store/save-day! st {:day "2026-09-29" :sources [] :cited [] :markdown "old"
+                           :tldr "A quiet day before the storm." :model "m" :provider "p"})
+      (store/save-day! st {:day "2026-09-30"
+                           :sources [{:n 1 :title "Wire story" :url "https://e.com/1"
+                                      :source "Reuters" :summary "s" :published nil
+                                      :also ["BBC" "Al Jazeera"]}]
+                           :cited [1] :markdown "# Big day" :model "m" :provider "p"})
+      (store/record-source-health! st [{:source "Reuters" :error nil}
+                                       {:source "Broken feed" :error "feed is down"}])
+      (let [page (ui/page st "2026-09-30")]
+        (is (str/includes? page "A quiet day before the storm.") "archive tldr")
+        (is (str/includes? page "also BBC, Al Jazeera") "corroboration on the item")
+        (is (str/includes? page "Feed health (2)") "desk lists both sources")
+        (is (str/includes? page "1 failed in a row") "and the failing one says so"))
+      (finally (store/close st)))))
+
 (deftest a-day-with-no-briefing
   (with-store
     (fn [st]

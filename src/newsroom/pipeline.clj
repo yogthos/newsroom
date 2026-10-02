@@ -15,6 +15,7 @@
             [glimmer.ratom :as ratom]
             [jolt.time]
             [newsroom.config :as config]
+            [newsroom.embed :as embed]
             [newsroom.feed :as feed]
             [newsroom.llm.client :as llm]
             [newsroom.llm.providers :as providers]
@@ -30,6 +31,11 @@
 
 (defonce ^{:doc "Bumped whenever a day is stored, so pages showing it refresh."}
   stored (ratom/atom 0))
+
+(def ^:private embed-model
+  "The embedding model, loaded once on first use: 6MB of resources that
+  reads in well under a second."
+  (delay (embed/load-model)))
 
 (defn- now [] (System/currentTimeMillis))
 
@@ -185,6 +191,19 @@
            first
            (store/day store)))
 
+(defn- seen-briefings
+  "The briefings before `day` whose stories count as seen, newest first:
+  the last :seen-days of them (3 by default), since a story that ran two
+  days ago, was left out of yesterday's for space, and returns today has
+  still been told."
+  [store day config]
+  (let [n (:seen-days config 3)]
+    (when (pos? n)
+      (->> (store/days store)
+           (filter #(neg? (compare % day)))
+           (take n)
+           (keep #(store/day store %))))))
+
 (defn- previous-context
   "What the model is told about the last briefing: its overview, as what is
   already established and to be built on rather than told again."
@@ -220,17 +239,31 @@
             _ (log! run-id {:text (str "Gathered " (reduce + (map (comp count :items) results))
                                        " items from " (count (remove :error results)) " of "
                                        (count srcs) " sources")})
+            _ (store/record-source-health!
+               store
+               (map (fn [r] {:source (:source r) :error (:error r)}) results))
             gathered (news/dedupe-items (day-items results config day))
-            earlier (previous-day store day)
-            fresh (news/unseen-items gathered (:sources earlier))
+            seen (seen-briefings store day config)
+            earlier (first seen)
+            fresh (news/unseen-items gathered (mapcat :sources seen))
             _ (when (< (count fresh) (count gathered))
                 (log! run-id {:text (str "Left out " (- (count gathered) (count fresh))
-                                         " stories already in the briefing for "
+                                         " stories already in the briefings up to "
                                          (sources/long-date (:day earlier)))}))
-            numbered (->> fresh (take (:max-items config 80)) news/cite)
+            threshold (:dupe-threshold config)
+            embedded-items (if threshold
+                             (let [model @embed-model]
+                               (mapv (fn [i] (assoc i :vector (embed/embed model (str (:title i) ". " (:summary i)))))
+                                     fresh))
+                             fresh)
+            collapsed (news/collapse-similar embedded-items threshold)
+            _ (when (< (count collapsed) (count embedded-items))
+                (log! run-id {:text (str "Collapsed " (- (count embedded-items) (count collapsed))
+                                         " near-duplicate stories across outlets")}))
+            numbered (->> collapsed (take (:max-items config 80)) news/cite)
             _ (when (empty? numbered)
                 (throw (ex-info (if (seq gathered)
-                                  (str "every story gathered was already in the briefing for "
+                                  (str "every story gathered was already in the briefings up to "
                                        (sources/long-date (:day earlier)))
                                   "no items were gathered from any source")
                                 {})))
@@ -270,6 +303,7 @@
                                 :sources numbered
                                 :cited cited
                                 :markdown doc
+                                :tldr (news/tldr doc)
                                 :model (or (:model reply) (:model llm-config))
                                 :provider (name (:alias llm-config))})
         (write-markdown! (or (:markdown-dir ctx) (config/path "briefings")) day doc)

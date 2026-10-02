@@ -28,6 +28,16 @@
  :max-items-per-source 12
  :max-items 180
 
+ ;; How many past briefings a story is remembered from. A story told in any
+ ;; of the last :seen-days briefings is left out of today's, so one dropped
+ ;; for space yesterday is not retold today.
+ :seen-days 3
+
+ ;; Stories from different outlets whose titles and summaries embed this
+ ;; close (cosine similarity) are collapsed into one source, with the other
+ ;; outlets noted on it as "also reported by". nil turns collapsing off.
+ :dupe-threshold 0.55
+
  ;; How long one source may take before the run goes on without it.
  :source-timeout-ms 30000
 

@@ -15,7 +15,7 @@
   the same story comes back with a fragment or tracking parameters on it."
   (:require [clojure.string :as str]
             [newsroom.news :refer [canonical-url dedupe-items unseen-items overview add-previous cite render-prompt
-                                   citations link-citations briefing
+                                   citations link-citations briefing collapse-similar tldr
                                    valid-day? adjacent-days]]
             [writ.spec :refer [spec ann refine graph flow law calls assume]]))
 
@@ -47,6 +47,8 @@
 (ann citations      [String -> (Vec Nat)])
 (ann link-citations [String (List Source) -> String])
 (ann briefing       [String (List Source) -> String])
+(ann collapse-similar [(List Item) (Opt Float) -> (List Item)])
+(ann tldr           [String -> (Opt String)])
 (ann valid-day?     [String -> Bool])
 (ann adjacent-days  [(List String) String -> (Tuple (Opt String) (Opt String))])
 
@@ -75,8 +77,7 @@
 
 (defn stories [ns titles]
   (vec (map-indexed (fn [i n] (story n (nth titles (mod i (max 1 (count titles))) "")
-                                     (+ i n)))
-                    ns)))
+                                     (+ i n)))                    ns)))
 
 (defn usable? [item]
   (not (or (str/blank? (:title item)) (str/blank? (:url item)))))
@@ -356,6 +357,51 @@
           s (nth (sources-of (cons n ns)) (dec k))]
       (str/ends-with? (briefing (cited-in k) (sources-of (cons n ns)))
                       (str "\n- [" k "] [" (:title s) "](" (:url s) ") — " (:source s) "\n")))))
+
+;; --- near-duplicates ----------------------------------------------------------------
+
+(defn embedded
+  "A story from outlet `s` carrying one of a fixed set of embedding vectors,
+  as the pipeline hands items to collapse-similar."
+  [n s vec]
+  (assoc (story n (str s n) 0) :source s :vector vec))
+
+(def dup-vectors [[1.0 0.0] [0.99 0.02] [0.0 1.0]])
+
+(law a-nil-threshold-collapses-nothing
+  (forall [t (Opt Float)]
+    (= (stories [1 2 3] ["a"])
+       (let [items (stories [1 2 3] ["a"])]
+         (collapse-similar items nil)))))
+
+(law a-verbatim-copy-merges-at-any-threshold-below-one
+  (forall [t Float]
+    (let [clamp (max 0.0 (min 0.99 t))]
+      (= 1 (count (collapse-similar [(assoc (story 1 "t" 0) :source "wire" :vector [1 0])
+                                     (assoc (story 2 "u" 0) :source "other" :vector [1 0])]
+                                    clamp))))))
+
+(law orthogonal-stories-stay-apart-at-any-live-threshold
+  (forall [t Float]
+    (let [clamp (max 0.1 t)]
+      (= 2 (count (collapse-similar [(assoc (story 1 "t" 0) :source "wire" :vector [1 0])
+                                     (assoc (story 2 "u" 0) :source "other" :vector [0 1])]
+                                    clamp))))))
+
+(law a-verbatim-copy-is-one-story-with-both-outlets
+  (= [(assoc (story 1 "t" 0) :also ["other"])]
+     (mapv #(dissoc % :vector)
+           (collapse-similar [(assoc (story 1 "t" 0) :source "wire" :vector [1 0])
+                              (assoc (story 1 "t" 1) :source "other" :vector [1 0])]
+                             0.5))))
+
+(law the-standfirst-is-the-first-blockquote-before-the-sections
+  (forall [a String]
+    (= (str "t" (alnum a))
+       (tldr (str "# Day\n\n> t" (alnum a) "\n\n## Overview\n\nBody.")))))
+
+(law a-briefing-without-a-standfirst-has-none
+  (nil? (tldr "# Day\n\n## Overview\n\nBody.")))
 
 ;; --- days --------------------------------------------------------------------------
 

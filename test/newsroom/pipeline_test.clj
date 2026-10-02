@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [ebb.core :as m]
+            [newsroom.embed :as embed]
             [newsroom.pipeline :as pipeline]
             [newsroom.sources :as sources]
             [newsroom.store :as store]))
@@ -22,11 +23,22 @@
 (defmethod sources/fetch-items ::broken [_ _]
   (throw (ex-info "feed is down" {})))
 
+(defmethod sources/fetch-items ::dupe [{:keys [name suffix]} {:keys [day]}]
+  ;; the same wire story, word for word, at another outlet's address
+  [{:title "Central banks warn of rising sovereign debt"
+    :url (str "https://" suffix ".example.com/debt-warning")
+    :source name
+    :summary "Finance ministers from the G7 met to discuss rising sovereign debt levels."
+    :published (str day "T08:00:00Z")}])
+
 (def dir (str (System/getProperty "java.io.tmpdir") "/newsroom-test-" (System/currentTimeMillis)))
 
 (defn- ctx [sources chat]
   {:config {:sources sources :source-timeout-ms 500 :lookback-days 1
             :max-items-per-source 2 :max-items 10
+            ;; the fixture stories are all near-alike text, so embedding
+            ;; must stay off unless a test turns it on
+            :dupe-threshold nil
             :providers {} :roles {:analyst :local}}
    :store (store/open "sqlite::memory:")
    :template "Brief {{date}}.\n\n{{sources}}"
@@ -180,7 +192,7 @@
                          :cited [] :markdown "later" :model "m" :provider "p"})
     (m/? (pipeline/run-task c "2026-09-30"))
     (is (= ["https://e.com/2"] (map :url (:sources (store/day st "2026-09-30")))))
-    (is (some #(str/includes? (:text %) "Left out 2 stories already in the briefing for 27 September 2026")
+    (is (some #(str/includes? (:text %) "Left out 2 stories already in the briefings up to 27 September 2026")
               (:events @pipeline/status)))))
 
 (deftest a-day-of-nothing-new-says-so
@@ -189,9 +201,61 @@
                                                               :source "Fixture" :summary "" :published nil}]
                                  :cited [] :markdown "old" :model "m" :provider "p"})
     (let [e (try (m/? (pipeline/run-task c "2026-09-30")) nil (catch Exception e e))]
-      (is (str/includes? (ex-message e) "already in the briefing for 29 September 2026")))))
+      (is (str/includes? (ex-message e) "already in the briefings up to 29 September 2026")))))
 
 ;; --- the schedule ----------------------------------------------------------------
+
+(deftest a-story-older-than-the-seen-days-window-is-new-again
+  (let [c (ctx [{:type ::fixture :name "A" :ns [1]}] (fn [_ _] {:content "x [1]" :model "fake"}))
+        st (:store c)
+        source (fn [n url] {:n n :title (str "Old " n) :url url :source "S" :summary "" :published nil})]
+    ;; seen-days is 3: a story that ran only four briefings back, was left
+    ;; out of the three since, and returns today is told again
+    (store/save-day! st {:day "2026-09-23" :sources [(source 1 "https://e.com/1")] :cited []
+                         :markdown "old" :model "m" :provider "p"})
+    (doseq [d ["2026-09-25" "2026-09-27" "2026-09-29"]]
+      (store/save-day! st {:day d :sources [(source 2 "https://e.com/other")] :cited []
+                           :markdown d :model "m" :provider "p"}))
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (= ["https://e.com/1"] (map :url (:sources (store/day st "2026-09-30"))))
+        "four briefings back is past the seen window, so the story is told again")))
+
+(deftest near-duplicate-wire-stories-across-outlets-are-collapsed
+  (let [dupe-src (fn [name suffix]
+                   {:type ::dupe :name name :suffix suffix})
+        prompts (atom [])
+        c (-> (ctx [(dupe-src "Reuters" "reuters")
+                    (dupe-src "BBC" "bbc")]
+                   (fn [_ req] (swap! prompts conj (-> req :messages first :content))
+                     {:content "# Today\n\nStory [1]." :model "fake"}))
+              (assoc-in [:config :dupe-threshold] 0.55)
+              (assoc-in [:config :max-items-per-source] 5))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (let [day (store/day (:store c) "2026-09-30")]
+      (is (= 1 (count (:sources day))) "one wire story, not one copy per outlet")
+      (is (= ["BBC"] (:also (first (:sources day)))) "the other outlet is credited")
+      (is (str/includes? (first @prompts) "[1] Central banks warn of rising sovereign debt (Reuters)"))
+      (is (some #(str/includes? (:text %) "Collapsed 1 near-duplicate")
+                (:events @pipeline/status))))))
+
+(deftest the-standfirst-under-the-title-is-saved-as-the-tldr
+  (let [c (ctx [{:type ::fixture :name "A" :ns [1]}]
+               (fn [_ _] {:content "# 30 September 2026\n\n> Markets calm after a quiet week.\n\n## Story\n\nText [1]." :model "fake"}))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (= "Markets calm after a quiet week."
+           (:tldr (store/day (:store c) "2026-09-30"))))))
+
+(deftest source-health-survives-the-run
+  (let [c (ctx [{:type ::fixture :name "A" :ns [1]}
+                {:type ::broken :name "Broken"}]
+               (fn [_ _] {:content "x [1]" :model "fake"}))
+        health (fn [] (into {} (map (juxt :name identity)) (store/source-health (:store c))))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (let [h (health)]
+      (is (= 0 (:consecutive-failures (h "A"))))
+      (is (string? (:last-ok (h "A"))))
+      (is (= 1 (:consecutive-failures (h "Broken"))))
+      (is (= "feed is down" (:last-error (h "Broken")))))))
 
 (def ^:private hour (* 60 60 1000))
 

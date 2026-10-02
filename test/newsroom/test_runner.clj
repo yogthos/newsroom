@@ -2,10 +2,12 @@
   "Runs every test namespace, and checks the core against its writ spec."
   (:require [clojure.test :as t]
             [newsroom.config-test]
+            [newsroom.embed-test]
             [newsroom.feed-test]
             [newsroom.llm-stream-test]
             [newsroom.markdown-test]
             [newsroom.news-spec]
+            [newsroom.news-test]
             [newsroom.pipeline-test]
             [newsroom.plugin-test]
             [newsroom.sources-test]
@@ -15,9 +17,11 @@
 (def namespaces
   '[newsroom.news-spec
     newsroom.config-test
+    newsroom.embed-test
     newsroom.feed-test
     newsroom.llm-stream-test
     newsroom.markdown-test
+    newsroom.news-test
     newsroom.store-test
     newsroom.pipeline-test
     newsroom.plugin-test

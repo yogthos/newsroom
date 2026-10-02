@@ -15,6 +15,7 @@
       markdown text not null,
       model text,
       provider text,
+      tldr text,
       created_at text not null)"
    "create table if not exists sources (
       day text not null,
@@ -24,14 +25,30 @@
       source text,
       summary text,
       published text,
+      also text,
       cited integer not null default 0,
-      primary key (day, n))"])
+      primary key (day, n))"
+   "create table if not exists source_health (
+      name text primary key,
+      last_ok text,
+      consecutive_failures integer not null default 0,
+      last_error text)"])
+
+(defn- add-column!
+  "An ALTER TABLE for a column an older database may not have, silently
+  skipped when it does."
+  [conn table column ddl]
+  (try (jdbc/execute! conn (str "alter table " table " add column " column " " ddl))
+       (catch Exception _ nil)))
 
 (defn open
   "A store on the sqlite database at `uri` (a path, or sqlite::memory:)."
   [uri]
   (let [conn (jdbc/connection (if (re-find #"^sqlite:" uri) uri (str "sqlite:" uri)))]
     (doseq [stmt schema] (jdbc/execute! conn stmt))
+    ;; databases from before :tldr and :also have no place for them
+    (add-column! conn "briefings" "tldr" "text")
+    (add-column! conn "sources" "also" "text")
     {:conn conn :lock (Object.)}))
 
 (defn close [{:keys [conn]}] (.close conn))
@@ -44,25 +61,27 @@
 
 (defn save-day!
   "Store a day's briefing and its sources, replacing whatever the day had."
-  [store {:keys [day sources cited markdown model provider]}]
+  [store {:keys [day sources cited markdown model provider tldr]}]
   (let [cited (set cited)]
     (with-db [conn store]
       (jdbc/atomic conn
         (jdbc/execute! conn ["delete from sources where day = ?" day])
         (jdbc/execute! conn ["delete from briefings where day = ?" day])
-        (jdbc/execute! conn ["insert into briefings (day, markdown, model, provider, created_at)
-                              values (?, ?, ?, ?, ?)"
-                             day markdown model provider (now)])
-        (doseq [{:keys [n title url source summary published]} sources]
-          (jdbc/execute! conn ["insert into sources (day, n, title, url, source, summary, published, cited)
-                                values (?, ?, ?, ?, ?, ?, ?, ?)"
+        (jdbc/execute! conn ["insert into briefings (day, markdown, model, provider, tldr, created_at)
+                              values (?, ?, ?, ?, ?, ?)"
+                             day markdown model provider tldr (now)])
+        (doseq [{:keys [n title url source summary published also]} sources]
+          (jdbc/execute! conn ["insert into sources (day, n, title, url, source, summary, published, also, cited)
+                                values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
                                day n title url source summary published
+                               (when (seq also) (pr-str also))
                                (if (contains? cited n) 1 0)]))))
     nil))
 
 (defn- row->source [r]
-  {:n (long (:n r)) :title (:title r) :url (:url r) :source (:source r)
-   :summary (:summary r) :published (:published r)})
+  (cond-> {:n (long (:n r)) :title (:title r) :url (:url r) :source (:source r)
+           :summary (:summary r) :published (:published r)}
+    (:also r) (assoc :also (read-string (:also r)))))
 
 (defn day
   "The stored day, or nil: {:day :markdown :model :provider :created-at
@@ -75,9 +94,53 @@
          :markdown (:markdown b)
          :model (:model b)
          :provider (:provider b)
+         :tldr (:tldr b)
          :created-at (:created_at b)
          :sources (mapv row->source rows)
          :cited (mapv row->source (filter #(= 1 (:cited %)) rows))}))))
+
+(defn archive
+  "The days that have a briefing, newest first, each with its standfirst
+  when it has one: for the sidebar's history list."
+  [store]
+  (with-db [conn store]
+    (mapv (fn [r] {:day (:day r) :tldr (:tldr r)})
+          (jdbc/fetch conn "select day, tldr from briefings order by day desc"))))
+
+(defn record-source-health!
+  "Roll each source's latest fetch up into its health: a failure bumps the
+  consecutive count and remembers why, a success clears both and stamps
+  when it last worked."
+  [store results]
+  (with-db [conn store]
+    (doseq [{:keys [source error]} results]
+      (if error
+        (jdbc/execute! conn ["insert into source_health (name, consecutive_failures, last_error)
+                              values (?, 1, ?)
+                              on conflict(name) do update set
+                                consecutive_failures = consecutive_failures + 1,
+                                last_error = excluded.last_error"
+                             source error])
+        (jdbc/execute! conn ["insert into source_health (name, last_ok, consecutive_failures)
+                              values (?, ?, 0)
+                              on conflict(name) do update set
+                                last_ok = excluded.last_ok,
+                                consecutive_failures = 0,
+                                last_error = null"
+                             source (now)])))))
+
+(defn source-health
+  "Every source's health, alphabetical by name: {:name :last-ok
+  :consecutive-failures :last-error}, the run desk's long view of which
+  feeds have been failing."
+  [store]
+  (with-db [conn store]
+    (mapv (fn [r] {:name (:name r)
+                   :last-ok (:last_ok r)
+                   :consecutive-failures (long (:consecutive_failures r))
+                   :last-error (:last_error r)})
+          (jdbc/fetch conn "select name, last_ok, consecutive_failures, last_error
+                            from source_health order by name"))))
 
 (defn days
   "Every day with a briefing, newest first."

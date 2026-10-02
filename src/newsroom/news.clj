@@ -2,12 +2,14 @@
   "The pure core of a day's briefing: no IO, no clock, no storage.
 
   Items gathered from every source are deduplicated by their canonical URL,
-  those the last briefing already had are left out, and the rest are
-  numbered as sources; the numbered sources are written into the
+  those the last briefings already had are left out, and the rest are
+  numbered as sources; near-duplicates across outlets are collapsed into one
+  source that credits the others; the numbered sources are written into the
   analysis prompt; the model's markdown answer cites them as [n], and
   `briefing` links those citations and appends the sources the answer cited.
   The contract is test/newsroom/news_spec.clj."
-  (:require [clojure.string :as str]))
+  (:require [clojure.math :as m]
+            [clojure.string :as str]))
 
 ;; --- urls ------------------------------------------------------------------------
 
@@ -62,10 +64,10 @@
     (when (>= (count k) min-title-chars) k)))
 
 (defn unseen-items
-  "The items that weren't among `earlier`, the last briefing's sources, in
-  the order they came. A story counts as seen when its canonical URL or its
-  headline matches one of them, since the same wire story turns up at a new
-  address the next day."
+  "The items that weren't among `earlier`, the sources of the briefings
+  before this one, in the order they came. A story counts as seen when its
+  canonical URL or its headline matches one of them, since the same wire
+  story turns up at a new address the next day."
   [items earlier]
   (let [urls (set (map (comp canonical-url :url) earlier))
         titles (set (keep (comp title-key :title) earlier))]
@@ -73,6 +75,58 @@
                (not (or (contains? urls (canonical-url (:url item)))
                         (contains? titles (title-key (:title item))))))
              items)))
+
+;; --- near-duplicates ----------------------------------------------------------------
+
+(defn- cosine
+  "Cosine similarity of two vectors, 0 when either is missing or empty."
+  [a b]
+  (if (or (nil? a) (nil? b) (empty? a) (empty? b))
+    0.0
+    (let [dot (reduce + (map * a b))
+          na (m/sqrt (reduce + (map * a a)))
+          nb (m/sqrt (reduce + (map * b b)))]
+      (if (or (zero? na) (zero? nb)) 0.0 (/ dot (* na nb))))))
+
+(defn- centroid
+  "The mean of the vectors, which nils don't count toward."
+  [vs]
+  (let [vs (remove nil? vs)]
+    (when (seq vs)
+      (let [n (count vs)]
+        (mapv #(/ % n) (reduce (fn [acc v] (mapv + acc v)) (repeat (count (first vs)) 0.0) vs))))))
+
+(defn collapse-similar
+  "Near-duplicate items collapsed into one, as greedy centroid clusters: an
+  item joins the most similar cluster whose centroid is within `threshold`
+  cosine similarity, else it starts its own. Only items from different
+  outlets merge, since one outlet's two similar stories are usually two
+  stories; the surviving item names the others in :also, the outlets that
+  also carry it. Embedding vectors don't survive the collapse."
+  [items threshold]
+  (if (or (nil? threshold) (empty? items))
+    items
+    (let [clusters (reduce
+                    (fn [clusters item]
+                      (let [v (:vector item)
+                            candidates (when v
+                                         (->> clusters
+                                              (remove #(contains? (set (map :source %)) (:source item)))
+                                              (map (fn [c] [(cosine v (centroid (keep :vector c))) c]))
+                                              seq))
+                            best (when candidates (apply max-key first candidates))]
+                        (if (and best (>= (first best) threshold))
+                          (mapv #(if (identical? (second best) %) (conj % item) %) clusters)
+                          (conj clusters [item]))))
+                    []
+                    items)]
+      (into []
+            (mapcat (fn [c]
+                      [(let [[head & others] c
+                             also (vec (distinct (keep :source others)))]
+                         (cond-> (dissoc head :vector)
+                           (seq also) (assoc :also also)))]))
+            clusters))))
 
 (defn cite
   "The items as sources, numbered from 1 in order: the numbers the analysis
@@ -122,6 +176,16 @@
                          (conj acc p)))
                      [] paragraphs)]
     (when (seq kept) (str/join "\n\n" kept))))
+
+(defn tldr
+  "The standfirst of a briefing: the first blockquote before the first
+  section heading, its > and spaces stripped. nil when there is none."
+  [markdown]
+  (let [lines (str/split-lines (str markdown))
+        before-section (first (split-with #(not (re-find #"^## " %)) lines))
+        quote (some #(when-let [[_ text] (re-matches #">\s?(.*)" %)] text)
+                    before-section)]
+    (when (and quote (not (str/blank? quote))) quote)))
 
 (defn add-previous
   "The template with `previous`, text about the last briefing, at its

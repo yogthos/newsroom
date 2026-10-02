@@ -16,7 +16,7 @@
 
 ;; --- sidebar -----------------------------------------------------------------------
 
-(defn- month-of [day] (subs day 0 7))
+(defn- month-of [{:keys [day]}] (subs day 0 7))
 
 (defn- month-label [ym]
   (let [[_ date] (str/split (sources/long-date (str ym "-01")) #" " 2)]
@@ -32,9 +32,11 @@
        [:section
         [:h3 (month-label ym)]
         [:ul
-         (for [d ds]
-           [:li [:a {:href (str "/day/" d) :class (when (= d current) "current")}
-                 (sources/long-date d)]])]]))])
+         (for [{:keys [day tldr]} ds]
+           [:li [:a {:href (str "/day/" day) :class (when (= day current) "current")}
+                 (sources/long-date day)]
+            (when-not (str/blank? tldr)
+              [:p.tldr tldr])])]]))])
 
 (defn- source-state [{:keys [state count error]}]
   (case state
@@ -91,9 +93,26 @@
        [:button {"data-on:click" (str "@post('/run?day=" today "')")}
         "Gather today’s news"])]))
 
+(defn- feed-health
+  "The run desk's long view of which feeds have been failing: each source's
+  last success and how many times in a row it has failed since."
+  [health]
+  (when (seq health)
+    [:details.health
+     [:summary "Feed health (" (count health) ")"]
+     [:ul
+      (for [{:keys [name last-ok consecutive-failures last-error]} health]
+        [:li
+         (if (zero? consecutive-failures)
+           [:span.ok name]
+           [:span.bad {:title last-error}
+            name " · " consecutive-failures " failed in a row"])
+         (when last-ok
+           [:span.muted " · last ok " (subs last-ok 0 (min 10 (count last-ok)))])])]]))
+
 (defn- sidebar
   "What goes inside the sidebar."
-  [days current]
+  [archive current health]
   (list
    [:header.masthead
     [:a {:href "/"} [:h1 "The Newsroom"]]
@@ -102,12 +121,13 @@
     [:span "Go to date"]
     [:input {:type "date" :value current
              "data-on:change" "evt.target.value && (window.location = '/day/' + evt.target.value)"}]]
-   (let [[prev next] (news/adjacent-days days current)]
+   (let [[prev next] (news/adjacent-days (map :day archive) current)]
      [:div.stepper
       (if prev [:a {:href (str "/day/" prev)} "← Earlier"] [:span.muted "← Earlier"])
       (if next [:a {:href (str "/day/" next)} "Later →"] [:span.muted "Later →"])])
    (run-panel @pipeline/status (pipeline/today))
-   (history days current)))
+   (feed-health health)
+   (history archive current)))
 
 ;; --- the day -----------------------------------------------------------------------
 
@@ -115,10 +135,11 @@
   [:details.gathered
    [:summary "Everything gathered for the day (" (count sources) ")"]
    [:ol
-    (for [{:keys [n title url source summary]} sources]
+    (for [{:keys [n title url source summary also]} sources]
       [:li {:id (str "source-" n) :value n}
        [:a {:href url :rel "noopener" :target "_blank"} title]
        (when-not (str/blank? source) [:span.muted " — " source])
+       (when (seq also) [:span.muted " · also " (str/join ", " also)])
        (when-not (str/blank? summary) [:p.summary summary])])]])
 
 (defn- article [st day]
@@ -151,7 +172,7 @@
   @pipeline/stored
   (if (= "#article" selector)
     (article st day)
-    (sidebar (store/days st) day)))
+    (sidebar (store/archive st) day (store/source-health st))))
 
 (defn page
   "The whole document for `day`."
