@@ -8,7 +8,7 @@
   inference to 1e-6 (test/newsroom/embed_test.clj checks golden vectors).
 
   That makes the whole model 6MB of data, packaged as resources/embed by
-  dev/make-embed-model.py. The int8 matrix is stored one byte per char,
+  dev/make-embed-model.clj. The int8 matrix is stored one byte per char,
   offset by 256 so no control character can be mangled by a reader; a
   token's vector is a char-range read straight off the slurped string, no
   parsing at all."
@@ -118,3 +118,44 @@
       (if (or (zero? na) (zero? nb))
         0.0
         (/ dot (* na nb))))))
+
+(defn unit
+  "The vector scaled to length 1, or nil when it has none."
+  [v]
+  (let [n (when (seq v) (Math/sqrt (reduce + (map * v v))))]
+    (when (and n (pos? n)) (mapv #(/ % n) v))))
+
+(defn centroid
+  "The direction of the vectors' mean, as a unit vector; nils don't count
+  toward it, and it is nil when there are none."
+  [vs]
+  (let [vs (remove nil? vs)]
+    (when (seq vs)
+      (unit (reduce (fn [acc v] (mapv + acc v)) vs)))))
+
+;; --- storing ------------------------------------------------------------------
+
+(def ^:private hex "0123456789abcdef")
+
+(def ^:private nibble (zipmap hex (range)))
+
+(defn encode
+  "A vector as 2 hex digits a dimension, quantized to a signed byte scaled
+  by its largest component: 256 characters for the model's 128 dims. The
+  scale is dropped, since cosine similarity doesn't see it."
+  [v]
+  (when (seq v)
+    (let [top (reduce max (map #(Math/abs (double %)) v))]
+      (apply str (mapcat (fn [x]
+                           (let [b (+ 128 (if (zero? top) 0 (Math/round (* 127.0 (/ x top)))))]
+                             [(nth hex (quot b 16)) (nth hex (rem b 16))]))
+                         v)))))
+
+(defn decode
+  "An encoded vector back as a unit vector, or nil for a blank or malformed one."
+  [s]
+  (when (and (string? s) (pos? (count s)) (even? (count s)) (every? nibble s))
+    (let [v (mapv (fn [[a b]] (- (+ (* 16 (nibble a)) (nibble b)) 128.0))
+                  (partition 2 s))
+          norm (Math/sqrt (reduce + (map * v v)))]
+      (when (pos? norm) (mapv #(/ % norm) v)))))

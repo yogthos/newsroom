@@ -15,7 +15,7 @@
   the same story comes back with a fragment or tracking parameters on it."
   (:require [clojure.string :as str]
             [newsroom.news :refer [canonical-url dedupe-items unseen-items overview add-previous cite render-prompt
-                                   citations link-citations briefing collapse-similar tldr
+                                   citations link-citations briefing collapse-similar told outlets tldr
                                    valid-day? adjacent-days]]
             [writ.spec :refer [spec ann refine graph flow law calls assume]]))
 
@@ -48,6 +48,8 @@
 (ann link-citations [String (List Source) -> String])
 (ann briefing       [String (List Source) -> String])
 (ann collapse-similar [(List Item) (Opt Float) -> (List Item)])
+(ann told           [(List Item) -> (List Item)])
+(ann outlets        [Item -> Nat])
 (ann tldr           [String -> (Opt String)])
 (ann valid-day?     [String -> Bool])
 (ann adjacent-days  [(List String) String -> (Tuple (Opt String) (Opt String))])
@@ -77,7 +79,8 @@
 
 (defn stories [ns titles]
   (vec (map-indexed (fn [i n] (story n (nth titles (mod i (max 1 (count titles))) "")
-                                     (+ i n)))                    ns)))
+                                     (+ i n)))
+                    ns)))
 
 (defn usable? [item]
   (not (or (str/blank? (:title item)) (str/blank? (:url item)))))
@@ -369,10 +372,8 @@
 (def dup-vectors [[1.0 0.0] [0.99 0.02] [0.0 1.0]])
 
 (law a-nil-threshold-collapses-nothing
-  (forall [t (Opt Float)]
-    (= (stories [1 2 3] ["a"])
-       (let [items (stories [1 2 3] ["a"])]
-         (collapse-similar items nil)))))
+  (= (stories [1 2 3] ["a"])
+     (collapse-similar (stories [1 2 3] ["a"]) nil)))
 
 (law a-verbatim-copy-merges-at-any-threshold-below-one
   (forall [t Float]
@@ -389,16 +390,57 @@
                                     clamp))))))
 
 (law a-verbatim-copy-is-one-story-with-both-outlets
-  (= [(assoc (story 1 "t" 0) :also ["other"])]
+  (= [(assoc (story 1 "t" 0) :also [{:source "other"
+                                     :url (:url (story 1 "t" 1))
+                                     :title (:title (story 1 "t" 1))
+                                     :origin "example.com"}])]
      (mapv #(dissoc % :vector)
            (collapse-similar [(assoc (story 1 "t" 0) :source "wire" :vector [1 0])
                               (assoc (story 1 "t" 1) :source "other" :vector [1 0])]
                              0.5))))
 
+(law a-collapsed-copy-counts-as-told
+  (forall [n Nat, a String]
+    (let [head (assoc (story n a 0) :source "wire" :vector [1 0])
+          copy (assoc (story n a 1) :url (str "https://elsewhere.org/" n) :source "other"
+                      :title (str "elsewhere " (alnum a)) :vector [1 0])
+          told-today (collapse-similar [head copy] 0.5)]
+      (and (= 2 (outlets (first told-today)))
+           (empty? (unseen-items [(dissoc copy :vector)] (told told-today)))))))
+
+(law one-publishers-feeds-count-as-one-outlet
+  (forall [n Nat]
+    (= 1 (outlets (assoc (story n "a" 0) :source "World feed"
+                         :also [{:source "Business feed" :url (str "https://www.example.com/business/" n)}])))))
+
+(law different-publishers-are-different-outlets
+  (= 2 (outlets (assoc (story 1 "a" 0) :url "https://one.org/a"
+                       :also [{:source "Two" :url "https://two.co.uk/b"}]))))
+
+(law a-wire-story-counts-once-however-many-reprint-it
+  (= 1 (outlets (assoc (story 1 "a" 0) :url "https://one.org/a" :summary "LONDON (Reuters) - Oil rose."
+                       :also [{:source "Two" :url "https://two.org/b" :origin "Reuters"}]))))
+
+(law one-publishers-similar-stories-stay-apart
+  (= 2 (count (collapse-similar [(assoc (story 1 "a" 0) :source "World" :vector [1 0])
+                                 (assoc (story 2 "b" 0) :source "Business" :vector [0.8 0.6])]
+                                0.5))))
+
+(law told-lists-each-source-then-its-copies-in-order
+  (forall [n Nat]
+    (let [s (assoc (story n "a" 0) :also [{:source "other" :url "https://o.example.com/x" :title "copy"}
+                                          {:source "named only"}])
+          s2 (story (inc n) "b" 0)]
+      (= [(:url s) "https://o.example.com/x" (:url s2)] (map :url (told [s s2]))))))
+
 (law the-standfirst-is-the-first-blockquote-before-the-sections
   (forall [a String]
     (= (str "t" (alnum a))
        (tldr (str "# Day\n\n> t" (alnum a) "\n\n## Overview\n\nBody.")))))
+
+(law the-standfirst-drops-its-citations-and-joins-its-lines
+  (= "Rates rose and yields followed."
+     (tldr "# Day\n\n> Rates rose [[1]](https://e.com/1)\n> and yields followed [2, 3].\n\n## Overview")))
 
 (law a-briefing-without-a-standfirst-has-none
   (nil? (tldr "# Day\n\n## Overview\n\nBody.")))

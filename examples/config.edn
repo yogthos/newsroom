@@ -23,8 +23,9 @@
  ;; Undated items are always kept.
  :lookback-days 1
 
- ;; The most items taken from one source, and in all. Sources are taken in
- ;; turn, so the overall cap trims every source evenly.
+ ;; The most items taken from one source, and in all. The overall cap keeps
+ ;; the most widely carried stories (see :story-threshold), and among equals
+ ;; sources are taken in turn, so it trims every source evenly.
  :max-items-per-source 12
  :max-items 180
 
@@ -35,8 +36,47 @@
 
  ;; Stories from different outlets whose titles and summaries embed this
  ;; close (cosine similarity) are collapsed into one source, with the other
- ;; outlets noted on it as "also reported by". nil turns collapsing off.
- :dupe-threshold 0.55
+ ;; outlets noted on it as "also reported by". An outlet is a publisher, by
+ ;; its web domain, so a publisher's several feeds count once and only
+ ;; collapse into each other when near verbatim; a story whose dateline
+ ;; names a wire agency, as in "WASHINGTON (AP) —", counts as the agency's.
+ ;; Same-story pairs from a day of the default feeds mostly score 0.6 to
+ ;; 0.8, and different stories on one topic mostly below 0.6. nil turns
+ ;; collapsing off.
+ :dupe-threshold 0.62
+
+ ;; A story is followed from day to day: an item whose embedding is this
+ ;; close to the sources of a story from the last :trend-days continues it.
+ ;; Items are ranked by how widely and how long their story has run, the
+ ;; outlets carrying it today plus the outlets on each earlier day, an
+ ;; earlier day counting half as much every :half-life-days. The heaviest
+ ;; come first in the prompt, with their coverage noted, and survive
+ ;; :max-items. nil stops the following, and the ranking is by today's
+ ;; outlets alone.
+ :story-threshold 0.6
+ :trend-days 7
+ :half-life-days 2
+
+ ;; Digests written from the stored days: a week's once the week is over
+ ;; (weeks run Monday to Sunday), a month's once the month is. Each ranks
+ ;; the storylines of the period by their coverage and says which are
+ ;; emerging, persistent or fading against the four periods before it.
+ ;; digest.md is their prompt, and :digest-stories how many storylines it
+ ;; is given. [] turns them off.
+ ;; After each briefing the model keeps a running note on every storyline
+ ;; the briefing cited, and keeps the notes it already has up to date (a
+ ;; story the briefing passed over starts none): a stable title, a summary of where it
+ ;; stands, and up to this many dated facts, each tied to the report it came
+ ;; from. Each day's reports are compacted into the note, so repeats merge
+ ;; and superseded details drop out. The briefing gets the notes of the
+ ;; stories still running as background, and the digests cite the notes'
+ ;; facts, which are kept with the coverage, four months past :keep-days.
+ ;; It costs one more model call a day; a :notes role in :roles can point it
+ ;; at a cheaper model. nil turns the notes off.
+ :story-notes 12
+
+ :digests [:week :month]
+ :digest-stories 15
 
  ;; How long one source may take before the run goes on without it.
  :source-timeout-ms 30000

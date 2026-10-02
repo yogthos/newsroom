@@ -8,10 +8,12 @@
             [newsroom.markdown-test]
             [newsroom.news-spec]
             [newsroom.news-test]
+            [newsroom.notes-test]
             [newsroom.pipeline-test]
             [newsroom.plugin-test]
             [newsroom.sources-test]
             [newsroom.store-test]
+            [newsroom.trends-test]
             [newsroom.ui-test]))
 
 (def namespaces
@@ -22,7 +24,9 @@
     newsroom.llm-stream-test
     newsroom.markdown-test
     newsroom.news-test
+    newsroom.notes-test
     newsroom.store-test
+    newsroom.trends-test
     newsroom.pipeline-test
     newsroom.plugin-test
     newsroom.sources-test

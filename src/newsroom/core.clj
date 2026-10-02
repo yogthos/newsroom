@@ -5,7 +5,13 @@
     GET  /day/YYYY-MM-DD    a day's page; the same path, as datastar's SSE
                             stream, re-renders it live
     GET  /day/YYYY-MM-DD.md the day's briefing as markdown
+    GET  /week/YYYY-Www     a week's digest, live like a day's page, and
+    GET  /month/YYYY-MM     a month's; either with .md as markdown
+    GET  /stories           every storyline the briefings keep notes on
+    GET  /story/DAY/N       a storyline's notes and coverage
     POST /run?day=...       gather and analyse a day (today by default)
+    POST /digest?kind=week&period=YYYY-Www
+                            write a digest (kind week or month)
     POST /cancel            cancel the run in flight"
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -17,6 +23,7 @@
             [newsroom.pipeline :as pipeline]
             [newsroom.plugin :as plugin]
             [newsroom.store :as store]
+            [newsroom.trends :as trends]
             [newsroom.ui :as ui]))
 
 (defonce system (atom nil))
@@ -37,6 +44,13 @@
 (defn- day-route [uri]
   (second (re-matches #"/day/(\d{4}-\d{2}-\d{2})(\.md)?" uri)))
 
+(defn- digest-route
+  "The [kind period] a digest's path names, when it names a real one."
+  [uri]
+  (when-let [[_ kind period] (re-matches #"/(week|month)/([0-9W-]+?)(?:\.md)?" uri)]
+    (let [kind (keyword kind)]
+      (when (trends/period-range kind period) [kind period]))))
+
 (def ^:private assets
   "The files served from resources/public, by path, with their content type."
   {"/js/datastar.js" "application/javascript"
@@ -56,6 +70,14 @@
               (ds/patch-signals {}))
           {:status 400 :body "bad day\n"}))
 
+      (and (= :post request-method) (= uri "/digest"))
+      (let [kind (some-> (query-param req "kind") keyword)
+            period (query-param req "period")]
+        (if (and (contains? trends/kinds kind) (trends/period-range kind period))
+          (do (pipeline/start-digest! (ctx) kind period)
+              (ds/patch-signals {}))
+          {:status 400 :body "bad digest\n"}))
+
       (and (= :post request-method) (= uri "/cancel"))
       (do (pipeline/cancel-run!) (ds/patch-signals {}))
 
@@ -63,6 +85,25 @@
       {:status 200
        :headers {"Content-Type" (assets uri) "Cache-Control" "max-age=86400"}
        :body (slurp (io/resource (str "public" uri)))}
+
+      (or (= uri "/stories") (re-matches #"/story/\d{4}-\d{2}-\d{2}/\d+" uri))
+      (let [current (if (= uri "/stories") {:stories true} {:story (subs uri (count "/story/"))})]
+        (if sse-request
+          (html (str (h/html (ui/fragment st current (:jolt.datastar/selector req)))))
+          (html (ui/page st current))))
+
+      (re-matches #"/(week|month)/.*" uri)
+      (if-let [[kind period] (digest-route uri)]
+        (cond
+          (str/ends-with? uri ".md")
+          (if-let [d (store/digest st kind period)]
+            {:status 200 :headers {"Content-Type" "text/markdown; charset=utf-8"} :body (:markdown d)}
+            (not-found))
+
+          sse-request (html (str (h/html (ui/fragment st {:kind kind :period period}
+                                                      (:jolt.datastar/selector req)))))
+          :else (html (ui/page st {:kind kind :period period})))
+        (not-found))
 
       :else
       (let [day (day-route uri)]

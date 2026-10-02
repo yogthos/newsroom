@@ -1,11 +1,12 @@
 (ns newsroom.news-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [newsroom.news :as news]))
 
 (defn- item [n source & {:keys [title url summary emb]}]
   (cond-> {:n n
            :title (or title (str "Story " n))
-           :url (or url (str "https://e.com/" n))
+           :url (or url (str "https://" (str/lower-case source) ".com/" n))
            :source source
            :summary (or summary "")
            :published nil}
@@ -25,7 +26,9 @@
     (testing "the first copy survives with the others credited"
       (is (= 2 (count out)))
       (is (= 1 (:n (first out))))
-      (is (= ["AP"] (:also (first out))) "the outlets that also carry it")
+      (is (= [{:source "AP" :url "https://ap.com/3" :title "Story 3" :origin "ap.com"}] (:also (first out)))
+          "the copies that also carry it, so they count as told")
+      (is (= 2 (news/outlets (first out))))
       (is (nil? (:also (second out)))))
     (testing "no vectors, no merging"
       (is (= 3 (count (news/collapse-similar (mapv #(dissoc % :vector) items) 0.55)))))
@@ -41,7 +44,7 @@
                                     (item 3 "BBC" :emb fed)]
                                    0.55)]
     ;; the two Reuters stories stay apart; BBC's copy joins the first
-    (is (= [["BBC"] nil] (mapv :also out)))
+    (is (= [["BBC"] nil] (mapv #(some->> (:also %) (mapv :source)) out)))
     (is (= 2 (count out)) "the second Reuters story is its own source")))
 
 (deftest collapse-similar-clusters-by-centroid
@@ -53,6 +56,28 @@
                                    0.9)]
     (is (= 2 (count out)) "two clusters of two")))
 
+(deftest outlets-are-counted-by-origin
+  (let [out (news/collapse-similar [(item 1 "CGTN World" :url "https://www.cgtn.com/a" :emb fed)
+                                    (item 2 "CGTN Business" :url "https://news.cgtn.com/a" :emb fed-again)
+                                    (item 3 "CGTN China" :url "https://www.cgtn.com/c" :emb (unit [6 5 0]))
+                                    (item 4 "BBC" :url "https://www.bbc.co.uk/a" :emb fed)]
+                                   0.55)]
+    (testing "a publisher's feeds carrying one text merge, and count once"
+      (is (= ["CGTN Business" "BBC"] (map :source (:also (first out)))))
+      (is (= 2 (news/outlets (first out)))))
+    (testing "the same publisher's merely similar story stays its own"
+      (is (= 2 (count out)))
+      (is (= "CGTN China" (:source (second out))))))
+  (testing "reprints of a wire story count as the agency's"
+    (let [[one] (news/collapse-similar
+                 [(item 1 "Yahoo" :url "https://news.yahoo.com/x" :summary "WASHINGTON (AP) — The Senate voted." :emb fed)
+                  (item 2 "ABC" :url "https://abcnews.go.com/x" :summary "WASHINGTON (AP) — The Senate voted." :emb fed)
+                  (item 3 "AP" :url "https://apnews.com/x" :emb fed)
+                  (item 4 "Guardian" :url "https://www.theguardian.com/x" :emb fed-again)]
+                 0.55)]
+      (is (= ["AP" "AP" "theguardian.com"] (map :origin (:also one))))
+      (is (= 2 (news/outlets one)) "AP and the Guardian"))))
+
 (deftest tldr-reads-the-standfirst
   (is (= "Rates up, tech down"
          (news/tldr "# The day\n\n> Rates up, tech down\n\n## Overview\n\nText.")))
@@ -62,4 +87,7 @@
     (is (nil? (news/tldr "# The day\n\n## Overview\n\n> quoted in a section\n\nText."))))
   (testing "no blockquote, no tldr"
     (is (nil? (news/tldr "# The day\n\n## Overview\n\nText."))))
-  (is (nil? (news/tldr ""))))
+  (is (nil? (news/tldr "")))
+  (testing "a standfirst that cites its sources is shown without the citations"
+    (is (= "Rates up, tech down."
+           (news/tldr "# The day\n\n> Rates up [[1]](https://e.com/1), tech down [2].\n\n## Overview")))))

@@ -8,8 +8,8 @@
   analysis prompt; the model's markdown answer cites them as [n], and
   `briefing` links those citations and appends the sources the answer cited.
   The contract is test/newsroom/news_spec.clj."
-  (:require [clojure.math :as m]
-            [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [newsroom.embed :as embed]))
 
 ;; --- urls ------------------------------------------------------------------------
 
@@ -76,57 +76,117 @@
                         (contains? titles (title-key (:title item))))))
              items)))
 
+;; --- who carried a story --------------------------------------------------------
+
+(def ^:private second-levels
+  "Second-level labels under a country's domain that a publisher registers
+  beneath, as in bbc.co.uk or chinadaily.com.cn."
+  #{"co" "com" "org" "net" "ac" "gov" "edu" "ne" "or"})
+
+(defn- publisher
+  "The registrable domain of a URL's host, which names its publisher across
+  all of its feeds: news.bbc.co.uk and www.bbc.co.uk are both bbc.co.uk.
+  nil for a URL with no host."
+  [url]
+  (when-let [[_ host] (re-find #"^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#:]+)" (str url))]
+    (let [labels (str/split (str/lower-case host) #"\.")
+          n (count labels)
+          keep (if (and (> n 2) (= 2 (count (last labels))) (contains? second-levels (nth labels (- n 2)))) 3 2)]
+      (str/join "." (take-last keep labels)))))
+
+(def ^:private agencies
+  "The wire agencies, by how a dateline names them and by their own domains."
+  {"AP" "AP", "Associated Press" "AP", "Reuters" "Reuters", "AFP" "AFP",
+   "Agence France-Presse" "AFP", "Xinhua" "Xinhua", "dpa" "dpa", "PTI" "PTI", "ANI" "ANI",
+   "IANS" "IANS", "UPI" "UPI", "Kyodo" "Kyodo", "Yonhap" "Yonhap", "TASS" "TASS", "EFE" "EFE",
+   "ANSA" "ANSA", "Bloomberg" "Bloomberg"
+   "apnews.com" "AP", "reuters.com" "Reuters", "afp.com" "AFP", "xinhuanet.com" "Xinhua",
+   "news.cn" "Xinhua", "bloomberg.com" "Bloomberg", "tass.com" "TASS", "yna.co.kr" "Yonhap"})
+
+(def ^:private dateline
+  "A wire dateline opening a story, as in WASHINGTON (AP) — or (Reuters) -."
+  #"^[^(]{0,60}\((AP|Associated Press|Reuters|AFP|Agence France-Presse|Xinhua|dpa|PTI|ANI|IANS|UPI|Kyodo|Yonhap|TASS|EFE|ANSA|Bloomberg)\)\s*[-–—:]")
+
+(defn- origin
+  "Where an item's story came from, which is what counts as one outlet: the
+  wire agency its dateline names, since a reprint is the agency's story
+  wherever it runs, else its publisher, else its source."
+  [{:keys [url summary source origin]}]
+  (or origin
+      (some->> (re-find dateline (str summary)) second (get agencies))
+      (let [p (publisher url)]
+        (or (get agencies p) p))
+      source))
+
 ;; --- near-duplicates ----------------------------------------------------------------
 
-(defn- cosine
-  "Cosine similarity of two vectors, 0 when either is missing or empty."
-  [a b]
-  (if (or (nil? a) (nil? b) (empty? a) (empty? b))
-    0.0
-    (let [dot (reduce + (map * a b))
-          na (m/sqrt (reduce + (map * a a)))
-          nb (m/sqrt (reduce + (map * b b)))]
-      (if (or (zero? na) (zero? nb)) 0.0 (/ dot (* na nb))))))
-
-(defn- centroid
-  "The mean of the vectors, which nils don't count toward."
-  [vs]
-  (let [vs (remove nil? vs)]
-    (when (seq vs)
-      (let [n (count vs)]
-        (mapv #(/ % n) (reduce (fn [acc v] (mapv + acc v)) (repeat (count (first vs)) 0.0) vs))))))
+(def ^:private verbatim
+  "How similar two items from one publisher's different feeds, or two
+  reprints of one wire story, have to be to count as the same text."
+  0.9)
 
 (defn collapse-similar
   "Near-duplicate items collapsed into one, as greedy centroid clusters: an
   item joins the most similar cluster whose centroid is within `threshold`
-  cosine similarity, else it starts its own. Only items from different
-  outlets merge, since one outlet's two similar stories are usually two
-  stories; the surviving item names the others in :also, the outlets that
-  also carry it. Embedding vectors don't survive the collapse."
+  cosine similarity, else it starts its own. Items from one feed never
+  merge, and items with one origin (a publisher's several feeds, reprints of
+  one wire story) only when they are near verbatim, since one outlet's two
+  similar stories are usually two stories. The surviving item, the first of
+  its cluster, lists the others in :also as {:source :url :title :origin},
+  so the copies count as told, and carries the cluster's centroid as its
+  :vector."
   [items threshold]
   (if (or (nil? threshold) (empty? items))
     items
-    (let [clusters (reduce
+    (let [joins? (fn [c item v]
+                   (and (:sum c)
+                        (not (contains? (set (map :source (:items c))) (:source item)))
+                        (let [kin (filter #(= (origin item) (origin %)) (:items c))]
+                          (every? #(>= (embed/cosine v (:vector %)) verbatim) kin))))
+          clusters (reduce
                     (fn [clusters item]
                       (let [v (:vector item)
-                            candidates (when v
-                                         (->> clusters
-                                              (remove #(contains? (set (map :source %)) (:source item)))
-                                              (map (fn [c] [(cosine v (centroid (keep :vector c))) c]))
-                                              seq))
-                            best (when candidates (apply max-key first candidates))]
+                            ;; a cluster keeps the sum of its vectors, which
+                            ;; points the same way as their mean
+                            best (when v
+                                   (some->> (map-indexed vector clusters)
+                                            (keep (fn [[i c]]
+                                                    (when (joins? c item v)
+                                                      [(embed/cosine v (:sum c)) i])))
+                                            seq
+                                            (apply max-key first)))]
                         (if (and best (>= (first best) threshold))
-                          (mapv #(if (identical? (second best) %) (conj % item) %) clusters)
-                          (conj clusters [item]))))
+                          (update clusters (second best)
+                                  (fn [c] (-> c
+                                              (update :items conj item)
+                                              (update :sum #(mapv + % v)))))
+                          (conj clusters {:items [item] :sum v}))))
                     []
                     items)]
-      (into []
-            (mapcat (fn [c]
-                      [(let [[head & others] c
-                             also (vec (distinct (keep :source others)))]
-                         (cond-> (dissoc head :vector)
-                           (seq also) (assoc :also also)))]))
+      (mapv (fn [{:keys [sum] [head & others] :items}]
+              (let [also (vec (keep #(when (:source %)
+                                       (assoc (select-keys % [:source :url :title]) :origin (origin %)))
+                                    others))]
+                (cond-> head
+                  (seq also) (assoc :also also :vector (embed/unit sum)))))
             clusters))))
+
+(defn told
+  "The stories `sources` told: each source and the copies collapsed into it,
+  which are what unseen-items checks a new day's items against."
+  [sources]
+  (mapcat (fn [s]
+            (cons s (for [{:keys [url] :as copy} (:also s) :when url]
+                      (merge {:title "" :source "" :summary "" :published nil}
+                             (select-keys copy [:title :url :source])))))
+          sources))
+
+(defn outlets
+  "How many outlets carried a source: the distinct origins of it and of the
+  copies collapsed into it, so a publisher's several feeds count once and a
+  wire story counts once however many outlets reprint it."
+  [{:keys [also] :as s}]
+  (max 1 (count (distinct (remove str/blank? (map origin (cons s also)))))))
 
 (defn cite
   "The items as sources, numbered from 1 in order: the numbers the analysis
@@ -136,11 +196,24 @@
 
 ;; --- the prompt ------------------------------------------------------------------
 
+(defn- coverage
+  "How widely and how long a source's story has run, for the model to weigh
+  it by: nil for a story one outlet carried on one day."
+  [s]
+  (let [n (outlets s)
+        days (or (:days s) 1)]
+    (when (or (> n 1) (> days 1))
+      (str "Coverage: "
+           (str/join ", " (cond-> []
+                            (> n 1) (conj (str n " outlets today"))
+                            (> days 1) (conj (str "in the news on " days " days"))))))))
+
 (defn- source-line [s]
   (str "[" (:n s) "] " (:title s)
        (when-not (str/blank? (:source s)) (str " (" (:source s) ")"))
        (when-let [p (:published s)] (str ", " p))
        "\n" (:url s)
+       (when-let [c (coverage s)] (str "\n" c))
        (when-not (str/blank? (:summary s)) (str "\n" (:summary s)))))
 
 (defn- source-block [sources]
@@ -179,13 +252,20 @@
 
 (defn tldr
   "The standfirst of a briefing: the first blockquote before the first
-  section heading, its > and spaces stripped. nil when there is none."
+  section heading, its lines joined, with the > marks and any citations
+  stripped, since it is shown on its own in the archive. nil when there is
+  none."
   [markdown]
-  (let [lines (str/split-lines (str markdown))
-        before-section (first (split-with #(not (re-find #"^## " %)) lines))
-        quote (some #(when-let [[_ text] (re-matches #">\s?(.*)" %)] text)
-                    before-section)]
-    (when (and quote (not (str/blank? quote))) quote)))
+  (let [quoted? #(str/starts-with? % ">")
+        text (->> (str/split-lines (str markdown))
+                  (take-while #(not (re-find #"^## " %)))
+                  (drop-while (complement quoted?))
+                  (take-while quoted?)
+                  (map #(subs % 1))
+                  (str/join " ")
+                  strip-citations)
+        text (str/trim (str/replace text #"\s+" " "))]
+    (when-not (str/blank? text) text)))
 
 (defn add-previous
   "The template with `previous`, text about the last briefing, at its

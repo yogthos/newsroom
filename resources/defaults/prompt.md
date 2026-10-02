@@ -119,6 +119,14 @@ ruling that changes how a whole industry is regulated or a trial that shifts
 relations between two states, and then the pattern is the subject, not the
 case.
 
+The sources are listed with the most widely and longest covered stories
+first. A source's coverage line says how many outlets carried its story today
+and on how many days the story has been in the news. A story that many
+outlets carry, or one that keeps coming back day after day, is likely part of
+a major trend and deserves more weight, though coverage alone doesn't make an
+event significant and a single outlet can carry the most important news of
+the day.
+
 It's better to cover fewer events well and connect them properly than to
 touch on everything that was reported. Don't mention the stories you left
 out.

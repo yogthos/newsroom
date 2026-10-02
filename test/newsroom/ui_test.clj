@@ -54,6 +54,73 @@
         (is (str/includes? page "1 failed in a row") "and the failing one says so"))
       (finally (store/close st)))))
 
+(deftest a-digest-page-and-the-digests-in-the-sidebar
+  (with-store
+    (fn [st]
+      (store/save-digest! st {:kind :week :period "2026-W40"
+                              :sources [{:n 1 :day "2026-09-30" :title "Wire story" :url "https://e.com/1" :source "Wire"}]
+                              :cited [1] :markdown "# The week\n\nClaim [[1]](https://e.com/1)." :tldr "Rates held."
+                              :model "m" :provider "p"})
+      (store/save-digest! st {:kind :week :period "2026-W39" :sources [] :cited []
+                              :markdown "# Earlier" :model "m" :provider "p"})
+      (let [page (ui/page st {:kind :week :period "2026-W40"})]
+        (is (str/includes? page "<title>The week of 28 September 2026 · The Newsroom</title>"))
+        (is (str/includes? page "<h1>The week</h1>"))
+        (is (str/includes? page "Rates held.") "the digest's standfirst in the sidebar")
+        (is (str/includes? page "href=\"/week/2026-W39\">← Earlier") "stepping goes week to week")
+        (is (str/includes? page "Wire, 30 September 2026") "its sources, by day"))
+      (testing "the days' pages list the digests too"
+        (is (str/includes? (ui/page st "2026-09-30") "href=\"/week/2026-W40\"")))
+      (testing "a digest not yet written"
+        (is (str/includes? (ui/page st {:kind :month :period "2026-09"}) "Write this digest"))
+        (is (str/includes? (ui/page st {:kind :month :period "2026-08"}) "There are no briefings for this month"))
+        (is (str/includes? (ui/page st {:kind :month :period "2999-01"}) "isn’t over yet")))
+      (reset! core/system {:store st :config {}})
+      (is (= 200 (:status (core/app {:uri "/week/2026-W40" :request-method :get}))))
+      (is (= "# The week\n\nClaim [[1]](https://e.com/1)."
+             (:body (core/app {:uri "/week/2026-W40.md" :request-method :get}))))
+      (is (= 404 (:status (core/app {:uri "/month/2026-09.md" :request-method :get}))))
+      (is (= 404 (:status (core/app {:uri "/week/2025-W53" :request-method :get}))))
+      (is (= 400 (:status (core/app {:uri "/digest" :query-string "kind=year&period=2026"
+                                     :request-method :post})))))))
+
+(deftest storyline-pages
+  (let [st (store/open "sqlite::memory:")
+        source (fn [n outlets] {:n n :title (str "Fed story " n) :url (str "https://e.com/" n) :source "Wire"
+                                :summary "" :published nil :story "2026-09-29/1"
+                                :also (vec (for [i (range (dec outlets))] {:source "Other" :url (str "https://o" i ".org/x")}))})]
+    (try
+      (store/save-day! st {:day "2026-09-29" :sources [(source 1 1)] :cited [1] :markdown "x" :model "m" :provider "p"})
+      (store/save-day! st {:day "2026-09-30" :sources [(source 1 3)] :cited [] :markdown "y" :model "m" :provider "p"})
+      (store/save-notes! st {"2026-09-29/1" {:title "The Fed's <pause>" :summary "Held twice."
+                                             :first-day "2026-09-29" :last-day "2026-09-30"
+                                             :facts [{:day "2026-09-29" :text "The Fed held." :url "https://e.com/1"
+                                                      :source "Wire" :headline "Fed holds"}]}})
+      (testing "a storyline's page"
+        (let [page (ui/page st {:story "2026-09-29/1"})]
+          (is (str/includes? page "<title>The Fed&apos;s &lt;pause&gt; · The Newsroom</title>")
+              "named by its note, escaped")
+          (is (str/includes? page "Held twice."))
+          (is (str/includes? page "The Fed held."))
+          (is (str/includes? page "href=\"https://e.com/1\""))
+          (is (str/includes? page "29 September 2026 to 30 September 2026"))
+          (is (str/includes? page "width:100%") "the widest day fills the bar")
+          (is (str/includes? page "1 outlet · cited"))
+          (is (str/includes? page "href=\"/day/2026-09-30\">30 September 2026"))))
+      (testing "the list of them, and the sidebar"
+        (let [page (ui/page st {:stories true})]
+          (is (str/includes? page "The stories the briefings follow"))
+          (is (str/includes? page "1 fact"))
+          (is (str/includes? page "href=\"/story/2026-09-29/1\""))))
+      (testing "a day's sources link to their storyline"
+        (is (str/includes? (ui/page st "2026-09-30") "storyline: <a href=\"/story/2026-09-29/1\">")))
+      (is (str/includes? (ui/page st {:story "2026-01-01/9"}) "No notes on this storyline"))
+      (reset! core/system {:store st :config {}})
+      (is (= 200 (:status (core/app {:uri "/stories" :request-method :get}))))
+      (is (str/includes? (:body (core/app {:uri "/story/2026-09-29/1" :request-method :get})) "Held twice."))
+      (is (= 404 (:status (core/app {:uri "/story/nope" :request-method :get}))))
+      (finally (store/close st)))))
+
 (deftest a-day-with-no-briefing
   (with-store
     (fn [st]

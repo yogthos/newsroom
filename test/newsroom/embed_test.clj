@@ -1,6 +1,6 @@
 (ns newsroom.embed-test
   "Embeddings against golden vectors from model2vec 0.9.0 running
-  blobbybob/potion-mxbai-128d-v2 (dev/make-embed-model.py packages it).
+  blobbybob/potion-mxbai-128d-v2 (dev/make-embed-model.clj packages it).
   Vectors are the first 6 of 128 dims, normalized; Clojure sums in float64
   against python's float32, so 1e-5 is the tolerance."
   (:require [clojure.test :refer [deftest is testing]]
@@ -55,3 +55,12 @@
     (is (nil? (embed/embed @model "         ")))
     (is (= 1.0 (embed/cosine [1 0] [1 0])))
     (is (= 0.0 (embed/cosine nil [1 0])))))
+
+(deftest a-stored-vector-keeps-its-direction
+  (let [v (embed/embed @model "The Federal Reserve raised interest rates.")
+        s (embed/encode v)]
+    (is (= 256 (count s)) "two hex digits a dimension")
+    (is (> (embed/cosine v (embed/decode s)) 0.999))
+    (is (nil? (embed/decode nil)))
+    (is (nil? (embed/decode "zz")))
+    (is (nil? (embed/encode nil)))))

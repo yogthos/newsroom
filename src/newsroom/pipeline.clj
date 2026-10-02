@@ -7,6 +7,11 @@
   A run is one cancellable task. Cancelling it interrupts whatever fetch or
   model call is in flight and stores nothing. Only one run goes at a time.
 
+  The weekly and monthly digests are runs too: they read the stored days of
+  a period instead of gathering, rank its storylines (newsroom.trends) and
+  have the analyst write them up. The schedule writes each one once its
+  period is over.
+
   Progress is published to `status`, a glimmer ratom, so every open page
   shows it live."
   (:require [clojure.java.io :as io]
@@ -20,8 +25,10 @@
             [newsroom.llm.client :as llm]
             [newsroom.llm.providers :as providers]
             [newsroom.news :as news]
+            [newsroom.notes :as notes]
             [newsroom.sources :as sources]
-            [newsroom.store :as store]))
+            [newsroom.store :as store]
+            [newsroom.trends :as trends]))
 
 (defonce ^{:doc "The current or last run, for the page to show."}
   status (ratom/atom {:state :idle}))
@@ -62,6 +69,11 @@
   [run-id event]
   (update-status! run-id update :events
                   (fn [es] (vec (take-last max-events (conj (or es []) (assoc event :at (now))))))))
+
+(defn- interrupted? [e]
+  ;; a cancel that lands in a blocking call surfaces as that thread's
+  ;; interrupt rather than as ebb's Cancelled
+  (or (m/cancelled? e) (instance? InterruptedException e)))
 
 ;; --- watching the model write ------------------------------------------------------
 
@@ -165,8 +177,11 @@
 
 ;; --- the run -----------------------------------------------------------------------
 
-(defn- write-markdown! [dir day doc]
-  (let [f (io/file dir (str day ".md"))]
+(defn- write-markdown!
+  "The briefing as `name`.md, the day for a day's and the period for a
+  digest's, which can't collide."
+  [dir name doc]
+  (let [f (io/file dir (str name ".md"))]
     (.mkdirs (.getParentFile f))
     (spit f doc)))
 
@@ -215,6 +230,88 @@
        "day's sources, so cite only today's numbered sources below.\n\n"
        overview))
 
+(defn- write-up
+  "Task: the analyst's answer to `prompt`, streamed to the status as it is
+  written: {:answer :reply}. Fails when the answer is empty."
+  [{:keys [run-id] :as ctx} llm-config prompt what]
+  (m/sp
+    (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
+                             ") to write " what)})
+    (let [chat (or (:chat ctx) llm/chat)
+          watcher (progress-watcher run-id)
+          reply (m/? (m/via m/blk (chat llm-config {:messages [{:role "user" :content prompt}]
+                                                    :on-delta (:on-delta watcher)})))
+          _ ((:flush! watcher))
+          answer (str/trim (str (:content reply)))]
+      (when (str/blank? answer)
+        (throw (ex-info (if (= "length" (:finish-reason reply))
+                          (str "the model used its whole token budget ("
+                               (:max-tokens llm-config) ") before writing " what ";"
+                               " raise :max-tokens for the provider in config.edn")
+                          (str "the model returned an empty answer for " what " (finish reason: "
+                               (:finish-reason reply) ")"))
+                        {:finish-reason (:finish-reason reply)})))
+      {:answer answer :reply reply})))
+
+(defn embed-text
+  "What an item is embedded by: its headline twice, then its summary. The
+  embedding is a mean over the words, so the doubled headline weighs as
+  much as a summary several times its length, and on a day of real feeds
+  this split same-story pairs from same-topic ones better than the
+  headline alone, the headline with the summary's first sentence, or the
+  headline once with the whole summary."
+  [{:keys [title summary]}]
+  (str title ". " title ". " summary))
+
+(defn- embed-items
+  "The items with the :vector of their embed-text."
+  [items]
+  (let [model @embed-model]
+    (mapv (fn [i] (assoc i :vector (embed/embed model (embed-text i)))) items)))
+
+(defn- follow-stories
+  "The items linked to the storylines of the last :trend-days (7 by
+  default) before `day`, then ranked by how widely and how long their
+  stories have run, heaviest first."
+  [store config day items]
+  (let [threshold (:story-threshold config)
+        lines (when threshold
+                (trends/storylines (store/sources-between store (minus-days day (:trend-days config 7))
+                                                          (minus-days day 1))))]
+    (trends/rank (trends/link-stories items lines threshold) lines day (:half-life-days config 2))))
+
+(defn- notes-llm
+  "The model that keeps the notes: the :notes role's when the config gives
+  it one, else the analyst's."
+  [config]
+  (providers/role-llm config (if (get-in config [:roles :notes]) :notes :analyst)))
+
+(defn- update-notes
+  "Task: the notes on the day's storylines updated from its reports by the
+  analyst, and stored. A failure is logged rather than thrown, since the
+  day's briefing is already filed; only a cancel propagates."
+  [{:keys [config store run-id] :as ctx} day numbered cited noted max-facts]
+  (m/sp
+    (let [candidates (notes/candidates numbered cited noted)]
+      (when (seq candidates)
+        (let [old (store/notes store (map first candidates))
+              {:keys [prompt ids]} (notes/compaction-prompt day candidates old max-facts)
+              llm-config (notes-llm config)
+              _ (log! run-id {:text (str "Updating the notes on " (count candidates) " storylines")})
+              chat (or (:chat ctx) llm/chat)
+              result (m/? (m/attempt (m/via m/blk (chat llm-config {:messages [{:role "user" :content prompt}]
+                                                                    :on-delta (fn [_])}))))]
+          (try
+            (let [updated (notes/apply-answer day candidates old ids (:content (result)) max-facts)]
+              (if (seq updated)
+                (do (store/save-notes! store updated)
+                    (log! run-id {:text (str "Updated the notes on " (count updated) " storylines") :level :ok}))
+                (log! run-id {:text "The notes weren't updated: the answer held no notes" :level :error})))
+            (catch Throwable e
+              (when (interrupted? e) (throw e))
+              (log! run-id {:text (str "The notes weren't updated: " (or (ex-message e) (str e)))
+                            :level :error}))))))))
+
 (defn run-task
   "Task: gather, analyse and store `day`. Completes with the stored day's
   summary; fails when nothing was gathered or the model call fails.
@@ -245,22 +342,26 @@
             gathered (news/dedupe-items (day-items results config day))
             seen (seen-briefings store day config)
             earlier (first seen)
-            fresh (news/unseen-items gathered (mapcat :sources seen))
+            fresh (news/unseen-items gathered (news/told (mapcat :sources seen)))
             _ (when (< (count fresh) (count gathered))
                 (log! run-id {:text (str "Left out " (- (count gathered) (count fresh))
                                          " stories already in the briefings up to "
                                          (sources/long-date (:day earlier)))}))
             threshold (:dupe-threshold config)
-            embedded-items (if threshold
-                             (let [model @embed-model]
-                               (mapv (fn [i] (assoc i :vector (embed/embed model (str (:title i) ". " (:summary i)))))
-                                     fresh))
+            embedded-items (if (or threshold (:story-threshold config))
+                             (embed-items fresh)
                              fresh)
             collapsed (news/collapse-similar embedded-items threshold)
             _ (when (< (count collapsed) (count embedded-items))
                 (log! run-id {:text (str "Collapsed " (- (count embedded-items) (count collapsed))
                                          " near-duplicate stories across outlets")}))
-            numbered (->> collapsed (take (:max-items config 80)) news/cite)
+            ranked (follow-stories store config day collapsed)
+            _ (when-let [followed (seq (filter #(> (:days %) 1) ranked))]
+                (log! run-id {:text (str "Followed " (count followed) " stories from earlier days, the longest"
+                                         " in the news for " (apply max (map :days followed)) " days")}))
+            ;; a story that starts today is named by its own day and number
+            numbered (->> ranked (take (:max-items config 80)) news/cite
+                          (mapv (fn [s] (assoc s :story (or (:story s) (str day "/" (:n s)))))))
             _ (when (empty? numbered)
                 (throw (ex-info (if (seq gathered)
                                   (str "every story gathered was already in the briefings up to "
@@ -273,29 +374,23 @@
             established (some-> (:markdown earlier) news/overview)
             _ (when established
                 (log! run-id {:text (str "Building on the briefing for " (sources/long-date (:day earlier)))}))
+            max-facts (:story-notes config)
+            kept (when max-facts (store/notes store (map :story numbered)))
+            running (notes/background kept numbered sources/long-date)
+            _ (when running
+                (log! run-id {:text "Giving the model the notes on the stories still running"}))
             prompt (news/render-prompt (news/add-previous (or (:template ctx) (config/prompt-template))
-                                                          (some->> established
-                                                                   (previous-context (:day earlier))))
+                                                          (some->> [(some->> established
+                                                                             (previous-context (:day earlier)))
+                                                                    running]
+                                                                   (remove nil?)
+                                                                   seq
+                                                                   (str/join "\n\n")))
                                        (str (sources/long-date day) " (" day ")")
                                        numbered)
             _ (update-status! run-id assoc :state :analysing :items (count numbered)
                               :provider (name (:alias llm-config)) :model (:model llm-config))
-            _ (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
-                                       ") to write the briefing")})
-            chat (or (:chat ctx) llm/chat)
-            watcher (progress-watcher run-id)
-            reply (m/? (m/via m/blk (chat llm-config {:messages [{:role "user" :content prompt}]
-                                                      :on-delta (:on-delta watcher)})))
-            _ ((:flush! watcher))
-            answer (str/trim (str (:content reply)))
-            _ (when (str/blank? answer)
-                (throw (ex-info (if (= "length" (:finish-reason reply))
-                                  (str "the model used its whole token budget ("
-                                       (:max-tokens llm-config) ") before writing the briefing;"
-                                       " raise :max-tokens for the provider in config.edn")
-                                  (str "the model returned an empty briefing (finish reason: "
-                                       (:finish-reason reply) ")"))
-                                {:finish-reason (:finish-reason reply)})))
+            {:keys [answer reply]} (m/? (write-up ctx llm-config prompt "the briefing"))
             doc (news/briefing answer numbered)
             known (set (map :n numbered))
             cited (filterv known (news/citations answer))]
@@ -309,33 +404,208 @@
         (write-markdown! (or (:markdown-dir ctx) (config/path "briefings")) day doc)
         (log! run-id {:text (str "Filed the briefing: " (count cited) " of " (count numbered)
                                  " sources cited") :level :ok})
+        (when max-facts
+          (m/? (update-notes ctx day numbered cited (keys kept) max-facts)))
         (when-let [gone (seq (prune-days! ctx))]
           (log! run-id {:text (str "Dropped " (count gone) " old "
                                    (if (= 1 (count gone)) "day" "days")
                                    " past the limit of " (:keep-days config default-keep-days))}))
         (swap! stored inc)
-        {:day day :items (count numbered) :cited (count cited)}))))
+        {:day day :digest nil :items (count numbered) :cited (count cited)}))))
+
+;; --- digests -----------------------------------------------------------------------
+
+(defn period-label
+  "A digest's period the way a reader says it: the week of 28 September
+  2026, or September 2026."
+  [kind period]
+  (let [[from _] (trends/period-range kind period)]
+    (case kind
+      :week (str "the week of " (sources/long-date from))
+      :month (second (str/split (sources/long-date from) #" " 2)))))
+
+(def ^:private sources-per-storyline
+  "How many of a storyline's stored sources a digest is given to cite, when
+  it has no notes."
+  5)
+
+(def ^:private facts-per-storyline
+  "How many facts from a storyline's notes a digest is given to cite."
+  8)
+
+(defn- with-candidates
+  "The storylines with what the digest cites for each, as :candidates: the
+  facts from its notes dated in the period, else its stored sources there,
+  when :keep-days hasn't dropped them. A storyline with neither is left
+  out, and one with notes takes their title and summary."
+  [lines kept stored from to]
+  (vec (keep (fn [{:keys [story] :as line}]
+               (let [note (get kept story)
+                     facts (some-> note (notes/facts-between from to))
+                     own (get stored story)
+                     candidates (if (seq facts)
+                                  (vec (take-last facts-per-storyline facts))
+                                  (trends/digest-sources own sources-per-storyline))]
+                 (when (seq candidates)
+                   (assoc line
+                          :title (or (:title note)
+                                     (:title (first (sort-by #(- (news/outlets %)) own))))
+                          :summary (:summary note)
+                          :candidates candidates))))
+             lines)))
+
+(defn- previous-digest-context
+  [kind period overview]
+  (str "## The last digest\n\n"
+       "This is the overview of the digest for " (period-label kind period) ". Take it as what "
+       "the reader already knows. Don't retell it. Say what this period changed, confirmed or "
+       "overturned. Its citations belong to that digest's sources, so cite only the numbered "
+       "sources below.\n\n"
+       overview))
+
+(defn digest-task
+  "Task: write and store the digest of `kind` (:week or :month) for
+  `period` from what is kept of its days: their coverage, which ranks the
+  storylines, the notes kept on those storylines, which the digest cites,
+  and the days' standfirsts. A storyline with no notes falls back to its
+  stored sources. Completes with the digest's summary; fails when the
+  period has no briefings or nothing ran for more than one outlet on one
+  day.
+
+  `ctx` is as for run-task, plus an optional :digest-template."
+  [{:keys [config store] :as ctx} kind period]
+  (let [own? (nil? (:run-id ctx))
+        run-id (or (:run-id ctx) (Object.))
+        ctx (assoc ctx :run-id run-id)
+        label (period-label kind period)
+        job {:kind kind :period period}]
+    (m/sp
+      (when own? (reset! status {:run run-id :state :starting :digest job :started (now)}))
+      (update-status! run-id assoc :state :starting :digest job :sources {} :writing nil)
+      (log! run-id {:text (str "Reading the briefings for " label)})
+      (let [[from to] (trends/period-range kind period)
+            [base-from base-to] (trends/baseline-range kind period)
+            window (store/coverage-between store from to)
+            _ (when (empty? window)
+                (throw (ex-info (str "there are no briefings for " label) {})))
+            baseline (store/coverage-between store base-from base-to)
+            active-days (count (distinct (map :day window)))
+            ranked (trends/digest-storylines window baseline active-days
+                                             (count (distinct (map :day baseline))))
+            kept (store/notes store (map :story ranked))
+            lines (->> (with-candidates ranked kept
+                                        (group-by :story (store/sources-between store from to {:vectors? false}))
+                                        from to)
+                       (take (:digest-stories config 15))
+                       vec)
+            _ (when (empty? lines)
+                (throw (ex-info (str "no story in " label " ran for more than a day or one outlet") {})))
+            _ (log! run-id {:text (str (count (filter :summary lines)) " of " (count lines)
+                                       " storylines have notes")})
+            lines (trends/cite-storylines lines)
+            numbered (vec (mapcat :cites lines))
+            _ (log! run-id {:text (str (count lines) " storylines from " active-days " days, "
+                                       (count (filter #(= :emerging (:trend %)) lines)) " emerging")})
+            days (store/standfirsts-between store from to)
+            last-period (trends/period-of kind (trends/plus-days from -1))
+            established (some-> (store/digest store kind last-period) :markdown news/overview)
+            prompt (trends/render-digest-prompt
+                    (news/add-previous (or (:digest-template ctx) (config/digest-template))
+                                       (some->> established (previous-digest-context kind last-period)))
+                    label
+                    (trends/days-block days sources/long-date)
+                    (trends/digest-block lines sources/long-date))
+            llm-config (providers/role-llm config :analyst)
+            _ (update-status! run-id assoc :state :analysing :items (count lines)
+                              :provider (name (:alias llm-config)) :model (:model llm-config))
+            {:keys [answer reply]} (m/? (write-up ctx llm-config prompt (str "the digest for " label)))
+            doc (news/briefing answer numbered)
+            known (set (map :n numbered))
+            cited (filterv known (news/citations answer))]
+        (store/save-digest! store {:kind kind
+                                   :period period
+                                   :sources numbered
+                                   :cited cited
+                                   :markdown doc
+                                   :tldr (news/tldr doc)
+                                   :model (or (:model reply) (:model llm-config))
+                                   :provider (name (:alias llm-config))})
+        (write-markdown! (or (:markdown-dir ctx) (config/path "briefings")) period doc)
+        (log! run-id {:text (str "Filed the digest for " label ": " (count cited) " of "
+                                 (count numbered) " sources cited") :level :ok})
+        (swap! stored inc)
+        {:digest job :items (count numbered) :cited (count cited)}))))
+
+(defn due-digests
+  "The digests to write on `day`, as [kind period]: for each kind in
+  :digests, the last whole period before day's, when it has briefings and
+  no digest yet."
+  [store config day]
+  (let [days (store/days store)]
+    (vec (for [kind (map keyword (:digests config [:week :month]))
+               :when (contains? trends/kinds kind)
+               :let [period (trends/previous-period kind day)
+                     [from to] (trends/period-range kind period)]
+               :when (and (some #(<= (compare from %) 0 (compare to %)) days)
+                          (nil? (store/digest store kind period)))]
+           [kind period]))))
 
 (defn running? [] (some? @current))
 
-(defn start-run!
-  "Start a run for `day` unless one is in flight. Returns true when started."
-  [ctx day]
+(defn- start-job!
+  "Start the task `(make-task token)` unless a run is in flight, with the
+  status starting from `init`. Returns true when started."
+  [init make-task]
   (let [token (Object.)]
     (when (compare-and-set! current nil {:token token})
-      (reset! status {:run token :state :starting :day day :started (now) :sources {}})
+      (reset! status (merge {:run token :state :starting :started (now) :sources {}} init))
       (let [finish! (fn [m]
                       (update-status! token merge m {:finished (now)})
                       (swap! current #(when-not (= token (:token %)) %)))
-            cancel ((run-task (assoc ctx :run-id token) day)
+            cancel ((make-task token)
                     (fn [summary] (finish! (assoc summary :state :done)))
-                    ;; a cancel that lands in a blocking call surfaces as
-                    ;; that thread's interrupt rather than as ebb's Cancelled
-                    (fn [e] (finish! (if (or (m/cancelled? e) (instance? InterruptedException e))
+                    (fn [e] (finish! (if (interrupted? e)
                                        {:state :cancelled}
                                        {:state :failed :error (or (ex-message e) (str e))}))))]
         (swap! current #(if (= token (:token %)) (assoc % :cancel cancel) %))
         true))))
+
+(defn start-run!
+  "Start a run for `day` unless one is in flight. Returns true when started."
+  [ctx day]
+  (start-job! {:day day} #(run-task (assoc ctx :run-id %) day)))
+
+(defn start-digest!
+  "Start writing the digest of `kind` for `period` unless a run is in
+  flight. Returns true when started."
+  [ctx kind period]
+  (start-job! {:digest {:kind kind :period period}}
+              #(digest-task (assoc ctx :run-id %) kind period)))
+
+(defn- scheduled-task
+  "Task: the day's run when `daily?`, then each of `digests`. A failed
+  digest is logged and the next one tried; the job ends as the day's run
+  did, or as the last digest did when there was no run."
+  [{:keys [run-id] :as ctx} day daily? digests]
+  (m/sp
+    (let [daily (when daily? (m/? (m/attempt (run-task ctx day))))
+          _ (when daily
+              (try (daily) (catch Throwable e (when (interrupted? e) (throw e)))))
+          last-digest (loop [[[kind period] & more] digests, result nil]
+                        (if-not kind
+                          result
+                          (let [r (m/? (m/attempt (digest-task ctx kind period)))]
+                            (try (r)
+                                 (catch Throwable e
+                                   (when (interrupted? e) (throw e))
+                                   (log! run-id {:text (str "The digest for " (period-label kind period)
+                                                            " failed: " (or (ex-message e) (str e)))
+                                                 :level :error})))
+                            (recur more r))))]
+      (if daily
+        (do (update-status! run-id assoc :digest nil :day day)
+            (daily))
+        (last-digest)))))
 
 (defn cancel-run!
   "Cancel the run in flight, if any."
@@ -390,11 +660,17 @@
 (defn- day-of [ms]
   (str (.toLocalDate (.atZone (java.time.Instant/ofEpochMilli ms) (java.time.ZoneId/systemDefault)))))
 
-(defn- run-if-due! [{:keys [store] :as ctx} interval]
+(defn- run-if-due!
+  "Start today's run when it is due, followed by any digest whose period
+  has ended without one."
+  [{:keys [store config] :as ctx} interval]
   (let [day (today)
-        created (some-> (store/day store day) :created-at java.time.Instant/parse .toEpochMilli)]
-    (when (due? (some->> created (- (now))) interval)
-      (start-run! ctx day))))
+        created (some-> (store/day store day) :created-at java.time.Instant/parse .toEpochMilli)
+        daily? (due? (some->> created (- (now))) interval)
+        digests (due-digests store config day)]
+    (when (or daily? (seq digests))
+      (start-job! (if daily? {:day day} {:digest (zipmap [:kind :period] (first digests))})
+                  #(scheduled-task (assoc ctx :run-id %) day daily? digests)))))
 
 (defn schedule-task
   "Task: run today's briefing at :run-at and every :run-every-hours after,

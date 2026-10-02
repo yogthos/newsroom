@@ -3,6 +3,8 @@
 
     config.edn        sources, schedule, providers (see resources/defaults)
     prompt.md         the analysis prompt, {{date}} and {{sources}} filled in
+    digest.md         the weekly and monthly digest prompt, {{period}},
+                      {{days}} and {{stories}} filled in
     plugins/          loaded at startup; a plugin adds source types, see
                       newsroom.plugin
     newsroom.sqlite3  the gathered items and the briefings, by day
@@ -32,11 +34,11 @@
   (edn/read-string (default-text "config.edn")))
 
 (defn ensure-home!
-  "Create the config directory with the default config and prompt, leaving
+  "Create the config directory with the default config and prompts, leaving
   any file that is already there alone."
   []
   (.mkdirs (io/file (path "plugins")))
-  (doseq [name ["config.edn" "prompt.md"]
+  (doseq [name ["config.edn" "prompt.md" "digest.md"]
           :let [f (io/file (path name))]
           :when (not (.exists f))]
     (spit f (default-text name))))
@@ -51,6 +53,10 @@
 (defn prompt-template []
   (let [f (io/file (path "prompt.md"))]
     (if (.exists f) (slurp f) (default-text "prompt.md"))))
+
+(defn digest-template []
+  (let [f (io/file (path "digest.md"))]
+    (if (.exists f) (slurp f) (default-text "digest.md"))))
 
 (defn db-file [config]
   (or (:db config) (path "newsroom.sqlite3")))

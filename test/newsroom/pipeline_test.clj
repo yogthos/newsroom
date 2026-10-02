@@ -46,6 +46,19 @@
     :summary "Finance ministers from the G7 met to discuss rising sovereign debt levels."
     :published (str day "T08:00:00Z")}])
 
+(defmethod sources/fetch-items ::running [{:keys [name]} {:keys [day]}]
+  ;; the outlet's headlines for the day: listed first is a one-off, then a
+  ;; story that has been running all week
+  (case name
+    "Desk" [{:title "Local bakery wins regional bread award"
+             :url "https://desk.example.com/bread" :source name
+             :summary "A family bakery took first prize at the county fair."
+             :published (str day "T08:00:00Z")}
+            {:title "Federal Reserve signals it will hold interest rates steady again"
+             :url "https://desk.example.com/fed" :source name
+             :summary "The central bank kept its benchmark rate unchanged and pointed to inflation."
+             :published (str day "T08:00:00Z")}]))
+
 (def dir (str (System/getProperty "java.io.tmpdir") "/newsroom-test-" (System/currentTimeMillis)))
 
 (defn- ctx [sources chat]
@@ -218,7 +231,195 @@
     (let [e (try (m/? (pipeline/run-task c "2026-09-30")) nil (catch Exception e e))]
       (is (str/includes? (ex-message e) "already in the briefings up to 29 September 2026")))))
 
+;; --- storylines and digests ----------------------------------------------------
+
+(def ^:private model (delay (embed/load-model)))
+
+(defn- stored-source
+  "A source as an earlier day stored it, with its embedding and storyline."
+  [n title story]
+  {:n n :title title :url (str "https://old.example.com/" n) :source "Wire" :summary "" :published nil
+   :story story :vector (embed/embed @model title)})
+
+(deftest a-story-that-keeps-running-comes-first-with-its-coverage
+  (let [prompts (atom [])
+        c (-> (ctx [{:type ::running :name "Desk"}]
+                   (fn [_ req] (swap! prompts conj (-> req :messages first :content))
+                     {:content "# Today\n\nRates [1]." :model "fake"}))
+              (assoc-in [:config :story-threshold] 0.5))
+        st (:store c)]
+    (doseq [[d n] [["2026-09-27" 1] ["2026-09-28" 1] ["2026-09-29" 2]]]
+      (store/save-day! st {:day d
+                           :sources [(stored-source n "Federal Reserve holds rates steady as inflation cools"
+                                                    "2026-09-27/1")]
+                           :cited [] :markdown d :model "m" :provider "p"}))
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (let [[first-source second-source] (:sources (store/day st "2026-09-30"))]
+      (is (= "https://desk.example.com/fed" (:url first-source)) "the running story outranks the one-off")
+      (is (= "2026-09-27/1" (:story first-source)) "and continues its storyline")
+      (is (> (:weight first-source) (:weight second-source)))
+      (is (= "2026-09-30/2" (:story second-source)) "a story new today is named by its day and number"))
+    (is (str/includes? (first @prompts) "Coverage: in the news on 4 days"))
+    (is (some #(str/includes? (:text %) "Followed 1 stories from earlier days")
+              (:events @pipeline/status)))))
+
+(defn- digest-ctx [chat]
+  (-> (ctx [] chat)
+      (assoc :digest-template "Digest of {{period}}.\n\n{{days}}\n\n{{stories}}")))
+
+(defn- store-week!
+  "A week of briefings in which one story runs every day and another once."
+  [st]
+  (doseq [[i d] (map-indexed vector ["2026-09-28" "2026-09-29" "2026-09-30" "2026-10-01"])]
+    (store/save-day! st {:day d
+                         :sources [(assoc (stored-source 1 "Federal Reserve holds rates steady" "2026-09-28/1")
+                                          :also [{:source "Other" :url (str "https://other.example.com/" i)}])
+                                   (stored-source 2 (str "One-off story " i) (str d "/2"))]
+                         :cited [1] :tldr (str "Day " i ".") :markdown d :model "m" :provider "p"})))
+
+(deftest a-weekly-digest-is-written-from-the-stored-days
+  (let [prompts (atom [])
+        c (digest-ctx (fn [_ req] (swap! prompts conj (-> req :messages first :content))
+                        {:content "# The week\n\n> Rates held all week [1].\n\n## Overview\n\nSteady [1, 2]." :model "fake"}))
+        st (:store c)]
+    (store-week! st)
+    (is (= {:digest {:kind :week :period "2026-W40"} :items 4 :cited 2}
+           (m/? (pipeline/digest-task c :week "2026-W40"))))
+    (let [prompt (first @prompts)
+          d (store/digest st :week "2026-W40")]
+      (is (str/starts-with? prompt "Digest of the week of 28 September 2026."))
+      (is (str/includes? prompt "- 28 September 2026: Day 0."))
+      (is (str/includes? prompt "### Federal Reserve holds rates steady\nTrend: persistent"))
+      (is (not (str/includes? prompt "One-off story")) "a one-outlet one-off isn't a storyline")
+      (is (= "Rates held all week." (:tldr d)))
+      (is (= 4 (count (:sources d))))
+      (is (str/includes? (:markdown d) "## Sources"))
+      (is (.exists (io/file dir "2026-W40.md"))))
+    (testing "the next week's digest builds on it"
+      (store/save-day! st {:day "2026-10-05" :sources [(stored-source 1 "Federal Reserve holds rates steady" "2026-09-28/1")
+                                                       (assoc (stored-source 2 "Fed again" "2026-09-28/1") :source "Other")]
+                           :cited [] :markdown "x" :model "m" :provider "p"})
+      (m/? (pipeline/digest-task c :week "2026-W41"))
+      (is (str/includes? (second @prompts) "Digest of the week of 5 October 2026."))
+      (is (str/includes? (second @prompts) "in the periods before")))))
+
+(deftest a-period-with-no-briefings-has-no-digest
+  (let [c (digest-ctx (fn [_ _] {:content "x" :model "fake"}))
+        e (try (m/? (pipeline/digest-task c :month "2026-01")) nil (catch Exception e e))]
+    (is (str/includes? (ex-message e) "there are no briefings for January 2026"))
+    (is (nil? (store/digest (:store c) :month "2026-01")))))
+
+(deftest digests-fall-due-once-their-period-is-over
+  (let [c (digest-ctx (fn [_ _] {:content "# W\n\n## O\n\nx [1]" :model "fake"}))
+        st (:store c)]
+    (store-week! st)
+    (let [weekly (assoc (:config c) :digests [:week])]
+      (is (= [] (pipeline/due-digests st (:config c) "2026-09-30")) "no period with briefings is over")
+      (is (= [] (pipeline/due-digests st weekly "2026-10-04")) "the week isn't over")
+      (is (= [[:week "2026-W40"]] (pipeline/due-digests st weekly "2026-10-05")))
+      (is (= [[:week "2026-W40"] [:month "2026-09"]] (pipeline/due-digests st (:config c) "2026-10-05"))
+          "and September's, which ended the week before")
+      (m/? (pipeline/digest-task c :week "2026-W40"))
+      (is (= [] (pipeline/due-digests st weekly "2026-10-05")) "a written digest isn't due again")
+      (is (= [] (pipeline/due-digests st (assoc (:config c) :digests []) "2026-10-05")) "[] turns them off"))))
+
+;; --- story notes -----------------------------------------------------------------
+
+(defn- notes-chat
+  "A model that writes the briefing, and answers a notes prompt by noting
+  every storyline it is asked about with a fact from its first report."
+  [prompts]
+  (fn [_ req]
+    (let [prompt (-> req :messages first :content)]
+      (swap! prompts conj prompt)
+      (if (str/starts-with? prompt "You keep the running notes")
+        {:content (str "{\"storylines\": ["
+                       (str/join ", " (for [[_ id n] (re-seq #"### id: (\S+)\n[\s\S]*?\[(\d+)\]" prompt)]
+                                        (str "{\"id\": \"" id "\", \"title\": \"Noted " id "\", "
+                                             "\"summary\": \"Where " id " stands.\", \"facts\": "
+                                             "[{\"day\": \"2026-09-30\", \"fact\": \"Fact from " n ".\", "
+                                             "\"cite\": \"" n "\"}]}")))
+                       "]}")
+         :model "fake"}
+        {:content "# Today\n\n> Steady.\n\n## Overview\n\nRates [1]." :model "fake"}))))
+
+(deftest a-run-keeps-notes-and-the-next-day-hears-them
+  (let [prompts (atom [])
+        c (-> (ctx [{:type ::running :name "Desk"}] (notes-chat prompts))
+              (assoc-in [:config :story-threshold] 0.5)
+              (assoc-in [:config :story-notes] 12))
+        st (:store c)]
+    (store/save-day! st {:day "2026-09-29"
+                         :sources [(stored-source 1 "Federal Reserve holds rates steady as inflation cools" "2026-09-29/1")]
+                         :cited [] :markdown "x" :model "m" :provider "p"})
+    (store/save-notes! st {"2026-09-29/1" {:title "The Fed's pause" :summary "The Fed keeps holding."
+                                           :first-day "2026-09-29" :last-day "2026-09-29"
+                                           :facts [{:day "2026-09-29" :text "The Fed held." :url "https://old.example.com/1"
+                                                    :source "Wire" :headline "Fed holds"}]}})
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (let [[briefing compaction] @prompts]
+      (is (str/includes? briefing "## The stories still running") "the briefing gets the running story's notes")
+      (is (str/includes? briefing "The Fed keeps holding."))
+      (is (str/includes? compaction "Notes so far:\nTitle: The Fed's pause"))
+      (is (not (str/includes? compaction "bread")) "a one-off the briefing didn't cite gets no note"))
+    (let [note (get (store/notes st ["2026-09-29/1"]) "2026-09-29/1")]
+      (is (= "Where 2026-09-29/1 stands." (:summary note)))
+      (is (= "https://desk.example.com/fed" (:url (first (:facts note)))) "the fact keeps its report")
+      (is (= "2026-09-29" (:first-day note))))))
+
+(deftest a-failed-compaction-leaves-the-briefing-filed
+  (let [c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]
+                   (fn [_ req] (if (str/starts-with? (-> req :messages first :content) "You keep")
+                                 (throw (ex-info "rate limited" {}))
+                                 {:content "x [1]" :model "fake"})))
+              (assoc-in [:config :story-notes] 12))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (some? (store/day (:store c) "2026-09-30")))
+    (is (some #(str/includes? (:text %) "The notes weren't updated: rate limited") (:events @pipeline/status)))))
+
+(deftest a-digest-is-written-from-the-notes-once-the-days-are-gone
+  (let [prompts (atom [])
+        c (-> (digest-ctx (fn [_ req] (swap! prompts conj (-> req :messages first :content))
+                            {:content "# The week\n\n## Overview\n\nHeld [1]." :model "fake"}))
+              (assoc-in [:config :keep-days] 1))
+        st (:store c)]
+    (store-week! st)
+    (store/save-notes! st {"2026-09-28/1" {:title "The Fed's long pause" :summary "Held all week."
+                                           :first-day "2026-09-28" :last-day "2026-10-01"
+                                           :facts [{:day "2026-09-20" :text "Before the week." :url "https://e.com/0"
+                                                    :source "Wire" :headline "Earlier"}
+                                                   {:day "2026-09-29" :text "The Fed held." :url "https://e.com/1"
+                                                    :source "Wire" :headline "Fed holds"}]}})
+    (pipeline/prune-days! c)
+    (is (= ["2026-10-01"] (store/days st)) "only the last day's sources are left")
+    (m/? (pipeline/digest-task c :week "2026-W40"))
+    (let [prompt (first @prompts)]
+      (is (str/includes? prompt "### The Fed's long pause\nTrend: persistent"))
+      (is (str/includes? prompt "Where it stands: Held all week."))
+      (is (str/includes? prompt "[1] 29 September 2026: The Fed held.\nFed holds (Wire), https://e.com/1"))
+      (is (not (str/includes? prompt "Before the week.")) "only the period's facts")
+      (is (str/includes? prompt "- 28 September 2026: Day 0.") "the standfirsts outlive the days"))
+    (is (= ["https://e.com/1"] (map :url (:sources (store/digest st :week "2026-W40")))))))
+
 ;; --- the schedule ----------------------------------------------------------------
+
+(deftest a-scheduled-job-writes-its-digests-even-when-the-day-fails
+  (let [token (Object.)
+        c (-> (digest-ctx (fn [_ _] {:content "# The week\n\n## Overview\n\nSteady [1]." :model "fake"}))
+              ;; as start-job! runs it, reporting to a status of its own
+              (assoc :run-id token))
+        _ (reset! pipeline/status {:run token :state :starting})
+        st (:store c)
+        ;; nothing to gather, so the day's run fails
+        e (do (store-week! st)
+              (try (m/? (#'pipeline/scheduled-task c "2026-10-05" true [[:month "2026-08"] [:week "2026-W40"]]))
+                   nil
+                   (catch Exception e e)))]
+    (is (str/includes? (ex-message e) "no items were gathered") "the job ends as the day's run did")
+    (is (some? (store/digest st :week "2026-W40")) "the week's digest was written all the same")
+    (is (some #(str/includes? (:text %) "The digest for August 2026 failed: there are no briefings")
+              (:events @pipeline/status))
+        "and a digest that failed is logged, without stopping the next")))
 
 (deftest a-story-older-than-the-seen-days-window-is-new-again
   (let [c (ctx [{:type ::fixture :name "A" :ns [1]}] (fn [_ _] {:content "x [1]" :model "fake"}))
@@ -248,7 +449,9 @@
     (m/? (pipeline/run-task c "2026-09-30"))
     (let [day (store/day (:store c) "2026-09-30")]
       (is (= 1 (count (:sources day))) "one wire story, not one copy per outlet")
-      (is (= ["BBC"] (:also (first (:sources day)))) "the other outlet is credited")
+      (is (= ["BBC"] (map :source (:also (first (:sources day))))) "the other outlet is credited")
+      (is (= "https://bbc.example.com/debt-warning" (:url (first (:also (first (:sources day))))))
+          "with the copy's address, so it counts as told tomorrow")
       (is (str/includes? (first @prompts) "[1] Central banks warn of rising sovereign debt (Reuters)"))
       (is (some #(str/includes? (:text %) "Collapsed 1 near-duplicate")
                 (:events @pipeline/status))))))

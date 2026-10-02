@@ -38,8 +38,35 @@
 
  ;; stories from different outlets whose titles and summaries embed this
  ;; close (cosine similarity) are collapsed into one source, with the
- ;; other outlets noted on it. nil turns collapsing off
- :dupe-threshold 0.55
+ ;; other outlets noted on it. Two feeds of one publisher, or two reprints
+ ;; of one wire story, only collapse when they are near verbatim, and count
+ ;; as one outlet. nil turns collapsing off
+ :dupe-threshold 0.62
+
+ ;; a story is followed from day to day: an item whose embedding is this
+ ;; close to the sources of a story from the last :trend-days continues it.
+ ;; Items are ranked by how widely and how long their story has run, the
+ ;; outlets carrying it today plus those on earlier days, an earlier day
+ ;; counting half as much every :half-life-days, and the heaviest come
+ ;; first in the prompt and survive :max-items. nil stops the following
+ :story-threshold 0.6
+ :trend-days 7
+ :half-life-days 2
+
+ ;; digests written from the stored days: a week's after the week ends
+ ;; (Monday to Sunday), a month's after the month does, each ranking the
+ ;; storylines of the period and saying which are emerging, persistent or
+ ;; fading. digest.md is their prompt. [] turns them off
+ ;; after each briefing the model keeps a running note on every storyline
+ ;; the briefing cited, and on those it already follows: a title, where it stands, and up to this many
+ ;; dated facts, compacted as the story goes on. The briefing gets the
+ ;; notes of the stories still running as background, and the digests are
+ ;; written from them, so they outlive :keep-days. A :notes role in :roles
+ ;; can give the job a cheaper model. nil turns the notes off
+ :story-notes 12
+
+ :digests [:week :month]
+ :digest-stories 15
 
  ;; how long one source may take before the run goes on without it
  :source-timeout-ms 30000
@@ -117,6 +144,7 @@
   ;; :llama    {:type :local :base-url "http://127.0.0.1:8080/v1" :thinking? true}
   }
 
- ;; the :analyst role writes the briefing; with no :roles, the first built-in
- ;; whose key is in the environment serves, else a local endpoint
+ ;; the :analyst role writes the briefing and the digests, and keeps the
+ ;; story notes unless a :notes role is given; with no :roles, the first
+ ;; built-in whose key is in the environment serves, else a local endpoint
  :roles {:analyst :deepseek}}
