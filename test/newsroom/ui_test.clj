@@ -69,8 +69,15 @@
         (is (str/includes? page "Rates held.") "the digest's standfirst in the sidebar")
         (is (str/includes? page "href=\"/week/2026-W39\">← Earlier") "stepping goes week to week")
         (is (str/includes? page "Wire, 30 September 2026") "its sources, by day"))
-      (testing "the days' pages list the digests too"
-        (is (str/includes? (ui/page st "2026-09-30") "href=\"/week/2026-W40\"")))
+      (testing "the days' pages list the digests too, each kind under its own heading"
+        (let [page (ui/page st "2026-09-30")]
+          (is (str/includes? page "href=\"/week/2026-W40\""))
+          (is (str/includes? page "<h2>Weekly</h2>"))
+          (is (str/includes? page "Week of 28 September 2026"))
+          (is (str/includes? page "<h2>Daily</h2>"))
+          (is (not (str/includes? page "<h2>Monthly</h2>")) "no heading for a kind with no digests")
+          (is (< (str/index-of page "<h2>Weekly</h2>") (str/index-of page "<h2>Daily</h2>"))
+              "the longer views come first")))
       (testing "a digest not yet written"
         (is (str/includes? (ui/page st {:kind :month :period "2026-09"}) "Write this digest"))
         (is (str/includes? (ui/page st {:kind :month :period "2026-08"}) "There are no briefings for this month"))

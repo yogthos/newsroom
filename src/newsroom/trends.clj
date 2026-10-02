@@ -152,9 +152,9 @@
 
 ;; --- digests ---------------------------------------------------------------------
 
-(defn- story-of
+(defn story-of
   "The storyline a stored source belongs to; one stored before storylines
-  were tracked is its own."
+  were tracked is its own, named by its day and number as a new one is."
   [s]
   (or (:story s) (str (:day s) "/" (:n s))))
 

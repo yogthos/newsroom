@@ -494,12 +494,15 @@
                                              (count (distinct (map :day baseline))))
             kept (store/notes store (map :story ranked))
             lines (->> (with-candidates ranked kept
-                                        (group-by :story (store/sources-between store from to {:vectors? false}))
+                                        ;; by the same name the ranking gave them, which a source
+                                        ;; stored before storylines were kept only has by its day
+                                        (group-by trends/story-of (store/sources-between store from to {:vectors? false}))
                                         from to)
                        (take (:digest-stories config 15))
                        vec)
             _ (when (empty? lines)
-                (throw (ex-info (str "no story in " label " ran for more than a day or one outlet") {})))
+                (throw (ex-info (str "no story in " label " ran for more than a day or one outlet")
+                                {::nothing-to-digest true})))
             _ (log! run-id {:text (str (count (filter :summary lines)) " of " (count lines)
                                        " storylines have notes")})
             lines (trends/cite-storylines lines)
@@ -598,9 +601,13 @@
                             (try (r)
                                  (catch Throwable e
                                    (when (interrupted? e) (throw e))
-                                   (log! run-id {:text (str "The digest for " (period-label kind period)
-                                                            " failed: " (or (ex-message e) (str e)))
-                                                 :level :error})))
+                                   ;; a period with nothing worth a digest isn't a failure
+                                   (log! run-id (if (::nothing-to-digest (ex-data e))
+                                                  {:text (str "Nothing to digest for " (period-label kind period)
+                                                              ": " (ex-message e))}
+                                                  {:text (str "The digest for " (period-label kind period)
+                                                              " failed: " (or (ex-message e) (str e)))
+                                                   :level :error}))))
                             (recur more r))))]
       (if daily
         (do (update-status! run-id assoc :digest nil :day day)

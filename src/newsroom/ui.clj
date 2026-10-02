@@ -32,26 +32,36 @@
   (let [label (pipeline/period-label kind period)]
     (str (str/upper-case (subs label 0 1)) (subs label 1))))
 
+(def ^:private listed
+  "How many of each kind of digest the sidebar lists, latest first; the
+  stepper on a digest's page walks back past them."
+  {:month 12 :week 8})
+
+(defn- digest-label
+  "A digest's name in the sidebar, under its kind's heading."
+  [kind period]
+  (let [[from _] (trends/period-range kind period)]
+    (case kind
+      :week (str "Week of " (sources/long-date from))
+      :month (pipeline/period-label kind period))))
+
 (defn- digest-list
-  "The digests, latest period first."
-  [digests current]
-  (when (seq digests)
+  "The latest digests of `kind`, under their own heading."
+  [kind heading digests current]
+  (when-let [ds (seq (take (listed kind)
+                           (sort-by :period #(compare %2 %1) (filter #(= kind (:kind %)) digests))))]
     [:nav.history.digests
-     [:h2 "Digests"]
+     [:h2 heading]
      [:ul
-      (for [{:keys [kind period tldr]} (sort-by (fn [{:keys [kind period]}]
-                                                   [(second (trends/period-range kind period))
-                                                    (if (= :month kind) 0 1)])
-                                                 #(compare %2 %1)
-                                                 digests)]
+      (for [{:keys [period tldr]} ds]
         [:li [:a {:href (digest-href kind period)
                   :class (when (= current {:kind kind :period period}) "current")}
-              (digest-title kind period)]
+              (digest-label kind period)]
          (when-not (str/blank? tldr) [:p.tldr tldr])])]]))
 
 (defn- history [days current]
   [:nav.history
-   [:h2 "Archive"]
+   [:h2 "Daily"]
    (if (empty? days)
      [:p.muted "No briefings yet."]
      (for [ds (partition-by month-of days)
@@ -195,7 +205,8 @@
    (run-panel @pipeline/status (pipeline/today))
    (feed-health health)
    (story-list stories current)
-   (digest-list digests current)
+   (digest-list :month "Monthly" digests current)
+   (digest-list :week "Weekly" digests current)
    (history archive current)))
 
 ;; --- the day -----------------------------------------------------------------------

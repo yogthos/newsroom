@@ -303,6 +303,18 @@
       (is (str/includes? (second @prompts) "Digest of the week of 5 October 2026."))
       (is (str/includes? (second @prompts) "in the periods before")))))
 
+(deftest a-digest-reads-days-stored-before-storylines-were-kept
+  ;; sources from before storylines and notes: no :story, no vector
+  (let [c (digest-ctx (fn [_ _] {:content "# September\n\n## Overview\n\nRates [1]." :model "fake"}))
+        st (:store c)]
+    (doseq [d ["2026-09-28" "2026-09-29"]]
+      (store/save-day! st {:day d
+                           :sources [{:n 1 :title (str "Fed holds, " d) :url (str "https://wire.org/" d) :source "Wire"
+                                      :summary "" :published nil :also [{:source "Other"}]}]
+                           :cited [1] :markdown d :model "m" :provider "p"}))
+    (is (= {:digest {:kind :month :period "2026-09"} :items 2 :cited 1}
+           (m/? (pipeline/digest-task c :month "2026-09"))))))
+
 (deftest a-period-with-no-briefings-has-no-digest
   (let [c (digest-ctx (fn [_ _] {:content "x" :model "fake"}))
         e (try (m/? (pipeline/digest-task c :month "2026-01")) nil (catch Exception e e))]
