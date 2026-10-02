@@ -23,6 +23,21 @@
 (defmethod sources/fetch-items ::broken [_ _]
   (throw (ex-info "feed is down" {})))
 
+(defmethod sources/fetch-items ::distinct [{:keys [name]} {:keys [day]}]
+  ;; two genuinely different stories in the same broad area: a rate decision
+  ;; and an election, both "economics-flavoured" words
+  (case name
+    "Fed watcher" [{:title "Federal Reserve holds rates steady at September meeting"
+                    :url "https://fed.example.com/rates-held"
+                    :source name
+                    :summary "The Federal Reserve left its policy rate unchanged, citing steady inflation progress."
+                    :published (str day "T08:00:00Z")}]
+    "Pollster" [{:title "Opposition party widens lead in national polling average"
+                 :url "https://polls.example.com/average"
+                 :source name
+                 :summary "The opposition widened its polling lead, weeks before the general election."
+                 :published (str day "T08:00:00Z")}]))
+
 (defmethod sources/fetch-items ::dupe [{:keys [name suffix]} {:keys [day]}]
   ;; the same wire story, word for word, at another outlet's address
   [{:title "Central banks warn of rising sovereign debt"
@@ -244,6 +259,16 @@
     (m/? (pipeline/run-task c "2026-09-30"))
     (is (= "Markets calm after a quiet week."
            (:tldr (store/day (:store c) "2026-09-30"))))))
+
+(deftest distinct-stories-from-different-outlets-stay-apart
+  (let [c (-> (ctx [{:type ::distinct :name "Fed watcher"}
+                    {:type ::distinct :name "Pollster"}]
+                   (fn [_ _] {:content "x [1]" :model "fake"}))
+              (assoc-in [:config :dupe-threshold] 0.55))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (= 2 (count (:sources (store/day (:store c) "2026-09-30"))))
+        "a rate decision and an election are two stories, not one")
+    (is (nil? (:also (first (:sources (store/day (:store c) "2026-09-30"))))))))
 
 (deftest source-health-survives-the-run
   (let [c (ctx [{:type ::fixture :name "A" :ns [1]}

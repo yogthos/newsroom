@@ -49,6 +49,10 @@
         (is (nil? (:last-ok (h "Dead feed")))))
       (testing "failures accumulate until a success resets them"
         (store/record-source-health! db [{:source "Dead feed" :error "connection refused"}])
+        (is (= 2 (:consecutive-failures (get (into {} (map (juxt :name identity))
+                                                          (store/source-health db))
+                                             "Dead feed")))
+            "the second failure bumps the count rather than restarting it")
         (store/record-source-health! db [{:source "Dead feed" :error nil}])
         (let [h (into {} (map (juxt :name identity)) (store/source-health db))]
           (is (= 0 (:consecutive-failures (h "Dead feed"))))
