@@ -146,7 +146,10 @@
      (for [f (settings/source-fields type)]
        (field-row f (settings/field-name nm (:key f)) (get src (name (:key f))) errors 1))
      (extra-row nm src errors)
-     (remove-button "source")]))
+     [:div.source-actions
+      [:button.test {:type "button" "data-cfg-test" nm} "Test source"]
+      (remove-button "source")]
+     [:div.test-result {:aria-live "polite"}]]))
 
 (defn- sources-section [tree errors]
   (let [types (settings/source-types)]
@@ -162,6 +165,34 @@
       [:select {"data-cfg-type-select" "" :aria-label "Type of source"}
        (for [t types] [:option {:value (name t)} (name t)])]
       [:button.add {:type "button" "data-cfg-add" ""} "Add source"]]]))
+
+(defn test-result
+  "What testing a source found, for its entry: what's wrong with its
+  fields, or the items it has, or why it couldn't be read. `today` is the
+  day it was read for."
+  [{:keys [errors items error events name]} today]
+  (let [problems (filter #(= :error (:level %)) events)]
+    (cond
+      (seq errors)
+      [:div.test.bad [:p "Fix these first:"]
+       [:ul (for [[n e] (sort-by key errors)]
+              [:li (label-of {:key (keyword (last (str/split n #"\.")))}) " " e])]]
+
+      error
+      [:div.test.bad [:p "Couldn't read it: " error]]
+
+      :else
+      [:div.test {:class (if (seq items) "ok" "bad")}
+       [:p (if (seq items)
+             (str "Read " (count items) (if (= 1 (count items)) " item" " items") " for " today
+                  ", credited to " name ".")
+             "Read it, but it has no items.")]
+       (when (seq items)
+         [:ul (for [{:keys [title url published]} (take 8 items)]
+                [:li [:a {:href url :target "_blank" :rel "noopener"} (if (str/blank? title) url title)]
+                 (when published [:span.muted " · " published])])])
+       (when (seq problems)
+         [:ul.bad (for [{:keys [text]} problems] [:li text])])])))
 
 ;; --- models ------------------------------------------------------------------------
 

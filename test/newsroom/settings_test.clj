@@ -5,11 +5,15 @@
             [clojure.test :refer [deftest is testing]]
             [jolt.fs :as fs]
             [newsroom.config :as config]
+            [hiccup2.core :as h]
+            [newsroom.config-page :as config-page]
             [newsroom.core :as core]
+            [newsroom.news :as news]
             [newsroom.plugin :as plugin]
             [newsroom.settings :as settings]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
+            [newsroom.template :as template]
             [newsroom.ui :as ui]))
 
 (def ^:private flat settings/form-params)
@@ -216,8 +220,8 @@
                     %)
                 (:sources settings))))
     (is (= {:max-items 5} (:settings (settings/from-edn "{:max-items 5}")))))
-  (testing "what is wrong is said"
-    (is (= {":bogus" "isn't a setting" "max-items" "has to be a whole number"}
+  (testing "what is wrong is said, by where it is"
+    (is (= {":bogus" "disallowed key" ":max-items" "should be an int"}
            (:errors (settings/from-edn "{:bogus 1 :max-items \"lots\"}"))))
     (is (= "has to be a map of settings, {:key value ...}" (get (:errors (settings/from-edn "[1]")) "EDN")))
     (is (str/starts-with? (get (:errors (settings/from-edn "{:a")) "EDN") "can't be read"))))
@@ -256,3 +260,76 @@
       (finally
         (reset! core/system nil)
         (store/close st)))))
+
+(deftest an-import-is-checked-against-the-schema
+  (plugin/load-all! "plugins" {})
+  (let [errors #(:errors (settings/from-edn %))]
+    (testing "each source by its type's shape"
+      (is (= {":sources 0 :url" "missing required key"} (errors "{:sources [{:type :rss}]}")))
+      (is (= {":sources 0 :link-pattern" "should be a regex"}
+             (errors "{:sources [{:type :scrape :url \"u\" :link-pattern \"(\"}]}")))
+      (is (contains? (errors "{:sources [{:type :reddit :subreddit 5}]}") ":sources 0 :subreddit"))
+      (is (= {} (errors "{:sources [{:type :reddit :subreddit \"technology\"} {:type :unknown-type :x 1}]}"))
+          "one subreddit or several, and a type no plugin declares is let through")
+      (is (= {":sources 0 :type" "missing required key"} (errors "{:sources [{:url \"u\"}]}"))))
+    (testing "the settings by their fields"
+      (is (= {":max-items" "should be at least 1"} (errors "{:max-items 0}")))
+      (is (= {":run-at" "isn't in the right form"} (errors "{:run-at \"7am\"}")))
+      (is (= {} (errors "{:run-at nil :dupe-threshold nil}")) "a setting that may be off may be nil")
+      (is (= {":digests 0" "should be either :week or :month"} (errors "{:digests [:day]}")))
+      (is (contains? (errors "{:providers {:x {:type :nope}}}") ":providers :x :type"))
+      (is (= {":plugins :slack :token" "missing required key"} (errors "{:plugins {:slack {:workspace \"a\"}}}"))))
+    (testing "what the schema can't see, the form still does"
+      (is (str/includes? (get (errors "{:sources [{:type :rss :name \"A\" :url \"u\"} {:type :rss :name \"A\" :url \"v\"}]}")
+                              "sources.1.name")
+                         "another source")))))
+
+(deftest a-prompt-is-a-selmer-template
+  (is (= {":prompt" "should be a Selmer template"} (:errors (settings/from-edn "{:prompt \"{% if x %}\"}"))))
+  (is (str/starts-with? (get (:errors (settings/from-form {"prompt" "{% bogus %}"})) "prompt")
+                        "isn't a template Selmer can read"))
+  (testing "the default prompts are templates"
+    (is (nil? (template/error (config/default-text "prompt.md"))))
+    (is (nil? (template/error (config/default-text "digest.md")))))
+  (testing "{% if %} shows a part only when there is something for it"
+    (let [t "Today {{date}}.{% if previous %} Before: {{previous}}{% endif %}\n{{sources}}"]
+      (is (= "Today d.\n" (news/render-prompt t "d" [] nil)))
+      (is (= "Today d. Before: p\n" (news/render-prompt t "d" [] "p"))))))
+
+(plugin/defsource :settings-test-ok
+  {:fields [{:key :n :type :int :required? true}]}
+  [source ctx]
+  (plugin/emit! ctx "no luck with one page" {:level :error})
+  (for [i (range (:n source))]
+    (plugin/item source {:title (str "Story " i) :url (str "https://e.com/" i)})))
+
+(plugin/defsource :settings-test-broken [_ _]
+  (throw (ex-info "HTTP 404 from https://e.com/feed" {})))
+
+(plugin/defsource :settings-test-slow [_ _]
+  (Thread/sleep 5000)
+  [])
+
+(deftest a-source-can-be-tried-before-it-is-saved
+  (let [try-it (fn [params] (core/test-source {:source-timeout-ms 300} params "sources.12"))]
+    (testing "its fields are checked first"
+      (is (= {:errors {"sources.12.n" "is needed"}} (try-it {"sources.12.type" "settings-test-ok"})))
+      (is (= {:errors {"sources.12.type" "is needed"}} (try-it {}))))
+    (testing "then it is read as a run would"
+      (let [{:keys [items events name]} (try-it {"sources.12.type" "settings-test-ok" "sources.12.n" "3"
+                                                  "sources.12.name" "Mine" "sources.4.n" "x"})]
+        (is (= ["Story 0" "Story 1" "Story 2"] (map :title items)))
+        (is (= "Mine" name))
+        (is (= ["no luck with one page"] (map :text events)))
+        (let [html (str (h/html (config-page/test-result {:items items :events events :name name} "2026-10-03")))]
+          (is (str/includes? html "Read 3 items for 2026-10-03, credited to Mine."))
+          (is (str/includes? html "no luck with one page")))))
+    (testing "and what stops it is said"
+      (is (= "HTTP 404 from https://e.com/feed" (:error (try-it {"sources.12.type" "settings-test-broken"}))))
+      (is (str/includes? (:error (try-it {"sources.12.type" "settings-test-slow"})) "longer than")))
+    (testing "the page has a test button on every source"
+      (let [st (store/open "sqlite::memory:")
+            page (try (ui/page st {:config {:tree (settings/to-form {:sources [{:type :rss :url "u"}]})}})
+                      (finally (store/close st)))]
+        (is (str/includes? page "data-cfg-test=\"sources.0\""))
+        (is (str/includes? page "data-cfg-test=\"sources.__0__\""))))))

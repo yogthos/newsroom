@@ -409,15 +409,15 @@
             running (notes/background kept numbered sources/long-date)
             _ (when running
                 (log! run-id {:text "Giving the model the notes on the stories still running"}))
-            prompt (news/render-prompt (news/add-previous (or (:template ctx) (config/prompt-template config))
-                                                          (some->> [(some->> established
-                                                                             (previous-context (:day earlier)))
-                                                                    running]
-                                                                   (remove nil?)
-                                                                   seq
-                                                                   (str/join "\n\n")))
+            prompt (news/render-prompt (or (:template ctx) (config/prompt-template config))
                                        (str (sources/long-date day) " (" day ")")
-                                       numbered)
+                                       numbered
+                                       (some->> [(some->> established
+                                                          (previous-context (:day earlier)))
+                                                 running]
+                                                (remove nil?)
+                                                seq
+                                                (str/join "\n\n")))
             _ (update-status! run-id assoc :state :analysing :items (count numbered)
                               :provider (name (:alias llm-config)) :model (:model llm-config))
             {:keys [answer reply]} (m/? (write-up ctx llm-config prompt "the briefing"))
@@ -544,11 +544,11 @@
             last-period (trends/period-of kind (trends/plus-days from -1))
             established (some-> (store/digest store kind last-period) :markdown news/overview)
             prompt (trends/render-digest-prompt
-                    (news/add-previous (or (:digest-template ctx) (config/digest-template config))
-                                       (some->> established (previous-digest-context kind last-period)))
+                    (or (:digest-template ctx) (config/digest-template config))
                     label
                     (trends/days-block days sources/long-date)
-                    (trends/digest-block lines sources/long-date))
+                    (trends/digest-block lines sources/long-date)
+                    (some->> established (previous-digest-context kind last-period)))
             llm-config (providers/role-llm config :analyst)
             _ (update-status! run-id assoc :state :analysing :items (count lines)
                               :provider (name (:alias llm-config)) :model (:model llm-config))

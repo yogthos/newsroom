@@ -220,3 +220,23 @@
       "loopback on 3000 unless told otherwise")
   (is (= {:host "0.0.0.0" :port 8080 :strategy :fibers}
          (core/server-opts {:host "0.0.0.0" :port 8080}))))
+
+(deftest the-routes
+  (with-store
+    (fn [st]
+      (reset! core/system {:store st :config {}})
+      (try
+        (let [get-it #(core/app {:uri % :request-method :get})]
+          (is (= "/day/2026-09-30" (get-in (get-it "/") [:headers "Location"])) "the latest day")
+          (is (str/includes? (:body (get-it "/day/2026-09-30")) "Big day"))
+          (is (str/starts-with? (:body (get-it "/day/2026-09-30.md")) "# Big day"))
+          (is (= 404 (:status (get-it "/day/2026-02-30"))) "not a day")
+          (is (= 404 (:status (get-it "/day/2026-09-30/more"))))
+          (is (= 404 (:status (get-it "/day/2026-01-01.md"))) "no briefing to give")
+          (is (= 200 (:status (get-it "/day/2026-01-01"))) "a day without one still has a page")
+          (is (= "application/javascript" (get-in (get-it "/js/config.js") [:headers "Content-Type"])))
+          (is (= 404 (:status (get-it "/js/nope.js"))))
+          (is (= 404 (:status (get-it "/nowhere"))))
+          (is (= 404 (:status (get-it "/run"))) "a run is started by a POST")
+          (is (= 400 (:status (core/app {:uri "/run" :request-method :post :query-string "day=soon"})))))
+        (finally (reset! core/system nil))))))

@@ -15,17 +15,22 @@
   into settings, every value its field's type, and says what is wrong with
   any that isn't.
 
-  Settings can also be exported as EDN and imported from it, which goes
-  through the form too, so an import is checked as a save is."
+  Settings can also be exported as EDN, in config.edn's form, and imported
+  from it. An import is checked against `schema`, a malli schema made from
+  the same fields the page shows, then read through the form, so it is
+  checked as a save is too."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.pprint :as pp]
             [clojure.string :as str]
+            [malli.core :as m]
+            [malli.error :as me]
             [newsroom.config :as config]
             [newsroom.llm.providers :as providers]
             [newsroom.plugin :as plugin]
             [newsroom.sources :as sources]
-            [newsroom.store :as store]))
+            [newsroom.store :as store]
+            [newsroom.template :as template]))
 
 ;; --- what there is to set ----------------------------------------------------------
 
@@ -84,13 +89,16 @@
    {:title "Models" :kind :models}
    {:title "Plugins" :kind :plugins}
    {:title "Prompts"
-    :fields [{:key :prompt :type :text :rows 18
-              :doc (str "What the model is told to write the briefing. {{date}} is the day, {{sources}} the "
-                        "numbered sources and {{previous}} the last briefing's overview; without them, the "
-                        "sources are appended and the overview goes just before them. Blank is the default.")}
-             {:key :digest-prompt :type :text :rows 12
-              :doc (str "The weekly and monthly digests' prompt. {{period}}, {{days}} and {{stories}} are "
-                        "filled in. Blank is the default.")}]}])
+    :fields [{:key :prompt :type :text :rows 18 :template? true
+              :doc (str "What the model is told to write the briefing, a Selmer template: {{date}} is the day, "
+                        "{{sources}} the numbered sources and {{previous}} the last briefing's overview, and "
+                        "{% if previous %}...{% endif %} shows text only when there is one. Without a place for "
+                        "them, the sources are appended and the overview goes just before them. "
+                        "Blank is the default.")}
+             {:key :digest-prompt :type :text :rows 12 :template? true
+              :doc (str "The weekly and monthly digests' prompt, a Selmer template: {{period}}, {{days}}, "
+                        "{{stories}} and {{previous}}, the last digest's overview, are filled in. "
+                        "Blank is the default.")}]}])
 
 (def source-name-field
   {:key :name :type :string
@@ -190,9 +198,12 @@
         (and (:regex? field) (regex-error s)) {:error (regex-error s)}
         :else {:value s}))))
 
-(defmethod read-value :text [_ raw _ _]
+(defmethod read-value :text [field raw _ _]
   (when-not (blank? raw)
-    {:value (str/replace raw "\r\n" "\n")}))
+    (let [s (str/replace raw "\r\n" "\n")]
+      (if-let [e (and (:template? field) (template/error s))]
+        {:error (str "isn't a template Selmer can read: " e)}
+        {:value s}))))
 
 (defmethod read-value :int [field raw _ _]
   (when-not (blank? raw)
@@ -281,6 +292,17 @@
   [raw]
   (let [type (some-> (get raw "type") str/trim (str/replace #"^:" "") not-empty keyword)]
     (assoc (read-map (source-fields type) raw "source" (atom {})) :type type)))
+
+(defn source-at
+  "The source the form `params` holds at `prefix`, sources.3 say, read and
+  checked as a save reads it: {:source :errors}, :errors by form name."
+  [params prefix]
+  (let [raw (get-in (form-tree params) (str/split prefix #"\."))
+        type (some-> (get raw "type") str/trim (str/replace #"^:" "") not-empty keyword)
+        errors (atom {})
+        source (when type (assoc (read-map (source-fields type) raw prefix errors) :type type))]
+    {:source source
+     :errors (if type @errors {(field-name prefix "type") "is needed"})}))
 
 (defn- read-sources [raw errors]
   (let [read (vec (for [[i r] (indexed raw)
@@ -434,23 +456,105 @@
        (with-out-str
          (pp/pprint (into (sorted-map) (select-keys settings setting-keys))))))
 
+;; --- the schema --------------------------------------------------------------------
+
+(defn- message [text pred] [:fn {:error/message text} pred])
+
+(defn- valid-regex? [s] (nil? (regex-error s)))
+
+(declare map-schema)
+
+(defn- field-schema
+  "The malli schema of a field's value, as config.edn writes it."
+  [{:keys [type options fields min max pattern regex? template? nullable? shorthand?]}]
+  (let [bounded (fn [pred] (cond-> [:and pred]
+                             min (conj [:>= min])
+                             max (conj [:<= max])))
+        base (case type
+               :string (cond
+                         pattern [:and string? (message "isn't in the right form" #(boolean (re-matches pattern %)))]
+                         regex? [:and string? (message "should be a regex" valid-regex?)]
+                         :else string?)
+               :text (if template?
+                       [:and string? (message "should be a Selmer template" #(nil? (template/error %)))]
+                       string?)
+               :int (bounded int?)
+               :number (bounded number?)
+               :boolean boolean?
+               :keyword (if (seq options) (into [:enum] options) keyword?)
+               :keywords [:sequential (into [:enum] options)]
+               :strings [:or string? [:sequential string?]]
+               :records [:sequential (let [record (map-schema fields)]
+                                       (if shorthand?
+                                         [:or (field-schema (first fields)) record]
+                                         record))]
+               any?)]
+    (if nullable? [:maybe base] base)))
+
+(defn- map-schema
+  "An open map of `fields`: keys no field shows are let through, as on the
+  page."
+  [fields]
+  (into [:map] (for [{:keys [key required?] :as f} fields]
+                 [key {:optional (not required?)} (field-schema f)])))
+
+(defn schema
+  "The malli schema of the settings as config.edn writes them, made from the
+  fields the page shows, so each source type is checked by its shape and
+  each plugin's settings by what it declared. config.edn's static keys are
+  let through, since a whole config.edn can be imported."
+  []
+  (let [scalars (for [s sections, f (:fields s)] f)
+        source (into [:multi {:dispatch :type}]
+                     (concat (for [t (source-types)]
+                               [t (map-schema (into [{:key :type :type :keyword :required? true}]
+                                                    (source-fields t)))])
+                             [[::m/default [:map [:type keyword?]]]]))
+        plugins (into [:map] (for [p (plugin/declared-settings)]
+                               [(keyword p) {:optional true} (map-schema (plugin-fields p))]))]
+    (-> [:map {:closed true}]
+        (into (for [f scalars] [(:key f) {:optional true} (field-schema f)]))
+        (into [[:sources {:optional true} [:sequential source]]
+               [:providers {:optional true} [:map-of keyword? (map-schema provider-fields)]]
+               [:roles {:optional true} (map-schema role-fields)]
+               [:plugins {:optional true} [:and [:map-of keyword? map?] plugins]]])
+        (into (for [k (sort config/static-keys)] [k {:optional true} any?])))))
+
+(defn schema-errors
+  "What is wrong with `m` by `schema`, {where message}, where being the path
+  to the value as config.edn writes it, like :sources 3 :url. Empty when
+  nothing is."
+  [m]
+  (if-let [explained (m/explain (schema) m)]
+    (reduce (fn [errors {:keys [in] :as e}]
+              (let [where (if (seq in) (str/join " " (map pr-str in)) "EDN")
+                    text (me/error-message e)]
+                ;; the first check a value fails says enough
+                (update errors where #(or % text))))
+            {}
+            (:errors explained))
+    {}))
+
 (defn from-edn
-  "The settings EDN `text` says, in config.edn's form, checked as the
-  form's are: {:settings :errors}, :settings only the keys `text` has,
-  :errors {where message}, empty when they could all be read. A whole
-  config.edn will do: its static keys, which only config.edn can change,
-  are passed over."
+  "The settings EDN `text` says, in config.edn's form: {:settings :errors},
+  :settings only the keys `text` has, :errors {where message}, empty when
+  they could all be read. It is checked against `schema` first, then read
+  through the form, which finds what a schema doesn't, like two sources of
+  one name. A whole config.edn will do: its static keys, which only
+  config.edn can change, are passed over."
   [text]
   (let [m (try (edn/read-string (str text)) (catch Exception e {::error (ex-message e)}))]
     (cond
       (::error m) {:settings {} :errors {"EDN" (str "can't be read: " (::error m))}}
       (not (map? m)) {:settings {} :errors {"EDN" "has to be a map of settings, {:key value ...}"}}
       :else
-      (let [unknown (remove (into setting-keys config/static-keys) (keys m))
-            known (select-keys m setting-keys)
-            {:keys [settings errors]} (from-form (form-params (to-form known)))]
-        {:settings (select-keys settings (keys known))
-         :errors (into errors (for [k unknown] [(pr-str k) "isn't a setting"]))}))))
+      (let [errors (schema-errors m)]
+        (if (seq errors)
+          {:settings {} :errors errors}
+          (let [known (select-keys m setting-keys)
+                {:keys [settings errors]} (from-form (form-params (to-form known)))]
+            {:settings (select-keys settings (keys known))
+             :errors errors}))))))
 
 ;; --- the store ---------------------------------------------------------------------
 

@@ -13,6 +13,9 @@
     POST /config            save the settings and run with them from now on
     GET  /config/export     the settings as EDN, in config.edn's form
     POST /config/import     save the settings in an EDN file or text
+    POST /config/test-source
+                            read one source of the config page's form, as
+                            a run would, without saving it
     POST /run?day=...       gather and analyse a day (today by default)
     POST /digest?kind=week&period=YYYY-Www
                             write a digest (kind week or month)
@@ -22,12 +25,16 @@
             [hiccup2.core :as h]
             [jolt.datastar.core :as ds]
             [ring-chez.adapter :as adapter]
-            [ring-chez.multipart.core :as form]
+            [ring-chez.middleware.multipart :as multipart]
+            [ring.middleware.params :as params]
+            [ruuter.core :as ruuter]
             [newsroom.config :as config]
+            [newsroom.config-page :as config-page]
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
             [newsroom.plugin :as plugin]
             [newsroom.settings :as settings]
+            [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.trends :as trends]
             [newsroom.ui :as ui]))
@@ -41,21 +48,6 @@
 (defn- not-found [] {:status 404 :headers {"Content-Type" "text/plain"} :body "not found\n"})
 
 (defn- redirect [to] {:status 302 :headers {"Location" to} :body ""})
-
-(defn- query-param [req k]
-  (some->> (:query-string req)
-           (re-find (re-pattern (str "(?:^|&)" k "=([^&]*)")))
-           second))
-
-(defn- day-route [uri]
-  (second (re-matches #"/day/(\d{4}-\d{2}-\d{2})(\.md)?" uri)))
-
-(defn- digest-route
-  "The [kind period] a digest's path names, when it names a real one."
-  [uri]
-  (when-let [[_ kind period] (re-matches #"/(week|month)/([0-9W-]+?)(?:\.md)?" uri)]
-    (let [kind (keyword kind)]
-      (when (trends/period-range kind period) [kind period]))))
 
 (defn- start-schedule!
   "The schedule, reading the config as it is at each wake."
@@ -76,14 +68,26 @@
       (swap! system assoc :schedule (start-schedule!)))
     cfg))
 
-(defn- form-data
-  "A form's {:params {name value} :files {name part}}. The config page's
-  form has a field for every key of every source, so far more than the
-  parser allows by default."
-  [req]
-  (form/parse-form-data req {:part-limit 100000 :memory-limit (* 16 1024 1024)}))
-
-(defn- form-params [req] (:params (form-data req)))
+(defn test-source
+  "Read the source the form `params` holds at `prefix` as a run would, for
+  today, within the run's :source-timeout-ms: {:errors} when its fields
+  are wrong, else {:items :events}, or {:error :events} when reading it
+  failed or took too long. Nothing is saved."
+  [cfg params prefix]
+  (let [{:keys [source errors]} (settings/source-at params prefix)]
+    (if (seq errors)
+      {:errors errors}
+      (let [events (atom [])
+            timeout (:source-timeout-ms cfg 30000)
+            task (future
+                   (try {:items (vec (sources/fetch-items source {:day (pipeline/today) :config cfg
+                                                                  :emit #(swap! events conj %)}))}
+                        (catch Throwable e {:error (or (ex-message e) (str e))})))
+            result (deref task timeout ::timeout)]
+        (if (= ::timeout result)
+          (do (future-cancel task)
+              {:error (str "took longer than " (quot timeout 1000) "s, the source timeout") :events @events})
+          (assoc result :events @events :name (sources/source-name source)))))))
 
 (defn- current-form [] (settings/to-form (:config @system)))
 
@@ -91,8 +95,8 @@
   "Save the settings in the EDN of an uploaded file or the pasted text,
   over the ones there are."
   [req]
-  (let [{:keys [params files]} (form-data req)
-        file (get files "file")
+  (let [{:keys [params]} req
+        file (get params "file")
         file (if (vector? file) (peek file) file)
         text (if (pos? (count (:bytes file)))
                (String. ^bytes (:bytes file) "UTF-8")
@@ -119,7 +123,7 @@
   [req]
   (let [st (:store @system)]
     (if (= :post (:request-method req))
-      (let [params (form-params req)
+      (let [params (:params req)
             {:keys [settings errors]} (settings/from-form params)]
         (if (seq errors)
           (assoc (html (ui/page st {:config {:tree (settings/form-tree params) :errors errors}})) :status 422)
@@ -127,90 +131,118 @@
               (reload! settings)
               {:status 303 :headers {"Location" "/config?saved=1"} :body ""})))
       (html (ui/page st {:config {:tree (current-form)
-                                  :saved? (= "1" (query-param req "saved"))
-                                  :imported? (= "1" (query-param req "imported"))}})))))
+                                  :saved? (= "1" (get-in req [:params "saved"]))
+                                  :imported? (= "1" (get-in req [:params "imported"]))}})))))
 
 (def ^:private assets
-  "The files served from resources/public, by path, with their content type."
+  "The files served from resources/public, by path, with their content type.
+  They are read through io/resource, which reaches the copies baked into a
+  built binary, where Ring's resource middleware can't."
   {"/js/datastar.js" "application/javascript"
    "/js/diagrams.js" "application/javascript"
    "/js/config.js"   "application/javascript"
    "/css/style.css"  "text/css; charset=utf-8"})
 
-(defn app [{:keys [uri request-method jolt.datastar/sse-request] :as req}]
+(defn- asset [{:keys [uri]}]
+  (if-let [type (assets uri)]
+    {:status 200
+     :headers {"Content-Type" type "Cache-Control" "max-age=86400"}
+     :body (slurp (io/resource (str "public" uri)))}
+    (not-found)))
+
+(defn- live
+  "The page for `current`, or, when the request is datastar's stream, the
+  part of it the stream patches."
+  [{:keys [jolt.datastar/sse-request jolt.datastar/selector]} current]
   (let [st (:store @system)]
+    (if sse-request
+      (html (str (h/html (ui/fragment st current selector))))
+      (html (ui/page st current)))))
+
+(defn- markdown [doc]
+  (if doc
+    {:status 200 :headers {"Content-Type" "text/markdown; charset=utf-8"} :body (:markdown doc)}
+    (not-found)))
+
+(defn- with-md
+  "A path part and whether it ended in .md: [\"2026-09-30\" true]."
+  [part]
+  (if (str/ends-with? part ".md") [(subs part 0 (- (count part) 3)) true] [part false]))
+
+(defn- day-page [{:keys [params] :as req}]
+  (let [[day md?] (with-md (:day params))]
     (cond
-      (= uri "/")
-      (redirect (str "/day/" (or (first (store/days st)) (pipeline/today))))
+      (not (news/valid-day? day)) (not-found)
+      md? (markdown (store/day (:store @system) day))
+      :else (live req day))))
 
-      (and (= :post request-method) (= uri "/run"))
-      (let [day (or (query-param req "day") (pipeline/today))]
-        (if (news/valid-day? day)
-          (do (pipeline/start-run! (ctx) day)
-              (ds/patch-signals {}))
-          {:status 400 :body "bad day\n"}))
+(defn- digest-page [kind]
+  (fn [{:keys [params] :as req}]
+    (let [[period md?] (with-md (:period params))]
+      (cond
+        (not (trends/period-range kind period)) (not-found)
+        md? (markdown (store/digest (:store @system) kind period))
+        :else (live req {:kind kind :period period})))))
 
-      (and (= :post request-method) (= uri "/digest"))
-      (let [kind (some-> (query-param req "kind") keyword)
-            period (query-param req "period")]
-        (if (and (contains? trends/kinds kind) (trends/period-range kind period))
-          (do (pipeline/start-digest! (ctx) kind period)
-              (ds/patch-signals {}))
-          {:status 400 :body "bad digest\n"}))
+(defn- start-run [{:keys [params]}]
+  (let [day (get params "day" (pipeline/today))]
+    (if (news/valid-day? day)
+      (do (pipeline/start-run! (ctx) day)
+          (ds/patch-signals {}))
+      {:status 400 :body "bad day\n"})))
 
-      (and (= :post request-method) (= uri "/cancel"))
-      (do (pipeline/cancel-run!) (ds/patch-signals {}))
+(defn- start-digest [{:keys [params]}]
+  (let [kind (some-> (get params "kind") keyword)
+        period (get params "period")]
+    (if (and (contains? trends/kinds kind) (trends/period-range kind period))
+      (do (pipeline/start-digest! (ctx) kind period)
+          (ds/patch-signals {}))
+      {:status 400 :body "bad digest\n"})))
 
-      (= uri "/config/export")
-      {:status 200
-       :headers {"Content-Type" "application/edn; charset=utf-8"
-                 "Content-Disposition" "attachment; filename=\"newsroom-settings.edn\""}
-       :body (settings/export-edn (:config @system))}
+(defn- story-page [{:keys [params] :as req}]
+  (if (and (news/valid-day? (:day params)) (re-matches #"\d+" (:n params)))
+    (live req {:story (str (:day params) "/" (:n params))})
+    (not-found)))
 
-      (and (= :post request-method) (= uri "/config/import"))
-      (import-settings req)
+(def routes
+  "Every path the server answers, as ruuter routes; see the namespace doc."
+  [{:path "/" :method :get
+    :response (fn [_] (redirect (str "/day/" (or (first (store/days (:store @system))) (pipeline/today)))))}
+   {:path "/day/:day" :method :get :response day-page}
+   {:path "/week/:period" :method :get :response (digest-page :week)}
+   {:path "/month/:period" :method :get :response (digest-page :month)}
+   {:path "/stories" :method :get :response #(live % {:stories true})}
+   {:path "/story/:day/:n" :method :get :response story-page}
+   {:path "/run" :method :post :response start-run}
+   {:path "/digest" :method :post :response start-digest}
+   {:path "/cancel" :method :post :response (fn [_] (pipeline/cancel-run!) (ds/patch-signals {}))}
+   {:path "/config" :method :get
+    :response #(if (:jolt.datastar/sse-request %) (live % {:config true}) (config-page %))}
+   {:path "/config" :method :post :response config-page}
+   {:path "/config/export" :method :get
+    :response (fn [_]
+                {:status 200
+                 :headers {"Content-Type" "application/edn; charset=utf-8"
+                           "Content-Disposition" "attachment; filename=\"newsroom-settings.edn\""}
+                 :body (settings/export-edn (:config @system))})}
+   {:path "/config/import" :method :post :response import-settings}
+   {:path "/config/test-source" :method :post
+    :response (fn [{:keys [params]}]
+                (html (str (h/html (config-page/test-result
+                                    (test-source (:config @system) params (str (get params "_test")))
+                                    (pipeline/today))))))}
+   {:path "/js/:file" :method :get :response asset}
+   {:path "/css/:file" :method :get :response asset}
+   {:path :not-found :response (fn [_] (not-found))}])
 
-      (= uri "/config")
-      (if sse-request
-        (html (str (h/html (ui/fragment st {:config true} (:jolt.datastar/selector req)))))
-        (config-page req))
-
-      (assets uri)
-      {:status 200
-       :headers {"Content-Type" (assets uri) "Cache-Control" "max-age=86400"}
-       :body (slurp (io/resource (str "public" uri)))}
-
-      (or (= uri "/stories") (re-matches #"/story/\d{4}-\d{2}-\d{2}/\d+" uri))
-      (let [current (if (= uri "/stories") {:stories true} {:story (subs uri (count "/story/"))})]
-        (if sse-request
-          (html (str (h/html (ui/fragment st current (:jolt.datastar/selector req)))))
-          (html (ui/page st current))))
-
-      (re-matches #"/(week|month)/.*" uri)
-      (if-let [[kind period] (digest-route uri)]
-        (cond
-          (str/ends-with? uri ".md")
-          (if-let [d (store/digest st kind period)]
-            {:status 200 :headers {"Content-Type" "text/markdown; charset=utf-8"} :body (:markdown d)}
-            (not-found))
-
-          sse-request (html (str (h/html (ui/fragment st {:kind kind :period period}
-                                                      (:jolt.datastar/selector req)))))
-          :else (html (ui/page st {:kind kind :period period})))
-        (not-found))
-
-      :else
-      (let [day (day-route uri)]
-        (cond
-          (not (and day (news/valid-day? day))) (not-found)
-
-          (str/ends-with? uri ".md")
-          (if-let [d (store/day st day)]
-            {:status 200 :headers {"Content-Type" "text/markdown; charset=utf-8"} :body (:markdown d)}
-            (not-found))
-
-          sse-request (html (str (h/html (ui/fragment st day (:jolt.datastar/selector req)))))
-          :else (html (ui/page st day)))))))
+(def app
+  "The Ring handler: ruuter routes over the query string's and the form's
+  params, under :params by name, the path's by keyword. A multipart form,
+  an import's upload, is read by the adapter's own middleware, since
+  Ring's is written against a JVM library."
+  (-> #(ruuter/route routes %)
+      params/wrap-params
+      multipart/wrap-multipart-params))
 
 (defn server-opts
   "How the server listens: :host (an IPv4 address, loopback unless the config

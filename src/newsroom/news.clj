@@ -9,7 +9,8 @@
   `briefing` links those citations and appends the sources the answer cited.
   The contract is test/newsroom/news_spec.clj."
   (:require [clojure.string :as str]
-            [newsroom.embed :as embed]))
+            [newsroom.embed :as embed]
+            [newsroom.template :as template]))
 
 ;; --- urls ------------------------------------------------------------------------
 
@@ -267,28 +268,41 @@
         text (str/trim (str/replace text #"\s+" " "))]
     (when-not (str/blank? text) text)))
 
-(defn add-previous
-  "The template with `previous`, text about the last briefing, at its
-  {{previous}}, or just before {{sources}} when it has no place for it, or at
-  the end when it has neither. Without `previous` the template is unchanged
-  but for an empty {{previous}}."
-  [template previous]
-  (cond
-    (nil? previous) (str/replace template "{{previous}}" "")
-    (str/includes? template "{{previous}}") (str/replace template "{{previous}}" previous)
-    (str/includes? template "{{sources}}") (str/replace template "{{sources}}"
-                                                        (str previous "\n\n{{sources}}"))
-    :else (str template "\n\n" previous)))
+(defn- tag-re
+  "A Selmer variable tag for `var`, filters and all: {{ sources }},
+  {{sources|upper}}."
+  [var]
+  (re-pattern (str "\\{\\{\\s*" var "\\s*(?:\\|[^}]*)?\\}\\}")))
+
+(defn has-var?
+  "Whether `template` shows the variable `var` somewhere."
+  [template var]
+  (boolean (re-find (tag-re var) template)))
+
+(defn place-vars
+  "`template` with a place for each of `vars` it has none for: the first
+  just before the place of `before`, or at the end when it has none either,
+  so that what the model has to see is always in the prompt. `vars` are
+  placed in order, `before` last."
+  [template vars before]
+  (reduce (fn [t var]
+            (cond
+              (has-var? t var) t
+              (and (not= var before) (has-var? t before))
+              (str/replace-first t (tag-re before) (fn [m] (str "{{" var "}}\n\n" m)))
+              :else (str t "\n\n{{" var "}}")))
+          template
+          vars))
 
 (defn render-prompt
-  "The template with {{date}} and {{sources}} filled in. A template with no
-  {{sources}} gets them after it, so the model always sees what it may cite."
-  [template day sources]
-  (let [block (source-block sources)
-        filled (str/replace template "{{date}}" day)]
-    (if (str/includes? filled "{{sources}}")
-      (str/replace filled "{{sources}}" block)
-      (str filled "\n\n" block))))
+  "The briefing's prompt: the Selmer `template` with {{date}}, {{sources}}
+  and {{previous}}, text about the last briefing, filled in. A template
+  with no place for the sources gets them after it, so the model always
+  sees what it may cite, and one with no place for `previous` gets it just
+  before the sources."
+  [template day sources previous]
+  (template/fill (place-vars template (if previous ["previous" "sources"] ["sources"]) "sources")
+        {:date day :sources (source-block sources) :previous previous}))
 
 ;; --- citations -------------------------------------------------------------------
 

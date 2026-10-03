@@ -17,9 +17,21 @@
 - **Import and export.** The config page exports the settings as EDN in
   `config.edn`'s form, and imports them from a file or pasted text, checked as
   a save is. An old `config.edn` imports as it is; the keys it names replace
-  the settings, and `:host`, `:port` and `:db` are passed over.
+  the settings, and `:host`, `:port` and `:db` are passed over. An import is
+  checked against a malli schema generated from the fields and shapes.
+- **Testing a source.** Every source on the config page has a test button
+  that reads it as a run would, within the source timeout, and shows the
+  headlines it found or why it failed, without saving anything.
 
 ### Changed
+
+- **Prompts are Selmer templates.** `{{date}}`, `{{sources}}`, `{{previous}}`
+  and the digest's variables work as before, and tags like `{% if previous %}`
+  now work too. A template Selmer can't read is refused when it's saved.
+- **Ring middleware and ruuter routes.** The handler is a ruuter route table
+  under ring-core's params middleware, with the adapter's multipart middleware
+  for uploads, in place of hand-matched paths and hand-parsed query strings
+  and forms.
 
 - **Settings live in the database.** `config.edn` keeps only `:host`, `:port`
   and `:db`. At startup, any other key in it is moved into the database, as are

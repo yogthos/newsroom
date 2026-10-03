@@ -28,3 +28,30 @@ document.addEventListener('click', (e) => {
     remove.closest('[data-cfg-entry]').remove();
   }
 });
+
+// A source's test button sends its entry's fields, named as the form names
+// them, with the entry's own name, and shows what came back under it.
+document.addEventListener('click', async (e) => {
+  const button = e.target.closest('[data-cfg-test]');
+  if (!button) return;
+  e.preventDefault();
+  const entry = button.closest('[data-cfg-entry]');
+  const out = entry.querySelector(':scope > .test-result');
+  const body = new URLSearchParams();
+  for (const el of entry.querySelectorAll('[name]')) {
+    if (el.closest('template')) continue;
+    if (el.type === 'checkbox' && !el.checked) continue;
+    body.append(el.name, el.value);
+  }
+  body.append('_test', button.dataset.cfgTest);
+  button.disabled = true;
+  out.innerHTML = '<p class="muted">Reading…</p>';
+  try {
+    const resp = await fetch('/config/test-source', { method: 'POST', body });
+    out.innerHTML = await resp.text();
+  } catch (err) {
+    out.textContent = 'The test failed: ' + err;
+  } finally {
+    button.disabled = false;
+  }
+});

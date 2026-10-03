@@ -127,7 +127,8 @@
                                                                   {:day "2026-09-28" :tldr "Busy."}
                                                                   {:day "2026-09-30" :tldr nil}]
                                                                  identity)
-                                              (trends/digest-block lines identity))]
+                                              (trends/digest-block lines identity)
+                                              nil)]
       (is (str/starts-with? prompt "Digest of the week of 28 September 2026."))
       (is (str/includes? prompt "- 2026-09-28: Busy.\n- 2026-09-29: Quiet.") "standfirsts in order")
       (is (str/includes? prompt "### War grinds on\nTrend: persistent"))
@@ -141,5 +142,8 @@
                                                                     :url "https://e.com/c"}]}])
                             identity)
                            "Where it stands: Curbs keep widening.\n\n[1] 2026-10-01: Curbs announced.\nChip curbs (Wire), https://e.com/c")))
+      (testing "the last digest goes before the stories when the template has no place for it"
+        (is (= "Digest p.\n\nLAST\n\nSTORIES"
+               (trends/render-digest-prompt "Digest {{period}}.\n\n{{stories}}" "p" "" "STORIES" "LAST"))))
       (testing "a template without {{stories}} gets them at the end"
-        (is (str/ends-with? (trends/render-digest-prompt "Digest." "p" "" "STORIES") "\n\nSTORIES"))))))
+        (is (str/ends-with? (trends/render-digest-prompt "Digest." "p" "" "STORIES" nil) "\n\nSTORIES"))))))

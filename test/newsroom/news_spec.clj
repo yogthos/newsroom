@@ -14,9 +14,10 @@
   values, so duplicates are common: a story is keyed by a small number, and
   the same story comes back with a fragment or tracking parameters on it."
   (:require [clojure.string :as str]
-            [newsroom.news :refer [canonical-url dedupe-items unseen-items overview add-previous cite render-prompt
+            [newsroom.news :refer [canonical-url dedupe-items unseen-items overview cite render-prompt has-var? place-vars
                                    citations link-citations briefing collapse-similar told outlets tldr
                                    valid-day? adjacent-days]]
+            [newsroom.template :as template]
             [writ.spec :refer [spec ann refine graph flow law calls assume]]))
 
 (spec newsroom.news)
@@ -33,6 +34,9 @@
   true)
 
 ;; an item with the number the analysis cites it by
+;; a prompt template Selmer can read; the config page refuses any other
+(refine Template [s String] (nil? (template/error s)))
+
 (refine Source [s {:n Nat, :title String, :url String, :source String,
                    :summary String, :published (Opt String)}]
   true)
@@ -41,9 +45,10 @@
 (ann dedupe-items   [(List Item) -> (List Item)])
 (ann unseen-items   [(List Item) (List Item) -> (List Item)])
 (ann overview       [String -> (Opt String)])
-(ann add-previous   [String (Opt String) -> String])
 (ann cite           [(List Item) -> (List Source)])
-(ann render-prompt  [String String (List Source) -> String])
+(ann render-prompt  [Template String (List Source) (Opt String) -> String])
+(ann has-var?       [String String -> Bool])
+(ann place-vars     [String (List String) String -> String])
 (ann citations      [String -> (Vec Nat)])
 (ann link-citations [String (List Source) -> String])
 (ann briefing       [String (List Source) -> String])
@@ -132,7 +137,7 @@
    :edges  {:link     {[canonical-url] #{:url}}
             :gathered {[dedupe-items] #{:unique}}
             :unique   {[cite] #{:cited}}
-            :cited    {[render-prompt String String _] #{:prompt}}
+            :cited    {[render-prompt Template String _ (Opt String)] #{:prompt}}
             :answer   {[briefing (List Source)] #{:briefing}
                        [citations] #{:numbers}}}})
 
@@ -235,25 +240,47 @@
 
 (law the-last-briefing-goes-where-the-template-says
   (forall [a String, b String, c String]
-    (= (str (alnum a) " " (alnum c) " " (alnum b) " {{sources}}")
-       (add-previous (str (alnum a) " {{previous}} " (alnum b) " {{sources}}") (alnum c)))))
+    (= (str (alnum a) " " (alnum c) " " (alnum b) " ")
+       (render-prompt (str (alnum a) " {{previous}} " (alnum b) " {{sources}}") "d" [] (alnum c)))))
 
 (law without-a-place-it-goes-before-the-sources
   (forall [a String, b String, c String]
-    (= (str (alnum a) " " (alnum c) "\n\n{{sources}} " (alnum b))
-       (add-previous (str (alnum a) " {{sources}} " (alnum b)) (alnum c)))))
+    (= (str (alnum a) " " (alnum c) "\n\n " (alnum b))
+       (render-prompt (str (alnum a) " {{sources}} " (alnum b)) "d" [] (alnum c)))))
 
 (law with-neither-place-it-goes-at-the-end
   (forall [a String, c String]
-    (= (str (alnum a) "\n\n" (alnum c))
-       (add-previous (alnum a) (alnum c)))))
+    (= (str (alnum a) "\n\n" (alnum c) "\n\n")
+       (render-prompt (alnum a) "d" [] (alnum c)))))
 
-(law without-a-last-briefing-only-the-place-is-dropped
+(law without-a-last-briefing-its-place-is-empty
   (forall [a String, b String]
-    (and (= (str (alnum a) "  " (alnum b) " {{sources}}")
-            (add-previous (str (alnum a) " {{previous}} " (alnum b) " {{sources}}") nil))
-         (= (str (alnum a) " {{sources}}")
-            (add-previous (str (alnum a) " {{sources}}") nil)))))
+    (and (= (str (alnum a) "  " (alnum b) " ")
+            (render-prompt (str (alnum a) " {{previous}} " (alnum b) " {{sources}}") "d" [] nil))
+         (= (str (alnum a) " ")
+            (render-prompt (str (alnum a) " {{sources}}") "d" [] nil)))))
+
+(law what-the-values-hold-is-not-a-template
+  (forall [a String]
+    (= (str "{{date}} {% if x %}" (alnum a))
+       (render-prompt "{{previous}}{{sources}}" "d" [] (str "{{date}} {% if x %}" (alnum a))))))
+
+;; a place is made for what the model has to see, once
+(law a-place-is-made-only-where-there-is-none
+  (forall [a String]
+    (and (= (str (alnum a) " {{ sources }}") (place-vars (str (alnum a) " {{ sources }}") ["sources"] "sources"))
+         (= (str (alnum a) "\n\n{{previous}}\n\n{{sources}}") (place-vars (alnum a) ["previous" "sources"] "sources"))
+         (has-var? (str (alnum a) "{{sources|safe}}") "sources"))))
+
+;; whatever the variables are called: the digest places its last digest
+;; before its stories as the briefing does before its sources
+(law a-place-goes-before-the-one-named
+  (forall [a String, b String, v String, w String]
+    (let [v (str "v" (alnum v)), w (str "w" (alnum w))]
+      (and (= (str (alnum a) " {{" w "}}\n\n{{" v "}} " (alnum b))
+              (place-vars (str (alnum a) " {{" v "}} " (alnum b)) [w v] v))
+           (= (str (alnum a) "\n\n{{" w "}}\n\n{{" v "}}")
+              (place-vars (alnum a) [w v] v))))))
 
 ;; --- citing ------------------------------------------------------------------------
 
@@ -266,30 +293,30 @@
 
 (law every-source-is-in-the-prompt
   (forall [ns (List Nat), tmpl String, day String]
-    (every? (fn [s] (and (str/includes? (render-prompt tmpl day (sources-of ns))
+    (every? (fn [s] (and (str/includes? (render-prompt (alnum tmpl) day (sources-of ns) nil)
                                         (str "[" (:n s) "]"))
-                         (str/includes? (render-prompt tmpl day (sources-of ns)) (:url s))
-                         (str/includes? (render-prompt tmpl day (sources-of ns)) (:title s))))
+                         (str/includes? (render-prompt (alnum tmpl) day (sources-of ns) nil) (:url s))
+                         (str/includes? (render-prompt (alnum tmpl) day (sources-of ns) nil) (:title s))))
             (sources-of ns))))
 
 (law the-placeholders-are-filled
   (forall [ns (List Nat), a String, b String]
     (and (str/includes? (render-prompt (str (alnum a) " {{date}} " (alnum b) " {{sources}}")
-                                       "2026-09-30" (sources-of ns))
+                                       "2026-09-30" (sources-of ns) nil)
                         (str (alnum a) " 2026-09-30 " (alnum b) " "))
-         (not (str/includes? (render-prompt "{{date}} {{sources}}" "2026-09-30" (sources-of ns))
+         (not (str/includes? (render-prompt "{{date}} {{sources}}" "2026-09-30" (sources-of ns) nil)
                              "{{")))))
 
 (law a-template-without-sources-still-gets-them-after-it
   (forall [ns (List Nat), a String]
-    (str/starts-with? (render-prompt (str "Analyse " (alnum a)) "2026-09-30" (sources-of ns))
+    (str/starts-with? (render-prompt (str "Analyse " (alnum a)) "2026-09-30" (sources-of ns) nil)
                       (str "Analyse " (alnum a)))))
 
 (law the-sources-end-the-prompt-where-they-are-placed
   (forall [n Nat, ns (List Nat), a String]
-    (and (str/ends-with? (render-prompt (str (alnum a) " {{sources}}") "2026-09-30" (sources-of (cons n ns)))
+    (and (str/ends-with? (render-prompt (str (alnum a) " {{sources}}") "2026-09-30" (sources-of (cons n ns)) nil)
                          (:url (last (sources-of (cons n ns)))))
-         (= (render-prompt (str "On {{date}}, " (alnum a) ": {{sources}}") "2026-09-30" [])
+         (= (render-prompt (str "On {{date}}, " (alnum a) ": {{sources}}") "2026-09-30" [] nil)
             (str "On 2026-09-30, " (alnum a) ": ")))))
 
 ;; --- citations ---------------------------------------------------------------------

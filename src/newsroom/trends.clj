@@ -22,7 +22,8 @@
   (:require [clojure.math :as m]
             [clojure.string :as str]
             [newsroom.embed :as embed]
-            [newsroom.news :as news]))
+            [newsroom.news :as news]
+            [newsroom.template :as template]))
 
 ;; --- days ------------------------------------------------------------------------
 
@@ -308,13 +309,12 @@
                    (str "- " (long-date day) ": " tldr))))
 
 (defn render-digest-prompt
-  "The digest template with {{period}}, {{days}} and {{stories}} filled
-  in. A template with no {{stories}} gets them after it, so the model
-  always sees what it may cite."
-  [template period days stories]
-  (let [filled (-> template
-                   (str/replace "{{period}}" period)
-                   (str/replace "{{days}}" days))]
-    (if (str/includes? filled "{{stories}}")
-      (str/replace filled "{{stories}}" stories)
-      (str filled "\n\n" stories))))
+  "The digest's prompt: the Selmer `template` with {{period}}, {{days}},
+  {{stories}} and {{previous}}, about the last digest, filled in. A template
+  with no place for the stories gets them after it, so the model always
+  sees what it may cite, and one with no place for `previous` gets it just
+  before them."
+  [template period days stories previous]
+  (template/fill (news/place-vars template (if previous ["previous" "stories"] ["stories"]) "stories")
+             {:period period :days days :stories stories :previous previous}))
+

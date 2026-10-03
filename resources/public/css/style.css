@@ -170,3 +170,10 @@ fieldset.plugin legend { font-weight: 700; padding: 0 6px; }
 }
 .import-errors ul { margin: .4rem 0 1rem; padding-left: 1.2rem; color: var(--bad); font-size: 13px; }
 .import-errors code { color: var(--ink); }
+.source-actions { display: flex; gap: 8px; margin-top: 6px; }
+.settings-form button.test { background: var(--paper); color: var(--accent); }
+.test { margin-top: 10px; padding: 8px 12px; border: 1px solid var(--rule); border-left: 3px solid var(--ok);
+        border-radius: 4px; background: var(--paper); font-size: 13px; }
+.test.bad { border-left-color: var(--bad); }
+.test p { margin: 0 0 4px; }
+.test ul { margin: 4px 0 0; padding-left: 1.2rem; }
