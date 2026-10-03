@@ -1,6 +1,8 @@
-;; A sample ~/.config/newsroom/config.edn showing every option. Keys you leave
-;; out take the defaults in resources/defaults/config.edn, so a real config
-;; can be much shorter than this.
+;; Every setting newsroom has, as EDN. Settings are edited on the config page
+;; at /config and kept in the database, but any key here other than :host,
+;; :port and :db is moved into the database when newsroom starts, so this
+;; file can be dropped in as ~/.config/newsroom/config.edn to start from it.
+;; Keys you leave out keep the settings they have.
 {;; The interface the page is served on, as an IPv4 address. The default is
  ;; loopback, so only this machine can reach it; "0.0.0.0" listens on every
  ;; interface. There's no login, so anyone who can reach the port can read the
@@ -77,7 +79,7 @@
  ;; the storylines of the period by their coverage and says which are
  ;; emerging, persistent or fading against the four periods before it, then
  ;; the model writes it from the storylines' notes and each day's
- ;; standfirst. digest.md is their prompt, and :digest-stories how many
+ ;; standfirst. the digest prompt is theirs, and :digest-stories how many
  ;; storylines it is given. [] turns them off.
  :digests [:week :month]
  :digest-stories 15

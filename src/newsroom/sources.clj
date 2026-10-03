@@ -9,7 +9,19 @@
   live while a run goes.
 
   :rss, :scrape and :web-search are built in. A plugin adds a type with
-  newsroom.plugin/defsource."
+  newsroom.plugin/defsource.
+
+  `shape` says what a source of a type looks like, for the config page: a
+  doc string and its fields beyond :type and :name, each
+
+    {:key :url :type :string :doc \"...\" :required? true :default ...}
+
+  where :type is :string, :text, :int, :number, :boolean, :strings (a list
+  of strings), :keyword or :keywords (from :options), or :records (a list
+  of maps, each with the :fields given). :default is only shown; a field
+  left blank is left out of the source. A :string can also say it is
+  a :regex?, or match a :pattern; an :int or :number can have a :min and
+  a :max. :label names it on the page, where the key does by default."
   (:require [jolt.time]
             [clojure.data.json :as json]
             [clojure.string :as str]
@@ -43,6 +55,13 @@
 (defmethod default-name :default [source]
   (or (:url source) (some-> (:type source) name)))
 
+(defmulti shape
+  "What a source of this type looks like, {:doc :fields}, or nil when its
+  type says nothing about its keys."
+  identity)
+
+(defmethod shape :default [_] nil)
+
 (defn source-name
   "What a source is called on the page and in its items. Two sources of a
   run need different names, since its status is kept by name."
@@ -72,6 +91,15 @@
   ;; libxml2 refuses a document with anything before the prolog
   (xml/parse (subs text (or (str/index-of text "<") 0))))
 
+(def ^:private user-agent-field
+  {:key :user-agent :type :string
+   :doc "The User-Agent sent for this source, for a server that refuses clients it doesn't recognize."})
+
+(defmethod shape :rss [_]
+  {:doc "An RSS 2.0, RSS 1.0 (RDF) or Atom feed."
+   :fields [{:key :url :type :string :required? true :doc "The feed's address."}
+            user-agent-field]})
+
 (defmethod fetch-items :rss [source {:keys [config] :as ctx}]
   (emit! ctx (str "Reading " (source-name source)) {:url (:url source)})
   (let [body (fetch-text (:url source) {:timeout-ms (:source-timeout-ms config 30000)
@@ -93,6 +121,19 @@
       (when (instance? InterruptedException e) (throw e))
       (emit! ctx (str "couldn't read " (:url item) ": " (ex-message e)) {:level :error :url (:url item)})
       item)))
+
+(defmethod shape :scrape [_]
+  {:doc (str "A page with no feed: every link on it whose full URL matches the link pattern "
+             "becomes a story, titled by its link text.")
+   :fields [{:key :url :type :string :required? true :doc "The page to read the story links from."}
+            {:key :link-pattern :type :string :required? true :regex? true
+             :doc (str "A Java-style regex the full URL of a story link matches. Relative links are "
+                       "resolved against the page first.")}
+            {:key :limit :type :int :default 15 :doc "The most stories taken from the page."}
+            {:key :summaries :type :boolean :default false
+             :doc (str "Read each story's own page too, for the description and date in its meta tags. "
+                       "That's one request per story, so keep the limit small.")}
+            user-agent-field]})
 
 (defmethod fetch-items :scrape [source {:keys [config] :as ctx}]
   (let [opts {:timeout-ms (:source-timeout-ms config 30000) :user-agent (:user-agent source)}
@@ -189,6 +230,17 @@
           nil)
       (do (emit! ctx (str (count items) " results for “" query "”"))
           items))))
+
+(defmethod shape :web-search [_]
+  {:doc (str "Searches through Exa. No key is needed, and EXA_API_KEY raises the rate limit. "
+             "{{date}} in a query is the briefing's day written out, like 30 September 2026.")
+   :fields [{:key :results :type :int :default 6 :doc "Results per query, at most 10."}
+            {:key :queries :type :records :default ["top world news {{date}}"]
+             :doc "What to search for."
+             :fields [{:key :query :type :string :required? true
+                       :doc "The query; site: keeps it to one outlet."}
+                      {:key :name :type :string
+                       :doc "The outlet its results are credited to, rather than the search."}]}]})
 
 (defmethod fetch-items :web-search [source {:keys [day config] :as ctx}]
   ;; a query is a string, or {:query :name} to credit its results to an

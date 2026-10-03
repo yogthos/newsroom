@@ -3,13 +3,14 @@
 
   Copy this folder to plugins/slack in the config directory. It needs a bot
   token with the channels:history scope (groups:history for a private
-  channel), and the bot has to be in the channel. In config.edn:
+  channel), and the bot has to be in the channel. Its settings, on the
+  config page, are
 
-    :plugins {:slack {:token \"${SLACK_BOT_TOKEN}\"
-                      ;; acme for acme.slack.com, to link each message
-                      :workspace \"acme\"}}
+    {:token \"${SLACK_BOT_TOKEN}\"
+     ;; acme for acme.slack.com, to link each message
+     :workspace \"acme\"}
 
-    :sources [... {:type :slack :name \"Slack #news\" :channel \"C0123456789\"}]
+  and a source is {:type :slack :name \"Slack #news\" :channel \"C0123456789\"}.
 
   :limit on a source caps how many messages are read, 50 by default."
   (:require [clojure.string :as str]
@@ -30,7 +31,17 @@
 (defn- published [ts]
   (str (java.time.Instant/ofEpochSecond (parse-long (first (str/split ts #"\."))))))
 
-(plugin/defsource :slack [source ctx]
+(plugin/defsettings
+  {:fields [{:key :token :type :string :required? true
+             :doc "A bot token with the channels:history scope, or ${SLACK_BOT_TOKEN} to read it from the environment."}
+            {:key :workspace :type :string
+             :doc "The workspace's name, acme for acme.slack.com, to link each message."}]})
+
+(plugin/defsource :slack
+  {:doc "A Slack channel's recent messages, each one an item. The bot has to be in the channel."
+   :fields [{:key :channel :type :string :required? true :doc "The channel's ID, like C0123456789."}
+            {:key :limit :type :int :default 50 :doc "The most messages read."}]}
+  [source ctx]
   (let [{:keys [token workspace]} (plugin/config :slack)
         channel (:channel source)]
     (when (str/blank? token)

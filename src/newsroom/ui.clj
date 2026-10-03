@@ -8,6 +8,7 @@
   ratoms, so a page updates as a run progresses and when a day is stored."
   (:require [clojure.string :as str]
             [hiccup2.core :as h]
+            [newsroom.config-page :as config-page]
             [jolt.datastar.core :as ds]
             [newsroom.markdown :as md]
             [newsroom.news :as news]
@@ -198,6 +199,7 @@
    [:header.masthead
     [:a {:href "/"} [:h1 "The Newsroom"]]
     [:p.tagline "Daily briefing & analysis"]]
+   [:p.config-link [:a {:href "/config" :class (when (:config current) "current")} "Config"]]
    [:label.jump
     [:span "Go to date"]
     [:input {:type "date" :value (:day current)
@@ -361,10 +363,14 @@
       :else (digest-article st (:kind current) (:period current)))))
 
 (defn page
-  "The whole document for a day, or for any other `current` fragment takes."
+  "The whole document for a day, or for any other `current` fragment takes,
+  or for the config page, {:config {:tree :errors :saved?}} (see
+  newsroom.config-page). The config page's article isn't live, since
+  re-drawing it would lose what is being typed into it."
   [st current]
   (let [current (if (string? current) {:day current} current)
         title (cond
+                (:config current) "Config"
                 (:day current) (sources/long-date (:day current))
                 (:story current) (or (:title (get (store/notes st [(:story current)]) (:story current)))
                                      "Storyline")
@@ -383,6 +389,8 @@
             [:div.layout
              [:aside#sidebar.sidebar (ds/init-opts {:selector "#sidebar"})
               (fragment st current "#sidebar")]
-             [:main#article (dissoc (ds/init-opts {:selector "#article"}) :data-signals)
-              (fragment st current "#article")]]
-            [:script {:type "module" :src "/js/diagrams.js"}]]]))))
+             (if-let [{:keys [tree errors saved?]} (:config current)]
+              [:main#article (config-page/article tree errors saved?)]
+              [:main#article (dissoc (ds/init-opts {:selector "#article"}) :data-signals)
+               (fragment st current "#article")])]
+            [:script {:type "module" :src (if (:config current) "/js/config.js" "/js/diagrams.js")}]]]))))

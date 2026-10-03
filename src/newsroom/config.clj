@@ -1,15 +1,18 @@
 (ns newsroom.config
   "Where newsroom keeps its settings: ~/.config/newsroom, or $NEWSROOM_HOME.
 
-    config.edn        sources, schedule, providers (see resources/defaults)
-    prompt.md         the analysis prompt, {{date}} and {{sources}} filled in
-    digest.md         the weekly and monthly digest prompt, {{period}},
-                      {{days}} and {{stories}} filled in
+    config.edn        where the page is served and the database kept,
+                      :host :port :db; read once, at startup
     plugins/          loaded at startup; a plugin adds source types, see
                       newsroom.plugin
-    newsroom.sqlite3  the gathered items and the briefings, by day
+    newsroom.sqlite3  the gathered items and the briefings, by day, and the
+                      settings: sources, schedule, providers, plugin
+                      settings and the prompts, edited on the config page
+                      (see newsroom.settings)
 
-  The first run writes the defaults, so there is always a file to edit."
+  The first run writes config.edn, so there is always a file to edit. The
+  config newsroom runs with is the settings over their defaults, with
+  config.edn's keys over both."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]))
@@ -27,36 +30,59 @@
 
 (defn path [& parts] (str/join "/" (cons (home) parts)))
 
-(defn- default-text [name]
+(def static-keys
+  "What config.edn says: what has to be known before the database is open,
+  or can't change while the server runs."
+  #{:host :port :db})
+
+(defn default-text [name]
   (slurp (io/resource (str "defaults/" name))))
 
-(defn defaults []
-  (edn/read-string (default-text "config.edn")))
+(defn default-settings
+  "The settings before any are saved: resources/defaults/settings.edn, with
+  the default prompts as :prompt and :digest-prompt."
+  []
+  (assoc (edn/read-string (default-text "settings.edn"))
+         :prompt (default-text "prompt.md")
+         :digest-prompt (default-text "digest.md")))
+
+(defn defaults
+  "The whole default config, the static part and the settings."
+  []
+  (merge (default-settings) (edn/read-string (default-text "config.edn"))))
 
 (defn ensure-home!
-  "Create the config directory with the default config and prompts, leaving
-  any file that is already there alone."
+  "Create the config directory with the default config.edn, leaving one
+  that is already there alone."
   []
   (.mkdirs (io/file (path "plugins")))
-  (doseq [name ["config.edn" "prompt.md" "digest.md"]
-          :let [f (io/file (path name))]
-          :when (not (.exists f))]
-    (spit f (default-text name))))
+  (let [f (io/file (path "config.edn"))]
+    (when-not (.exists f)
+      (spit f (default-text "config.edn")))))
 
-(defn load-config
-  "config.edn over the defaults, key by key."
+(defn read-file
+  "config.edn as it is, every key it has; {} when there is none."
   []
-  (let [f (io/file (path "config.edn"))
-        user (when (.exists f) (edn/read-string (slurp f)))]
-    (merge (defaults) user)))
+  (let [f (io/file (path "config.edn"))]
+    (or (when (.exists f) (edn/read-string (slurp f))) {})))
 
-(defn prompt-template []
-  (let [f (io/file (path "prompt.md"))]
-    (if (.exists f) (slurp f) (default-text "prompt.md"))))
+(defn effective
+  "The config newsroom runs with: `settings` over the default settings, and
+  the static keys of `file` over both."
+  [file settings]
+  (merge (defaults) settings (select-keys file static-keys)))
 
-(defn digest-template []
-  (let [f (io/file (path "digest.md"))]
-    (if (.exists f) (slurp f) (default-text "digest.md"))))
+(defn prompt-template
+  "The analysis prompt: the config's :prompt, the default when blank."
+  [config]
+  (let [p (:prompt config)]
+    (if (str/blank? p) (default-text "prompt.md") p)))
+
+(defn digest-template
+  "The digest prompt: the config's :digest-prompt, the default when blank."
+  [config]
+  (let [p (:digest-prompt config)]
+    (if (str/blank? p) (default-text "digest.md") p)))
 
 (defn db-file [config]
   (or (:db config) (path "newsroom.sqlite3")))

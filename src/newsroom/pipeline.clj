@@ -409,7 +409,7 @@
             running (notes/background kept numbered sources/long-date)
             _ (when running
                 (log! run-id {:text "Giving the model the notes on the stories still running"}))
-            prompt (news/render-prompt (news/add-previous (or (:template ctx) (config/prompt-template))
+            prompt (news/render-prompt (news/add-previous (or (:template ctx) (config/prompt-template config))
                                                           (some->> [(some->> established
                                                                              (previous-context (:day earlier)))
                                                                     running]
@@ -544,7 +544,7 @@
             last-period (trends/period-of kind (trends/plus-days from -1))
             established (some-> (store/digest store kind last-period) :markdown news/overview)
             prompt (trends/render-digest-prompt
-                    (news/add-previous (or (:digest-template ctx) (config/digest-template))
+                    (news/add-previous (or (:digest-template ctx) (config/digest-template config))
                                        (some->> established (previous-digest-context kind last-period)))
                     label
                     (trends/days-block days sources/long-date)
@@ -702,9 +702,13 @@
 
 (defn- run-if-due!
   "Start today's run when it is due, followed by any digest whose period
-  has ended without one."
-  [{:keys [store config] :as ctx} interval]
-  (let [day (today)
+  has ended without one. The config is the one :current-config returns when
+  `ctx` has it, so a run follows the settings as they are now."
+  [ctx interval]
+  (let [{:keys [store config] :as ctx} (if-let [current (:current-config ctx)]
+                                         (assoc ctx :config (current))
+                                         ctx)
+        day (today)
         created (some-> (store/day store day) :created-at java.time.Instant/parse .toEpochMilli)
         daily? (due? (some->> created (- (now))) interval)
         digests (due-digests store config day)]

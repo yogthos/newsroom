@@ -13,6 +13,10 @@
   days' standfirsts and the notes kept on each storyline, which the digests
   are written from.
 
+  The settings, everything about newsroom that can change while it runs,
+  are kept here too, a row a key with the value as EDN; see
+  newsroom.settings.
+
   One connection, serialized by a lock: sqlite writes one at a time anyway,
   and the server's handlers and the pipeline share it."
   (:require [clojure.edn :as edn]
@@ -86,7 +90,10 @@
       url text not null,
       source text,
       cited integer not null default 0,
-      primary key (kind, period, n))"])
+      primary key (kind, period, n))"
+   "create table if not exists settings (
+      key text primary key,
+      value text not null)"])
 
 (defn- add-column!
   "An ALTER TABLE for a column an older database may not have, silently
@@ -435,3 +442,23 @@
   (with-db [conn store]
     (mapv (fn [r] {:kind (keyword (:kind r)) :period (:period r) :tldr (:tldr r)})
           (jdbc/fetch conn "select kind, period, tldr from digests order by period desc, kind"))))
+
+;; --- settings ----------------------------------------------------------------------
+
+(defn settings
+  "The stored settings, {key value}; empty before any are saved."
+  [store]
+  (with-db [conn store]
+    (into {}
+          (map (fn [r] [(keyword (:key r)) (edn/read-string (:value r))]))
+          (jdbc/fetch conn "select key, value from settings"))))
+
+(defn save-settings!
+  "Store `settings`, {key value}, in place of every setting there was."
+  [store settings]
+  (with-db [conn store]
+    (jdbc/atomic conn
+      (jdbc/execute! conn "delete from settings")
+      (doseq [[k v] settings]
+        (jdbc/execute! conn ["insert into settings (key, value) values (?, ?)" (name k) (pr-str v)]))))
+  nil)
