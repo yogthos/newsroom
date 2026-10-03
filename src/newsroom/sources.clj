@@ -18,7 +18,8 @@
 
   where :type is :string, :text, :int, :number, :boolean, :strings (a list
   of strings), :keyword or :keywords (from :options), or :records (a list
-  of maps, each with the :fields given). :default is only shown; a field
+  of maps, each with the :fields given; with :shorthand?, an entry with
+  only its first field is that field's value). :default is only shown; a field
   left blank is left out of the source. A :string can also say it is
   a :regex?, or match a :pattern; an :int or :number can have a :min and
   a :max. :label names it on the page, where the key does by default."
@@ -235,7 +236,7 @@
   {:doc (str "Searches through Exa. No key is needed, and EXA_API_KEY raises the rate limit. "
              "{{date}} in a query is the briefing's day written out, like 30 September 2026.")
    :fields [{:key :results :type :int :default 6 :doc "Results per query, at most 10."}
-            {:key :queries :type :records :default ["top world news {{date}}"]
+            {:key :queries :type :records :shorthand? true :default ["top world news {{date}}"]
              :doc "What to search for."
              :fields [{:key :query :type :string :required? true
                        :doc "The query; site: keeps it to one outlet."}

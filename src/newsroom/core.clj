@@ -11,6 +11,8 @@
     GET  /story/DAY/N       a storyline's notes and coverage
     GET  /config            the settings, and a form to change them
     POST /config            save the settings and run with them from now on
+    GET  /config/export     the settings as EDN, in config.edn's form
+    POST /config/import     save the settings in an EDN file or text
     POST /run?day=...       gather and analyse a day (today by default)
     POST /digest?kind=week&period=YYYY-Www
                             write a digest (kind week or month)
@@ -74,11 +76,44 @@
       (swap! system assoc :schedule (start-schedule!)))
     cfg))
 
-(defn- form-params
-  "A form's fields, {name value}. The config page's form has a field for
-  every key of every source, so far more than the parser allows by default."
+(defn- form-data
+  "A form's {:params {name value} :files {name part}}. The config page's
+  form has a field for every key of every source, so far more than the
+  parser allows by default."
   [req]
-  (:params (form/parse-form-data req {:part-limit 100000 :memory-limit (* 16 1024 1024)})))
+  (form/parse-form-data req {:part-limit 100000 :memory-limit (* 16 1024 1024)}))
+
+(defn- form-params [req] (:params (form-data req)))
+
+(defn- current-form [] (settings/to-form (:config @system)))
+
+(defn- import-settings
+  "Save the settings in the EDN of an uploaded file or the pasted text,
+  over the ones there are."
+  [req]
+  (let [{:keys [params files]} (form-data req)
+        file (get files "file")
+        file (if (vector? file) (peek file) file)
+        text (if (pos? (count (:bytes file)))
+               (String. ^bytes (:bytes file) "UTF-8")
+               (str (get params "edn")))
+        {:keys [settings errors]} (settings/from-edn text)]
+    (cond
+      (str/blank? text)
+      (assoc (html (ui/page (:store @system) {:config {:tree (current-form)
+                                                       :import {:errors {"EDN" "is empty: choose a file or paste some"}}}}))
+             :status 422)
+
+      (seq errors)
+      (assoc (html (ui/page (:store @system) {:config {:tree (current-form)
+                                                       :import {:errors errors :text text}}}))
+             :status 422)
+
+      :else
+      (let [all (merge (select-keys (:config @system) settings/setting-keys) settings)]
+        (settings/save! (:store @system) all)
+        (reload! all)
+        {:status 303 :headers {"Location" "/config?imported=1"} :body ""}))))
 
 (defn- config-page
   [req]
@@ -91,8 +126,9 @@
           (do (settings/save! st settings)
               (reload! settings)
               {:status 303 :headers {"Location" "/config?saved=1"} :body ""})))
-      (html (ui/page st {:config {:tree (settings/to-form (:config @system))
-                                  :saved? (= "1" (query-param req "saved"))}})))))
+      (html (ui/page st {:config {:tree (current-form)
+                                  :saved? (= "1" (query-param req "saved"))
+                                  :imported? (= "1" (query-param req "imported"))}})))))
 
 (def ^:private assets
   "The files served from resources/public, by path, with their content type."
@@ -124,6 +160,15 @@
 
       (and (= :post request-method) (= uri "/cancel"))
       (do (pipeline/cancel-run!) (ds/patch-signals {}))
+
+      (= uri "/config/export")
+      {:status 200
+       :headers {"Content-Type" "application/edn; charset=utf-8"
+                 "Content-Disposition" "attachment; filename=\"newsroom-settings.edn\""}
+       :body (settings/export-edn (:config @system))}
+
+      (and (= :post request-method) (= uri "/config/import"))
+      (import-settings req)
 
       (= uri "/config")
       (if sse-request

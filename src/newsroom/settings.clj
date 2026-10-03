@@ -13,9 +13,13 @@
   the fourth source. A list's indices only order its entries, which lets
   the page add one under any fresh number. `from-form` reads the form back
   into settings, every value its field's type, and says what is wrong with
-  any that isn't."
+  any that isn't.
+
+  Settings can also be exported as EDN and imported from it, which goes
+  through the form too, so an import is checked as a save is."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.pprint :as pp]
             [clojure.string :as str]
             [newsroom.config :as config]
             [newsroom.llm.providers :as providers]
@@ -223,12 +227,13 @@
     (when (seq vs) {:value vs})))
 
 (defmethod read-value :records [field raw name errors]
-  (let [rs (vec (for [[i r] (indexed raw)
+  (let [first-key (:key (first (:fields field)))
+        rs (vec (for [[i r] (indexed raw)
                       ;; an entry added and left blank is no entry
                       :when (and (map? r) (not-every? blank? (vals r)))
                       :let [m (read-map (:fields field) r (field-name name i) errors)]
                       :when (seq m)]
-                  m))]
+                  (if (and (:shorthand? field) (= [first-key] (keys m))) (get m first-key) m)))]
     (when (seq rs) {:value rs})))
 
 (defn- read-extra
@@ -407,6 +412,45 @@
           "roles" (map-form role-fields (:roles settings))
           "plugins" (into {} (for [p (plugin-names settings)]
                                [p (map-form (plugin-fields p) (get-in settings [:plugins (keyword p)]))]))}))
+
+;; --- EDN ---------------------------------------------------------------------------
+
+(defn form-params
+  "A form tree as the flat {name value} a browser sends."
+  ([tree] (form-params tree nil))
+  ([tree prefix]
+   (into {} (mapcat (fn [[k v]]
+                      (let [n (if prefix (str prefix "." k) k)]
+                        (if (map? v) (form-params v n) [[n v]])))
+                    tree))))
+
+(defn export-edn
+  "`settings` as EDN in config.edn's own form, every key sorted, to be
+  imported again with `from-edn`."
+  [settings]
+  (str ";; newsroom's settings, as config.edn writes them. Import this on the\n"
+       ";; config page, or put it in config.edn, where it's moved into the\n"
+       ";; database at startup.\n"
+       (with-out-str
+         (pp/pprint (into (sorted-map) (select-keys settings setting-keys))))))
+
+(defn from-edn
+  "The settings EDN `text` says, in config.edn's form, checked as the
+  form's are: {:settings :errors}, :settings only the keys `text` has,
+  :errors {where message}, empty when they could all be read. A whole
+  config.edn will do: its static keys, which only config.edn can change,
+  are passed over."
+  [text]
+  (let [m (try (edn/read-string (str text)) (catch Exception e {::error (ex-message e)}))]
+    (cond
+      (::error m) {:settings {} :errors {"EDN" (str "can't be read: " (::error m))}}
+      (not (map? m)) {:settings {} :errors {"EDN" "has to be a map of settings, {:key value ...}"}}
+      :else
+      (let [unknown (remove (into setting-keys config/static-keys) (keys m))
+            known (select-keys m setting-keys)
+            {:keys [settings errors]} (from-form (form-params (to-form known)))]
+        {:settings (select-keys settings (keys known))
+         :errors (into errors (for [k unknown] [(pr-str k) "isn't a setting"]))}))))
 
 ;; --- the store ---------------------------------------------------------------------
 

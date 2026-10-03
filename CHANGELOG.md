@@ -14,6 +14,10 @@
   a list to add to, say. Plugins declare theirs with a map in `defsource`, and
   their settings with `defsettings`. Keys a shape leaves out can still be set
   as EDN.
+- **Import and export.** The config page exports the settings as EDN in
+  `config.edn`'s form, and imports them from a file or pasted text, checked as
+  a save is. An old `config.edn` imports as it is; the keys it names replace
+  the settings, and `:host`, `:port` and `:db` are passed over.
 
 ### Changed
 

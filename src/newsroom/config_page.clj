@@ -231,11 +231,38 @@
      (for [f fields]
        (field-row f (settings/field-name (:key f)) (get tree (name (:key f))) errors 0)))])
 
+(defn- import-export
+  "Taking the settings out as EDN, and putting them back, or a config.edn
+  in. `import` is what went wrong with the last import, {:errors :text}."
+  [{:keys [errors text]}]
+  [:section.settings {:id "import-export"}
+   [:h2 "Import & export"]
+   [:p.doc "The settings as EDN, in config.edn's form: the same file an older newsroom kept them in, "
+    "and examples/config.edn shows every option of. An import replaces the settings it names and keeps the "
+    "rest; :host, :port and :db stay in config.edn, so they are passed over."]
+   [:p [:a {:href "/config/export" :download "newsroom-settings.edn"} "Export the settings"]]
+   [:form.settings-form.import {:method "post" :action "/config/import" :enctype "multipart/form-data"}
+    (when (seq errors)
+      [:div.import-errors
+       [:p.notice.bad "Nothing was imported."]
+       [:ul (for [[where message] (sort-by key errors)]
+              [:li [:code where] " " message])]])
+    [:div.field
+     [:label.label {:for "import-file"} "From a file"]
+     [:div.control [:input {:type "file" :id "import-file" :name "file" :accept ".edn,text/plain"}]]]
+    [:div.field
+     [:label.label {:for "import-edn"} "Or pasted"]
+     [:div.control [:textarea {:id "import-edn" :name "edn" :rows 6
+                               :placeholder "{:max-items 120\n :sources [{:type :rss :name \"BBC World\" :url \"...\"}]}"}
+                    (or text "")]]]
+    [:button {:type "submit"} "Import"]]])
+
 (defn article
   "The config page's content: the form `tree`, as newsroom.settings/to-form
   makes or from-form reads, with `errors` {name message} from a save that
-  failed, and whether the last save went through, `saved?`."
-  [tree errors saved?]
+  failed, whether the last save or import went through, `saved?` and
+  `imported?`, and `import`, {:errors :text}, from an import that failed."
+  [{:keys [tree errors saved? imported?] import-result :import}]
   [:article.briefing.config
    [:p.dateline "Settings"]
    [:h1 "Config"]
@@ -244,11 +271,15 @@
    (cond
      (seq errors) [:p.notice.bad (count errors) (if (= 1 (count errors)) " field needs" " fields need")
                    " fixing. Nothing was saved."]
+     (seq (:errors import-result)) [:p.notice.bad [:a {:href "#import-export"} "The import"] " didn't go through."]
+     imported? [:p.notice.ok "Imported."]
      saved? [:p.notice.ok "Saved."])
-   [:nav.toc (interpose " · " (for [{:keys [title]} settings/sections]
-                                [:a {:href (str "#" (str/lower-case title))} title]))]
+   [:nav.toc (interpose " · " (concat (for [{:keys [title]} settings/sections]
+                                        [:a {:href (str "#" (str/lower-case title))} title])
+                                      [[:a {:href "#import-export"} "Import & export"]]))]
    [:form.settings-form {:method "post" :action "/config"}
     (for [s settings/sections] (section s tree errors))
     [:div.save-bar
      [:button {:type "submit"} "Save"]
-     [:a {:href "/config"} "Discard changes"]]]])
+     [:a {:href "/config"} "Discard changes"]]]
+   (import-export import-result)])

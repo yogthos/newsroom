@@ -12,31 +12,16 @@
             [newsroom.store :as store]
             [newsroom.ui :as ui]))
 
-(defn- flat
-  "A form tree as the flat {name value} a browser sends."
-  ([tree] (flat tree nil))
-  ([tree prefix]
-   (into {} (mapcat (fn [[k v]]
-                      (let [n (if prefix (str prefix "." k) k)]
-                        (if (map? v) (flat v n) [[n v]])))
-                    tree))))
+(def ^:private flat settings/form-params)
 
 (defn- defaults [] (select-keys (config/defaults) settings/setting-keys))
-
-(defn- plain-queries
-  "Web searches' queries as the defaults write them: a lone query as its string."
-  [srcs]
-  (mapv (fn [s] (cond-> s
-                  (:queries s) (update :queries (partial mapv #(if (= [:query] (keys %)) (:query %) %)))))
-        srcs))
 
 (deftest the-defaults-survive-the-form
   (plugin/load-all! "plugins" {})
   (let [d (defaults)
         {:keys [settings errors]} (settings/from-form (flat (settings/to-form d)))]
     (is (= {} errors))
-    (is (= (dissoc d :sources :plugins) (dissoc settings :sources :plugins)))
-    (is (= (:sources d) (plain-queries (:sources settings))))
+    (is (= (dissoc d :plugins) (dissoc settings :plugins)) "a lone query stays a string")
     (is (= {} (:plugins settings)))))
 
 (deftest the-form-is-read-by-the-fields-types
@@ -63,7 +48,7 @@
       (is (= [{:type :scrape :name "Page" :url "https://e.com" :link-pattern "/a/" :limit 5 :summaries true
                :custom 1}
               {:type :rss :name "Feed" :url "https://e.com/rss"}
-              {:type :web-search :queries [{:query "a" :name "Outlet"} {:query "b"}]}]
+              {:type :web-search :queries [{:query "a" :name "Outlet"} "b"]}]
              (:sources settings))))
     (is (= {:llama {:type :local :thinking? true}} (:providers settings)))
     (is (= {:analyst :llama} (:roles settings)))))
@@ -206,6 +191,68 @@
           (is (= "agent" (:user-agent (plugin/config :reddit))) "and so are the plugins' settings")
           (is (str/includes? (:body (core/app {:uri "/config" :request-method :get :query-string "saved=1"}))
                              "Saved."))))
+      (finally
+        (reset! core/system nil)
+        (store/close st)))))
+
+(deftest settings-go-out-and-come-back-as-edn
+  (plugin/load-all! "plugins" {})
+  (testing "an export is config.edn's form, and imports as it was"
+    (let [d (defaults)
+          text (settings/export-edn d)
+          {:keys [settings errors]} (settings/from-edn text)]
+      (is (str/starts-with? text ";;"))
+      (is (= {} errors))
+      (is (= (dissoc d :plugins) (dissoc settings :plugins)) "lone queries stay strings")))
+  (testing "an import names only what it changes, and a whole config.edn will do"
+    (let [{:keys [settings errors]}
+          (settings/from-edn (slurp (io/file "examples/config.edn")))]
+      (is (= {} errors))
+      (is (not (contains? settings :host)))
+      (is (= :deepseek (get-in settings [:roles :analyst])))
+      (is (some #(= {:type :web-search :name "Web search" :results 6
+                     :queries ["top world news {{date}}" "global economy markets news {{date}}"
+                               {:name "CCTV" :query "site:english.cctv.com news {{date}}"}]}
+                    %)
+                (:sources settings))))
+    (is (= {:max-items 5} (:settings (settings/from-edn "{:max-items 5}")))))
+  (testing "what is wrong is said"
+    (is (= {":bogus" "isn't a setting" "max-items" "has to be a whole number"}
+           (:errors (settings/from-edn "{:bogus 1 :max-items \"lots\"}"))))
+    (is (= "has to be a map of settings, {:key value ...}" (get (:errors (settings/from-edn "[1]")) "EDN")))
+    (is (str/starts-with? (get (:errors (settings/from-edn "{:a")) "EDN") "can't be read"))))
+
+(deftest importing-on-the-page-saves-and-runs-with-it
+  (plugin/load-all! "plugins" {})
+  (let [st (store/open "sqlite::memory:")
+        boundary "XyZ"
+        upload (fn [text]
+                 (core/app {:uri "/config/import" :request-method :post
+                            :headers {"content-type" (str "multipart/form-data; boundary=" boundary)}
+                            :body (java.io.ByteArrayInputStream.
+                                   (.getBytes (str "--" boundary "\r\n"
+                                                   "Content-Disposition: form-data; name=\"file\"; filename=\"s.edn\"\r\n"
+                                                   "Content-Type: application/edn\r\n\r\n"
+                                                   text "\r\n"
+                                                   "--" boundary "\r\n"
+                                                   "Content-Disposition: form-data; name=\"edn\"\r\n\r\n"
+                                                   "\r\n--" boundary "--\r\n")
+                                              "UTF-8"))}))]
+    (reset! core/system {:config (config/effective {} {}) :store st :file {}})
+    (try
+      (let [resp (upload "{:max-items \"x\"}")]
+        (is (= 422 (:status resp)))
+        (is (str/includes? (:body resp) "Nothing was imported"))
+        (is (= {} (settings/stored st))))
+      (let [resp (upload "{:max-items 33 :port 1}")]
+        (is (= 303 (:status resp)))
+        (is (= 33 (:max-items (settings/stored st))))
+        (is (= 33 (:max-items (:config @core/system))))
+        (is (= 3 (:seen-days (settings/stored st))) "the rest are kept")
+        (is (nil? (:port (settings/stored st)))))
+      (let [resp (core/app {:uri "/config/export" :request-method :get})]
+        (is (str/includes? (get-in resp [:headers "Content-Disposition"]) "attachment"))
+        (is (= 33 (:max-items (edn/read-string (:body resp))))))
       (finally
         (reset! core/system nil)
         (store/close st)))))

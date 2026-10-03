@@ -364,7 +364,7 @@
 
 (defn page
   "The whole document for a day, or for any other `current` fragment takes,
-  or for the config page, {:config {:tree :errors :saved?}} (see
+  or for the config page, {:config {:tree :errors ...}} (see
   newsroom.config-page). The config page's article isn't live, since
   re-drawing it would lose what is being typed into it."
   [st current]
@@ -389,8 +389,8 @@
             [:div.layout
              [:aside#sidebar.sidebar (ds/init-opts {:selector "#sidebar"})
               (fragment st current "#sidebar")]
-             (if-let [{:keys [tree errors saved?]} (:config current)]
-              [:main#article (config-page/article tree errors saved?)]
+             (if-let [cfg (:config current)]
+              [:main#article (config-page/article cfg)]
               [:main#article (dissoc (ds/init-opts {:selector "#article"}) :data-signals)
                (fragment st current "#article")])]
             [:script {:type "module" :src (if (:config current) "/js/config.js" "/js/diagrams.js")}]]]))))

@@ -168,3 +168,5 @@ fieldset.plugin legend { font-weight: 700; padding: 0 6px; }
   .field, .entry.record .field { grid-template-columns: 1fr; }
   .field .label { padding-top: 0; }
 }
+.import-errors ul { margin: .4rem 0 1rem; padding-left: 1.2rem; color: var(--bad); font-size: 13px; }
+.import-errors code { color: var(--ink); }
