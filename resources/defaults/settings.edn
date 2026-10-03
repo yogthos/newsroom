@@ -1,0 +1,140 @@
+;; The settings newsroom starts with. They are copied into the database on
+;; the first start and edited from then on at /config, which says what each
+;; one does; the prompts start as prompt.md and digest.md next to this file.
+{;; the briefing is gathered at this local time while the server is up,
+ ;; then again every :run-every-hours after it, re-gathering when the day's
+ ;; briefing is that old; nil turns the schedule off (the refresh button
+ ;; still works)
+ :run-at "07:00"
+ :run-every-hours 24
+
+ ;; items older than this many days before the briefing's day are skipped;
+ ;; undated items are always kept, and so are items dated the day after,
+ ;; which is what an outlet ahead of the local timezone calls today
+ :lookback-days 1
+
+ ;; how many days of briefings to keep; older ones are deleted, with their
+ ;; sources and markdown files, after each new briefing. -1 keeps them all.
+ :keep-days 100
+
+ ;; the most items taken from one source, and in all
+ :max-items-per-source 12
+ :max-items 180
+
+ ;; how many past briefings a story is remembered from: a story told in
+ ;; any of the last :seen-days briefings is left out of today's, so one
+ ;; dropped for space yesterday is not retold today
+ :seen-days 3
+
+ ;; stories from different outlets whose titles and summaries embed this
+ ;; close (cosine similarity) are collapsed into one source, with the
+ ;; other outlets noted on it. Two feeds of one publisher, or two reprints
+ ;; of one wire story, only collapse when they are near verbatim, and count
+ ;; as one outlet. nil turns collapsing off
+ :dupe-threshold 0.62
+
+ ;; a story is followed from day to day: an item whose embedding is this
+ ;; close to the sources of a story from the last :trend-days continues it.
+ ;; Items are ranked by how widely and how long their story has run, the
+ ;; outlets carrying it today plus those on earlier days, an earlier day
+ ;; counting half as much every :half-life-days, and the heaviest come
+ ;; first in the prompt and survive :max-items. nil stops the following
+ :story-threshold 0.6
+ :trend-days 7
+ :half-life-days 2
+
+ ;; after each briefing the model keeps a running note on every storyline
+ ;; the briefing cited, and on those it already follows: a title, where it stands, and up to this many
+ ;; dated facts, compacted as the story goes on. The briefing gets the
+ ;; notes of the stories still running as background, and the digests are
+ ;; written from them, so they outlive :keep-days. A :notes role in :roles
+ ;; can give the job a cheaper model. nil turns the notes off
+ :story-notes 12
+
+ ;; digests written from the stored days: a week's after the week ends
+ ;; (Monday to Sunday), a month's after the month does, each ranking the
+ ;; storylines of the period and saying which are emerging, persistent or
+ ;; fading, written with the digest prompt. [] turns them off
+ :digests [:week :month]
+ :digest-stories 15
+
+ ;; how long one source may take before the run goes on without it
+ :source-timeout-ms 30000
+
+ ;; Sources. :type picks the adapter: :rss (RSS 2.0, RSS 1.0, Atom),
+ ;; :scrape (the story links on a web page) and :web-search (Exa;
+ ;; EXA_API_KEY only raises the rate limit) ship with newsroom.
+ ;; examples/config.edn in the repo shows every option. A plugin in
+ ;; plugins/<name>/ can add its own types, and takes its settings from
+ ;; :plugins {:<name> {...}}, each shown on the config page by its shape.
+ :sources
+ [{:type :rss :name "Al Jazeera" :url "https://www.aljazeera.com/xml/rss/all.xml"}
+  {:type :rss :name "BBC World" :url "https://feeds.bbci.co.uk/news/world/rss.xml"}
+  {:type :rss :name "The Guardian" :url "https://www.theguardian.com/world/rss"}
+  {:type :rss :name "Deutsche Welle" :url "https://rss.dw.com/rdf/rss-en-all"}
+  {:type :rss :name "France 24" :url "https://www.france24.com/en/rss"}
+  {:type :rss :name "South China Morning Post" :url "https://www.scmp.com/rss/91/feed"}
+  {:type :rss :name "The Hindu" :url "https://www.thehindu.com/news/international/feeder/default.rss"}
+  {:type :rss :name "CNBC Economy" :url "https://www.cnbc.com/id/20910258/device/rss/rss.html"}
+  ;; Chinese outlets with working feeds
+  {:type :rss :name "CGTN World" :url "https://www.cgtn.com/subscribe/rss/section/world.xml"}
+  {:type :rss :name "CGTN China" :url "https://www.cgtn.com/subscribe/rss/section/china.xml"}
+  {:type :rss :name "CGTN Business" :url "https://www.cgtn.com/subscribe/rss/section/business.xml"}
+  {:type :rss :name "China News Service" :url "http://www.ecns.cn/rss/rss.xml"}
+  {:type :rss :name "Sixth Tone" :url "https://www.sixthtone.com/rss"}
+  ;; Xinhua, China Daily and Global Times have no current feed (Xinhua's and
+  ;; People's Daily's stopped updating, Global Times' only recommends old
+  ;; articles), so their front pages are scraped for story links
+  {:type :scrape :name "Xinhua" :url "https://english.news.cn/world/index.htm"
+   :link-pattern "news\\.cn/(\\w+/)?\\d{8}/[0-9a-f]{32}/c\\.html"}
+  {:type :scrape :name "China Daily" :url "https://www.chinadaily.com.cn/world"
+   :link-pattern "chinadaily\\.com\\.cn/a/\\d{6}/\\d{2}/"}
+  {:type :scrape :name "Global Times" :url "https://www.globaltimes.cn/world/index.html"
+   :link-pattern "globaltimes\\.cn/page/\\d{6}/\\d+\\.shtml"}
+  ;; CCTV's pages are built by script, so there are no links to scrape
+  {:type :web-search :name "CCTV search"
+   :results 6
+   :queries [{:name "CCTV" :query "site:english.cctv.com news {{date}}"}]}
+  {:type :rss :name "SCMP China Economy" :url "https://www.scmp.com/rss/318421/feed"}
+
+  ;; science and technology
+  {:type :rss :name "Wired" :url "https://www.wired.com/feed/rss"}
+  {:type :rss :name "Wired Science" :url "https://www.wired.com/feed/category/science/latest/rss"}
+  {:type :rss :name "Ars Technica" :url "https://feeds.arstechnica.com/arstechnica/index"}
+  {:type :rss :name "MIT Technology Review" :url "https://www.technologyreview.com/feed/"}
+  {:type :rss :name "IEEE Spectrum" :url "https://spectrum.ieee.org/feeds/feed.rss"}
+  {:type :rss :name "Rest of World" :url "https://restofworld.org/feed/latest"}
+  {:type :rss :name "SCMP Tech" :url "https://www.scmp.com/rss/36/feed"}
+  ;; CGTN and China Daily have no sci-tech feed, but their sci-tech pages
+  ;; scrape cleanly
+  {:type :scrape :name "CGTN Sci-Tech" :url "https://www.cgtn.com/sci-tech"
+   :link-pattern "cgtn\\.com/news/\\d{4}-\\d{2}-\\d{2}/"}
+  {:type :scrape :name "China Daily Tech" :url "https://www.chinadaily.com.cn/business/tech"
+   :link-pattern "chinadaily\\.com\\.cn/a/\\d{6}/\\d{2}/"}
+  {:type :web-search :name "Chinese sci-tech search"
+   :results 6
+   :queries [{:name "Global Times Sci-Tech" :query "site:globaltimes.cn science technology {{date}}"}
+             {:name "Xinhua Sci-Tech" :query "site:english.news.cn science technology {{date}}"}]}
+  {:type :web-search :name "Web search"
+   :results 6
+   ;; {{date}} is the briefing's day, written out ("30 September 2026");
+   ;; a query may be {:query "..." :name "Outlet"} to credit its results
+   ;; to that outlet
+   :queries ["top world news {{date}}"
+             "global economy markets news {{date}}"
+             "geopolitics conflict diplomacy news {{date}}"]}]
+
+ ;; Which model writes the briefing. Built-in providers: :deepseek, :glm,
+ ;; :openai, :local (llama-server, vLLM, LM Studio) and :ollama. An entry named
+ ;; after a built-in only overrides what it sets; any other alias needs a
+ ;; :type. Keys come from :api-key-env, or :api-key as a literal or "${VAR}".
+ :providers
+ {:deepseek {:model "deepseek-v4-flash"}
+  ;; :glm      {:model "glm-5.3"}
+  ;; :llama    {:type :local :base-url "http://127.0.0.1:8080/v1" :thinking? true}
+  }
+
+ ;; the :analyst role writes the briefing and the digests, and keeps the
+ ;; story notes unless a :notes role is given; with no :roles, the first
+ ;; built-in whose key is in the environment serves, else a local endpoint
+ :roles {:analyst :deepseek}}

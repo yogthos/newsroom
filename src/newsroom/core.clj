@@ -9,6 +9,8 @@
     GET  /month/YYYY-MM     a month's; either with .md as markdown
     GET  /stories           every storyline the briefings keep notes on
     GET  /story/DAY/N       a storyline's notes and coverage
+    GET  /config            the settings, and a form to change them
+    POST /config            save the settings and run with them from now on
     POST /run?day=...       gather and analyse a day (today by default)
     POST /digest?kind=week&period=YYYY-Www
                             write a digest (kind week or month)
@@ -18,10 +20,12 @@
             [hiccup2.core :as h]
             [jolt.datastar.core :as ds]
             [ring-chez.adapter :as adapter]
+            [ring-chez.multipart.core :as form]
             [newsroom.config :as config]
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
             [newsroom.plugin :as plugin]
+            [newsroom.settings :as settings]
             [newsroom.store :as store]
             [newsroom.trends :as trends]
             [newsroom.ui :as ui]))
@@ -51,10 +55,50 @@
     (let [kind (keyword kind)]
       (when (trends/period-range kind period) [kind period]))))
 
+(defn- start-schedule!
+  "The schedule, reading the config as it is at each wake."
+  []
+  (pipeline/start-schedule! (assoc (ctx) :current-config #(:config @system))))
+
+(defn reload!
+  "Run with `stored`, the settings just saved, from now on: the config the
+  next run and the plugins read, and the schedule, restarted when its times
+  changed. A run already going keeps the config it started with."
+  [stored]
+  (let [{old :config :keys [file schedule]} @system
+        cfg (config/effective file stored)]
+    (swap! system assoc :config cfg)
+    (plugin/set-config! cfg)
+    (when (not= (select-keys old [:run-at :run-every-hours]) (select-keys cfg [:run-at :run-every-hours]))
+      (when schedule (schedule))
+      (swap! system assoc :schedule (start-schedule!)))
+    cfg))
+
+(defn- form-params
+  "A form's fields, {name value}. The config page's form has a field for
+  every key of every source, so far more than the parser allows by default."
+  [req]
+  (:params (form/parse-form-data req {:part-limit 100000 :memory-limit (* 16 1024 1024)})))
+
+(defn- config-page
+  [req]
+  (let [st (:store @system)]
+    (if (= :post (:request-method req))
+      (let [params (form-params req)
+            {:keys [settings errors]} (settings/from-form params)]
+        (if (seq errors)
+          (assoc (html (ui/page st {:config {:tree (settings/form-tree params) :errors errors}})) :status 422)
+          (do (settings/save! st settings)
+              (reload! settings)
+              {:status 303 :headers {"Location" "/config?saved=1"} :body ""})))
+      (html (ui/page st {:config {:tree (settings/to-form (:config @system))
+                                  :saved? (= "1" (query-param req "saved"))}})))))
+
 (def ^:private assets
   "The files served from resources/public, by path, with their content type."
   {"/js/datastar.js" "application/javascript"
    "/js/diagrams.js" "application/javascript"
+   "/js/config.js"   "application/javascript"
    "/css/style.css"  "text/css; charset=utf-8"})
 
 (defn app [{:keys [uri request-method jolt.datastar/sse-request] :as req}]
@@ -80,6 +124,11 @@
 
       (and (= :post request-method) (= uri "/cancel"))
       (do (pipeline/cancel-run!) (ds/patch-signals {}))
+
+      (= uri "/config")
+      (if sse-request
+        (html (str (h/html (ui/fragment st {:config true} (:jolt.datastar/selector req)))))
+        (config-page req))
 
       (assets uri)
       {:status 200
@@ -129,20 +178,26 @@
    :strategy :fibers})
 
 (defn start!
-  "Open the store, load plugins, start the schedule and the server."
+  "Open the store, bring in any settings still in files, load plugins,
+  start the schedule and the server."
   []
   (config/ensure-home!)
-  (let [cfg (config/load-config)
+  (let [file (config/read-file)
+        st (store/open (config/db-file file))
+        imported (settings/import! st file)
+        cfg (config/effective file (settings/stored st))
         plugins (plugin/load-all! (config/path "plugins") cfg)
-        st (store/open (config/db-file cfg))
-        _ (reset! system {:config cfg :store st})
+        _ (reset! system {:config cfg :store st :file (select-keys file config/static-keys)})
         pruned (pipeline/prune-days! (ctx))
-        schedule (pipeline/start-schedule! (ctx))
+        schedule (start-schedule!)
         handler (ds/wrap-datastar app {:rate-limit-ms 200})
         {:keys [host port] :as opts} (server-opts cfg)
         server (adapter/run-server handler opts)]
     (swap! system assoc :schedule schedule :server server)
     (println (str "newsroom on http://" host ":" port "  (config: " (config/home) ")"))
+    (when (seq imported)
+      (println "moved into the database:" (str/join " " (map name imported))
+               "(the files they came from are kept as .bak; edit them at /config now)"))
     (doseq [{:keys [plugin ok]} plugins :when ok]
       (println "loaded plugin" plugin))
     (when (seq pruned)

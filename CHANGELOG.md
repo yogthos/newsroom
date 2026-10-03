@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A config page.** `/config`, linked from the sidebar, shows every setting
+  with a note on what it does and saves them to the database, where they take
+  effect at once: the next run, the plugins and the schedule all pick them up
+  without a restart. Sources, providers, roles, plugin settings and both
+  prompts are edited there too.
+- **Source and plugin shapes.** A source type declares the fields its sources
+  take, which the config page shows as a form, a reddit source's subreddits as
+  a list to add to, say. Plugins declare theirs with a map in `defsource`, and
+  their settings with `defsettings`. Keys a shape leaves out can still be set
+  as EDN.
+
+### Changed
+
+- **Settings live in the database.** `config.edn` keeps only `:host`, `:port`
+  and `:db`. At startup, any other key in it is moved into the database, as are
+  `prompt.md` and `digest.md`, with the old files kept as `.bak`, so an
+  existing setup carries over by itself.
+
 ## v0.4.0 — 2 October 2026
 
 Briefings now remember stories across days, rank them by how widely and how

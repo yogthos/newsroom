@@ -11,20 +11,33 @@
   required at startup, so the files can require each other the usual way. A
   lone plugins/NAME.clj is a plugin of one file.
 
-  Its settings are the entry named after the folder under :plugins in
-  config.edn, and a string there written as \"${VAR}\" is read from the
-  environment:
+  Its settings are the entry named after the folder under :plugins in the
+  settings, edited on the config page, and a string there written as
+  \"${VAR}\" is read from the environment:
 
     :plugins {:slack {:token \"${SLACK_BOT_TOKEN}\" :workspace \"acme\"}}
 
+  `defsettings` declares what those settings are, so the config page can
+  show a field for each.
+
   A plugin adds source types with `defsource`, and can name their sources
   with `defname`. The whole source map from :sources is handed over too, so
-  settings that differ per source, like which channel to read, go there:
+  settings that differ per source, like which channel to read, go there.
+  The map after the type is the source's shape (see newsroom.sources/shape),
+  which the config page builds a source's fields from:
 
     (ns slack.core
       (:require [newsroom.plugin :as plugin]))
 
-    (plugin/defsource :slack [source ctx]
+    (plugin/defsettings
+      {:fields [{:key :token :type :string :required? true
+                 :doc \"A bot token, or ${SLACK_BOT_TOKEN}.\"}]})
+
+    (plugin/defsource :slack
+      {:doc \"A Slack channel's recent messages.\"
+       :fields [{:key :channel :type :string :required? true
+                 :doc \"The channel's ID.\"}]}
+      [source ctx]
       (let [{:keys [token]} (plugin/config :slack)]
         (plugin/emit! ctx (str \"Reading \" (:channel source)))
         (for [m (plugin/get-json \"https://slack.com/api/...\" {...})]
@@ -48,6 +61,42 @@
   nil)
 
 (defonce ^:private app-config (atom {}))
+
+(defn set-config!
+  "Make `cfg` the config the plugins' settings come from, as when the
+  config page saves."
+  [cfg]
+  (reset! app-config cfg))
+
+(defonce ^:private settings-shapes (atom {}))
+
+(defn settings-shape
+  "What a plugin's settings look like, {:doc :fields}, as it declared them
+  with `defsettings`; nil when it didn't."
+  [plugin]
+  (get @settings-shapes (name plugin)))
+
+(defn declared-settings
+  "The names of the plugins that declared their settings."
+  []
+  (keys @settings-shapes))
+
+(defn declare-settings!
+  "Say what the settings of `plugin` look like; see `defsettings`."
+  [plugin shape]
+  (swap! settings-shapes assoc (name plugin) shape)
+  nil)
+
+(defmacro defsettings
+  "Declare the plugin's settings, {:doc :fields}, its fields as a source
+  shape's are (see newsroom.sources/shape), so the config page can show
+  them. With no name, the plugin being loaded's."
+  ([shape]
+   `(declare-settings! (or (:name *plugin*)
+                           (throw (ex-info "defsettings names no plugin outside of loading one" {})))
+                       ~shape))
+  ([plugin shape]
+   `(declare-settings! ~plugin ~shape)))
 
 (defn- expand-vars
   "`v` with every string that is exactly ${VAR} read from the environment. An
@@ -78,9 +127,14 @@
 
 (defmacro defsource
   "Add a source type: `body` returns the items a source of `type` has, for
-  the context {:day \"YYYY-MM-DD\" :config ...}. See newsroom.sources."
-  [type [source ctx] & body]
-  `(defmethod sources/fetch-items ~type [~source ~ctx] ~@body))
+  the context {:day \"YYYY-MM-DD\" :config ...}. An optional map before the
+  arguments is the type's shape, {:doc :fields}, which the config page
+  shows a source's fields from; see newsroom.sources/shape."
+  [type & more]
+  (let [[shape [source ctx] & body] (if (vector? (first more)) (cons nil more) more)]
+    `(do
+       ~@(when shape [`(defmethod sources/shape ~type [~'_] ~shape)])
+       (defmethod sources/fetch-items ~type [~source ~ctx] ~@body))))
 
 (defmacro defname
   "Say what a source of `type` is called when it has no :name, so that two
@@ -203,7 +257,7 @@
   and skipped rather than keeping the server down. Returns a report per
   plugin: {:plugin :ok :namespaces :error}."
   [root cfg]
-  (reset! app-config cfg)
+  (set-config! cfg)
   (let [dir (io/file root)
         entries (when (.isDirectory dir)
                   (->> (.listFiles dir)

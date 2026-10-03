@@ -20,6 +20,8 @@ for _ in $(seq 1 60); do
   if curl -sf "http://127.0.0.1:${port}/day/2026-01-01" | grep -q "No briefing for this day" &&
      curl -sf "http://127.0.0.1:${port}/js/datastar.js" | grep -q "Datastar" &&
      curl -sf "http://127.0.0.1:${port}/js/diagrams.js" | grep -q "mermaid" &&
+     curl -sf "http://127.0.0.1:${port}/config" | grep -q "data-cfg-list" &&
+     curl -sf "http://127.0.0.1:${port}/js/config.js" | grep -q "data-cfg-add" &&
      curl -sf "http://127.0.0.1:${port}/css/style.css" | grep -q -- "--paper"; then
     ok=1
     break
