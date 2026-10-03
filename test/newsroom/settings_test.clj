@@ -111,7 +111,7 @@
                                                                       [{:type :reddit :subreddit ["technology" "economy"]}
                                                                        {:type :gone :name "Old" :x 1}]))}})]
         (is (str/includes? page "action=\"/config\""))
-        (is (str/includes? page "src=\"/js/config.js\""))
+        (is (re-find #"src=\"/js/config.js\?v=[0-9a-f]+\"" page))
         (is (str/includes? page "How many days of briefings to keep") "a setting's description")
         (testing "a plugin's source has its declared fields"
           (is (str/includes? page "name=\"sources.0.subreddit.1\" type=\"text\" value=\"economy\""))

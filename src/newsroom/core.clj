@@ -137,7 +137,9 @@
 (def ^:private assets
   "The files served from resources/public, by path, with their content type.
   They are read through io/resource, which reaches the copies baked into a
-  built binary, where Ring's resource middleware can't."
+  built binary, where Ring's resource middleware can't. The page asks for
+  each with a version from its content (see newsroom.ui/asset), so one can
+  be cached for long and a changed one is still fetched anew."
   {"/js/datastar.js" "application/javascript"
    "/js/diagrams.js" "application/javascript"
    "/js/config.js"   "application/javascript"
@@ -146,7 +148,7 @@
 (defn- asset [{:keys [uri]}]
   (if-let [type (assets uri)]
     {:status 200
-     :headers {"Content-Type" type "Cache-Control" "max-age=86400"}
+     :headers {"Content-Type" type "Cache-Control" "max-age=31536000, immutable"}
      :body (slurp (io/resource (str "public" uri)))}
     (not-found)))
 

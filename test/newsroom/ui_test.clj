@@ -33,7 +33,10 @@
           (is (str/includes? page "href=\"/day/2026-09-29\">← Earlier"))
           (is (str/includes? page "29 September 2026")))
         (is (str/includes? page "deepseek / deepseek-v4-flash"))
-        (is (str/includes? page "src=\"/js/diagrams.js\"") "the page can draw diagrams")))))
+        (is (re-find #"src=\"/js/diagrams.js\?v=[0-9a-f]+\"" page) "the page can draw diagrams")
+        (testing "an asset's address changes with its content, so a cached one isn't kept"
+          (is (re-find #"href=\"/css/style.css\?v=[0-9a-f]+\"" page))
+          (is (= 200 (:status (core/app {:uri "/css/style.css" :query-string "v=abc" :request-method :get})))))))))
 
 (deftest the-archive-shows-each-days-standfirst-and-the-desk-shows-feed-health
   (let [st (store/open "sqlite::memory:")]

@@ -6,7 +6,8 @@
 
   `fragment` is what the SSE stream re-renders: it reads the pipeline's
   ratoms, so a page updates as a run progresses and when a day is stored."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [hiccup2.core :as h]
             [newsroom.config-page :as config-page]
             [jolt.datastar.core :as ds]
@@ -18,6 +19,17 @@
             [newsroom.trends :as trends]))
 
 ;; --- sidebar -----------------------------------------------------------------------
+
+(def ^:private asset-version
+  (memoize
+   (fn [path]
+     (some-> (io/resource (str "public" path)) slurp hash (Integer/toHexString)))))
+
+(defn asset
+  "The address of a file under resources/public, with a version from its
+  content, so a browser that cached the last one is sent the new one."
+  [path]
+  (if-let [v (asset-version path)] (str path "?v=" v) path))
 
 (defn- month-of [{:keys [day]}] (subs day 0 7))
 
@@ -383,8 +395,8 @@
             [:meta {:charset "utf-8"}]
             [:meta {:name "viewport" :content "width=device-width,initial-scale=1"}]
             [:title (str title " · The Newsroom")]
-            [:script {:type "module" :src "/js/datastar.js"}]
-            [:link {:rel "stylesheet" :href "/css/style.css"}]]
+            [:script {:type "module" :src (asset "/js/datastar.js")}]
+            [:link {:rel "stylesheet" :href (asset "/css/style.css")}]]
            [:body
             [:div.layout
              [:aside#sidebar.sidebar (ds/init-opts {:selector "#sidebar"})
@@ -393,4 +405,4 @@
               [:main#article (config-page/article cfg)]
               [:main#article (dissoc (ds/init-opts {:selector "#article"}) :data-signals)
                (fragment st current "#article")])]
-            [:script {:type "module" :src (if (:config current) "/js/config.js" "/js/diagrams.js")}]]]))))
+            [:script {:type "module" :src (asset (if (:config current) "/js/config.js" "/js/diagrams.js"))}]]]))))
