@@ -14,7 +14,9 @@
 
   Reddit lets a client read about one feed a minute without logging in, so
   more than one reddit source in a run gets turned away, and so does trying
-  a source on the config page again within the minute. Subreddits listed
+  a source on the config page again within the minute. A reddit source is
+  given 90s and one retry by default, enough to wait out reddit's reset
+  and try again; :timeout-ms and :retries on the source change that. Subreddits listed
   in one source are read together, in a single request, which is the way
   to follow several.
 
@@ -100,7 +102,7 @@
   source, since each source is a request of its own."
   [source url headers]
   (let [wait (some-> (or (header headers "x-ratelimit-reset") (header headers "retry-after"))
-                     str/trim parse-double long)]
+                     str/trim parse-double long (max 1))]
     (str "HTTP 429 from " url ": reddit lets a client read about one feed a minute without logging in, "
          (if wait (str "so try again in " wait "s") "so try again in a minute")
          (when-not (coll? (:subreddit source))
@@ -126,6 +128,9 @@
 (plugin/defsource :reddit
   {:doc (str "Subreddits, read for the stories their posts link to. Reddit lets a client read about "
              "one feed a minute, so list every subreddit in one source.")
+   ;; reddit's wait for its next feed is up to a minute, which a retry
+   ;; can sit out when there's time for it
+   :policy {:timeout-ms 90000 :retries 1}
    :fields [{:key :subreddit :type :strings :label "Subreddits"
              :doc "The subreddits to read, together, in one request."}
             {:key :url :type :string

@@ -58,7 +58,16 @@
               :doc (str "A story told in any of this many past briefings is left out of today's, so one "
                         "dropped for space yesterday is not retold today.")}
              {:key :source-timeout-ms :type :int :min 1000 :default 30000
-              :doc "How long one source may take, in milliseconds, before the run goes on without it."}]}
+              :doc (str "How long one source may take, in milliseconds, retries and all, before the run goes "
+                        "on without it. A source, or its type, can set its own.")}
+             {:key :source-retries :type :int :min 0 :default 1
+              :doc (str "How many times a request that failed for a passing reason, like a rate limit, an "
+                        "overloaded server or a dropped connection, is tried again. A source, or its type, "
+                        "can set its own.")}
+             {:key :source-retry-wait-ms :type :int :min 0 :default 2000
+              :doc (str "How long to wait before trying again, in milliseconds, doubling each time, when the "
+                        "server doesn't say how long it wants. A wait that wouldn't fit in the source's "
+                        "time isn't waited out.")}]}
    {:title "Storylines"
     :fields [{:key :dupe-threshold :type :number :nullable? true :min 0 :max 1 :default 0.62
               :doc (str "Stories from different outlets whose titles and summaries embed this close (cosine "
@@ -281,10 +290,26 @@
   []
   (sort (remove #{:default} (keys (methods sources/fetch-items)))))
 
-(defn source-fields
-  "The fields a source of `type` shows: its name, then its shape's."
+(defn policy-fields
+  "How a source of `type` is read, the same for every type, its type's
+  :policy shown as the default."
   [type]
-  (into [source-name-field] (:fields (sources/shape type))))
+  (let [typed (:policy (sources/shape type))
+        default (fn [k] (when-let [v (get typed k)] (str v " for this type")))]
+    [{:key :timeout-ms :type :int :min 1000 :default (default :timeout-ms)
+      :doc "How long this source may take, retries and all, in milliseconds. Blank: its type's, else the source timeout."}
+     {:key :retries :type :int :min 0 :default (default :retries)
+      :doc "How many times a request failing for a passing reason is tried again. Blank: its type's, else the setting."}
+     {:key :retry-wait-ms :type :int :min 0 :default (default :retry-wait-ms)
+      :doc "The wait before trying again when the server doesn't say. Blank: its type's, else the setting."}]))
+
+(defn source-fields
+  "The fields a source of `type` shows: its name, its shape's, then how
+  it is read."
+  [type]
+  (-> [source-name-field]
+      (into (:fields (sources/shape type)))
+      (into (policy-fields type))))
 
 (defn read-source
   "A source as the form holds it, read as well as it can be: what the page

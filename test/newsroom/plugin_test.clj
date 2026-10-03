@@ -251,3 +251,22 @@
       (let [msg (fail {:type :reddit :subreddit "technology"} {})]
         (is (str/includes? msg "try again in a minute"))
         (is (str/includes? msg "one source"))))))
+
+(deftest a-rate-limited-reddit-feed-is-read-once-reddit-lets-it
+  (plugin/load-all! "plugins" {})
+  (is (= {:timeout-ms 90000 :retries 1 :retry-wait-ms 2000} (sources/policy {:type :reddit} {}))
+      "time enough by default to sit out reddit's reset")
+  (let [calls (atom [])
+        feed (str "<feed xmlns=\"http://www.w3.org/2005/Atom\">"
+                  (entry "t3_w" "World" "https://w.e.com/1" "2026-09-30T10:00:00+00:00" "worldnews")
+                  "</feed>")]
+    (with-redefs [http/get (fn [url _]
+                             (swap! calls conj url)
+                             (cond
+                               (not (str/includes? url "reddit.com")) {:status 404 :body ""}
+                               (= 1 (count (filter #(str/includes? % "reddit.com") @calls)))
+                               {:status 429 :headers {"x-ratelimit-reset" "0"} :body ""}
+                               :else {:status 200 :body feed}))]
+      (is (= ["World"] (map :title (sources/read-source {:type :reddit :subreddit ["worldnews"]}
+                                                        {:day "2026-09-30" :config {}}))))
+      (is (= 2 (count (filter #(str/includes? % "reddit.com") @calls)))))))

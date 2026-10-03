@@ -19,6 +19,15 @@
   a save is. An old `config.edn` imports as it is; the keys it names replace
   the settings, and `:host`, `:port` and `:db` are passed over. An import is
   checked against a malli schema generated from the fields and shapes.
+- **Timeouts and retries per source.** A request that fails for a passing
+  reason (429, 408, 5xx, a dropped connection) is retried after the server's
+  `Retry-After` or `x-ratelimit-reset`, else a doubling wait, while it still
+  fits in the source's time. `:source-timeout-ms`, `:source-retries` and
+  `:source-retry-wait-ms` set it for every source; a source's own
+  `:timeout-ms`, `:retries` and `:retry-wait-ms` override them, and a plugin's
+  shape can give its type a `:policy` in between. Reddit sources get 90s and
+  a retry, enough to sit out reddit's once-a-minute limit. Web search's own
+  one-off retry is folded into this.
 - **Testing a source.** Every source on the config page has a test button
   that reads it as a run would, within the source timeout, and shows the
   headlines it found or why it failed, without saving anything.

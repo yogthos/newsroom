@@ -51,8 +51,7 @@
           (plugin/get-json "https://slack.com/api/conversations.history"
                            {:headers {"Authorization" (str "Bearer " token)}
                             :query-params {"channel" channel
-                                           "limit" (str (:limit source 50))}
-                            :timeout-ms (:source-timeout-ms (:config ctx) 30000)})]
+                                           "limit" (str (:limit source 50))}})]
       (when-not ok
         (throw (ex-info (str "Slack answered " error) {:error error})))
       (vec (for [{:keys [ts subtype] :as m} messages

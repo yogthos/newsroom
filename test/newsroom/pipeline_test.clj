@@ -147,7 +147,7 @@
     (is (pipeline/cancel-run!))
     (loop [i 0] (when (and (pipeline/running?) (< i 50)) (Thread/sleep 20) (recur (inc i))))
     (is (not (pipeline/running?)))
-    (is (= :cancelled (:state @pipeline/status)))
+    (is (= :cancelled (:state @pipeline/status)) (pr-str (select-keys @pipeline/status [:error :state])))
     (is (nil? (store/day (:store c) "2026-09-30")))))
 
 (deftest the-item-cap-trims-every-source-evenly
@@ -203,7 +203,7 @@
     (is (pipeline/cancel-run!))
     (loop [i 0] (when (and (pipeline/running?) (< i 100)) (Thread/sleep 20) (recur (inc i))))
     (is (not (pipeline/running?)))
-    (is (= :cancelled (:state @pipeline/status)))
+    (is (= :cancelled (:state @pipeline/status)) (pr-str (select-keys @pipeline/status [:error :state])))
     (is (nil? (store/day (:store c) "2026-09-30")))))
 
 (deftest stories-in-the-last-briefing-are-left-out

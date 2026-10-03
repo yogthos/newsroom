@@ -70,23 +70,23 @@
 
 (defn test-source
   "Read the source the form `params` holds at `prefix` as a run would, for
-  today, within the run's :source-timeout-ms: {:errors} when its fields
-  are wrong, else {:items :events}, or {:error :events} when reading it
-  failed or took too long. Nothing is saved."
+  today, under its policy, retries and all: {:errors} when its fields are
+  wrong, else {:items :events}, or {:error :events} when reading it failed
+  or took too long. Nothing is saved."
   [cfg params prefix]
   (let [{:keys [source errors]} (settings/source-at params prefix)]
     (if (seq errors)
       {:errors errors}
       (let [events (atom [])
-            timeout (:source-timeout-ms cfg 30000)
+            timeout (:timeout-ms (sources/policy source cfg))
             task (future
-                   (try {:items (vec (sources/fetch-items source {:day (pipeline/today) :config cfg
-                                                                  :emit #(swap! events conj %)}))}
+                   (try {:items (sources/read-source source {:day (pipeline/today) :config cfg
+                                                             :emit #(swap! events conj %)})}
                         (catch Throwable e {:error (or (ex-message e) (str e))})))
             result (deref task timeout ::timeout)]
         (if (= ::timeout result)
           (do (future-cancel task)
-              {:error (str "took longer than " (quot timeout 1000) "s, the source timeout") :events @events})
+              {:error (str "took longer than " (quot timeout 1000) "s, its timeout") :events @events})
           (assoc result :events @events :name (sources/source-name source)))))))
 
 (defn- current-form [] (settings/to-form (:config @system)))

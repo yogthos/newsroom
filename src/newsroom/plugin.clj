@@ -181,22 +181,25 @@
 (defn request-json
   "Send `req` (as jolt.http-client takes it: :url, :request-method,
   :headers, :query-params, :body) and read the JSON answer, keys as
-  keywords. Throws on a status other than 2xx, with :status and :body in
-  the ex-data."
+  keywords, tried again under the source's policy when it fails for a
+  passing reason (see newsroom.sources/retrying). Throws on a status other
+  than 2xx, with :status, :body and :headers in the ex-data."
   [req]
-  (let [timeout (:timeout-ms req 30000)
-        resp (http/request (-> req
-                               (dissoc :timeout-ms)
-                               (update :headers #(merge {"User-Agent" sources/default-user-agent
-                                                         "Accept" "application/json"}
-                                                        %))
-                               (assoc :socket-timeout timeout
-                                      :conn-timeout (min timeout 15000)
-                                      :throw-exceptions false)))]
-    (if (<= 200 (:status resp) 299)
-      (json/read-str (str (:body resp)) :key-fn keyword)
-      (throw (ex-info (str "HTTP " (:status resp) " from " (:url req))
-                      {:status (:status resp) :body (:body resp)})))))
+  (sources/retrying
+   (fn [timeout]
+     (let [resp (http/request (-> req
+                                  (dissoc :timeout-ms)
+                                  (update :headers #(merge {"User-Agent" sources/default-user-agent
+                                                            "Accept" "application/json"}
+                                                           %))
+                                  (assoc :socket-timeout timeout
+                                         :conn-timeout (min timeout 15000)
+                                         :throw-exceptions false)))]
+       (if (<= 200 (:status resp) 299)
+         (json/read-str (str (:body resp)) :key-fn keyword)
+         (throw (ex-info (str "HTTP " (:status resp) " from " (:url req))
+                         {:status (:status resp) :body (:body resp) :headers (:headers resp)})))))
+   (:timeout-ms req)))
 
 (defn get-json
   "GET `url` and read the JSON answer; `opts` takes :headers,

@@ -128,18 +128,22 @@
 (defn- gather-one
   "Task: one source's items for the day, never failing. A failure or a
   timeout is recorded as that source's :error, so the run goes on without
-  it. Only a cancel of the run itself propagates."
+  it. Only a cancel of the run itself propagates. The source is read under
+  its own policy, its :timeout-ms bounding it and its retries (see
+  newsroom.sources/read-source)."
   [source {:keys [config] :as ctx}]
   (let [name (sources/source-name source)
-        timeout-ms (:source-timeout-ms config 30000)]
+        timeout-ms (:timeout-ms (sources/policy source config))]
     (m/sp
-      (let [outcome (m/? (m/timeout (m/attempt (m/via m/blk (sources/fetch-items source ctx)))
+      (let [outcome (m/? (m/timeout (m/attempt (m/via m/blk (sources/read-source source ctx)))
                                     timeout-ms ::timed-out))
             result (if (= ::timed-out outcome)
                      {:error (str "timed out after " (quot timeout-ms 1000) "s")}
                      (try {:items (vec (outcome))}
                           (catch Throwable e
-                            (if (m/cancelled? e)
+                            ;; the run's cancel can reach the source's thread as
+                            ;; an interrupt before it reaches this task
+                            (if (interrupted? e)
                               (throw e)
                               {:error (or (ex-message e) (str e))}))))]
         (update-status! (:run-id ctx) update-in [:sources name] merge

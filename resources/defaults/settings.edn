@@ -58,8 +58,14 @@
  :digests [:week :month]
  :digest-stories 15
 
- ;; how long one source may take before the run goes on without it
+ ;; how long one source may take, retries and all, before the run goes on
+ ;; without it; how many times a request that failed for a passing reason
+ ;; (a rate limit, an overloaded server, a dropped connection) is tried
+ ;; again; and how long to wait first, doubling, when the server doesn't
+ ;; say. A source can set its own :timeout-ms, :retries and :retry-wait-ms
  :source-timeout-ms 30000
+ :source-retries 1
+ :source-retry-wait-ms 2000
 
  ;; Sources. :type picks the adapter: :rss (RSS 2.0, RSS 1.0, Atom),
  ;; :scrape (the story links on a web page) and :web-search (Exa;
