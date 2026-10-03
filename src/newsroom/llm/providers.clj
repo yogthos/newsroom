@@ -20,7 +20,8 @@
 
   With no :roles, the first built-in whose key is in the environment serves
   (DeepSeek, GLM, OpenAI), and a local endpoint when none is."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [newsroom.config :as config]))
 
 (def presets
   {:deepseek {:base-url "https://api.deepseek.com/v1"
@@ -57,16 +58,14 @@
    :conn-timeout-ms 15000})
 
 (defn- env [k]
-  (when k
-    (let [v (jolt.host/getenv k)]
-      (when-not (str/blank? v) v))))
+  (config/secret k))
 
 (defn- as-key [x]
   (some-> x name str/lower-case not-empty keyword))
 
 (defn- expand-var
-  "`s` with an exact ${VAR} replaced from the environment. An unset variable
-  is an error naming it."
+  "`s` with an exact ${VAR} replaced from the environment or secrets.edn. An
+  unset variable is an error naming it."
   [where s]
   (if-let [[_ v] (and (string? s) (re-matches #"\$\{([A-Za-z_][A-Za-z0-9_]*)\}" s))]
     (or (env v)

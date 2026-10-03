@@ -132,8 +132,8 @@
    {:key :model :type :string :doc "The model to ask for."}
    {:key :base-url :type :string :doc "The endpoint, when not the built-in's."}
    {:key :api-key-env :type :string
-    :doc "The environment variable holding the key, when not the built-in's usual one."}
-   {:key :api-key :type :string :doc "The key itself, or ${VAR} to read it from the environment."}
+    :doc "The name the key is under, in the environment or secrets.edn, when not the built-in's usual one."}
+   {:key :api-key :type :string :doc "The key itself, or ${VAR} to read it from the environment or secrets.edn."}
    {:key :max-tokens :type :int :min 1 :default 32768
     :doc "The reply's budget; a thinking model spends part of it reasoning before it writes."}
    {:key :temperature :type :number :min 0 :default 0.4 :doc "How freely the model writes."}

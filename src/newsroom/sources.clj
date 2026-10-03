@@ -40,6 +40,7 @@
             [clojure.xml :as xml]
             [jolt.http-client :as http]
             [jolt.xml]
+            [newsroom.config :as config]
             [newsroom.feed :as feed]))
 
 (defmulti fetch-items
@@ -293,7 +294,7 @@
 (defn exa-search
   "The items Exa finds for `query`."
   [query n {:keys [timeout-ms source]}]
-  (let [key (jolt.host/getenv "EXA_API_KEY")
+  (let [key (config/secret "EXA_API_KEY")
         url (if (str/blank? key) exa-endpoint (str exa-endpoint "?exaApiKey=" key))
         resp (http/post url {:headers {"Content-Type" "application/json"
                                        "Accept" "application/json, text/event-stream"}

@@ -51,6 +51,7 @@
             [clojure.string :as str]
             [clojure.walk :as walk]
             [jolt.http-client :as http]
+            [newsroom.config :as config]
             [newsroom.feed :as feed]
             [newsroom.sources :as sources]))
 
@@ -99,17 +100,15 @@
    `(declare-settings! ~plugin ~shape)))
 
 (defn- expand-vars
-  "`v` with every string that is exactly ${VAR} read from the environment. An
-  unset variable is an error naming it and `plugin`."
+  "`v` with every string that is exactly ${VAR} read from the environment or
+  secrets.edn. An unset variable is an error naming it and `plugin`."
   [plugin v]
   (walk/postwalk
    (fn [x]
      (if-let [[_ var] (and (string? x) (re-matches #"\$\{([A-Za-z_][A-Za-z0-9_]*)\}" x))]
-       (let [value (jolt.host/getenv var)]
-         (if (str/blank? value)
+       (or (config/secret var)
            (throw (ex-info (str "plugin " plugin " names ${" var "}, which is not set")
-                           {:plugin plugin :var var}))
-           value))
+                           {:plugin plugin :var var})))
        x))
    v))
 

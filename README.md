@@ -37,7 +37,7 @@ After each briefing the model also keeps a running note on every storyline the b
 
 Once a week is over, and once a month is, newsroom writes a digest of it. It doesn't go back to the feeds. It ranks the period's storylines by their coverage, and compares each one with the four periods before to label it emerging, persistent, fading or steady. The model gets those storylines with the facts from their notes and the standfirst of each day's briefing, and writes about the longer movement under the daily news. The coverage, the notes and the standfirsts are kept four months longer than the days themselves, so a month's digest doesn't depend on `:keep-days`. Digests show up in the sidebar and live at `/week/2026-W40` and `/month/2026-09`. A digest that's missing can be written from its page. They have a prompt of their own, and `:digests` says which ones get written.
 
-The model needs an API key. DeepSeek is the default and reads `DEEPSEEK_API_KEY`, though GLM, OpenAI, Ollama and a local llama.cpp server work just as well.
+The model needs an API key. DeepSeek is the default and reads `DEEPSEEK_API_KEY`, though GLM, OpenAI, Ollama and a local llama.cpp server work just as well. The key can be exported in the shell that starts newsroom, or kept in `secrets.edn` in the config directory, as described under [Making it yours](#making-it-yours).
 
 ## Making it yours
 
@@ -61,6 +61,15 @@ Restart=on-failure
 ```
 
 with the model's key, like `DEEPSEEK_API_KEY=...`, in `/etc/newsroom.env`. Set `:host` in the config if the page should be reachable from other machines.
+
+Keys can also live in `secrets.edn` in the config directory, next to `config.edn`, as a map from each key's name to its value:
+
+```clojure
+{"DEEPSEEK_API_KEY" "sk-..."
+ "SLACK_BOT_TOKEN" "xoxb-..."}
+```
+
+Anything that names a key, a provider's `:api-key-env`, a `"${VAR}"` in a provider or a plugin's settings, or the built-in names like `DEEPSEEK_API_KEY` and `EXA_API_KEY`, finds it there when the environment doesn't have it. The environment wins when both do. Newsroom reads the file once at startup, never writes it, and keeps its values out of the database and the export. It won't start if anyone but the file's owner can read it, so `chmod 600 secrets.edn` after writing it. [`examples/secrets.edn`](examples/secrets.edn) is a starting point.
 
 ## Plugins
 

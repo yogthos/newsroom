@@ -257,10 +257,12 @@
    :strategy :fibers})
 
 (defn start!
-  "Open the store, bring in any settings still in files and the default
-  prompts it doesn't have, load plugins, start the schedule and the server."
+  "Read secrets.edn, open the store, bring in any settings still in files
+  and the default prompts it doesn't have, load plugins, start the schedule
+  and the server."
   []
   (config/ensure-home!)
+  (config/load-secrets!)
   (let [file (config/read-file)
         st (store/open (config/db-file file))
         imported (settings/import! st file)

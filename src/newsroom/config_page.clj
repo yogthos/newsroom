@@ -248,7 +248,7 @@
                   (fn [n entry] (provider-entry n entry errors))
                   "Add provider")
      [:h3 "Roles"]
-     [:p.doc "Which provider does each job. With none given, the first built-in whose key is in the environment does."]
+     [:p.doc "Which provider does each job. With none given, the first built-in whose key is in the environment or secrets.edn does."]
      (for [f settings/role-fields]
        (field-row (assoc f :datalist "provider-names") (settings/field-name :roles (:key f))
                   (get-in tree ["roles" (name (:key f))]) errors 0)))))
@@ -268,7 +268,7 @@
          (when-let [doc (:doc shape)] [:p.doc doc])
          (when-not shape
            [:p.doc "This plugin doesn't say what its settings are, so they are kept as EDN."])
-         [:p.doc "A value written as ${VAR} is read from the environment."]
+         [:p.doc "A value written as ${VAR} is read from the environment, or else from secrets.edn."]
          (for [f (:fields shape)]
            (field-row f (settings/field-name nm (:key f)) (get m (name (:key f))) errors 1))
          (extra-row nm m errors)]))))

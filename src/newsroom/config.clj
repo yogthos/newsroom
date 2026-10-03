@@ -35,6 +35,56 @@
   or can't change while the server runs."
   #{:host :port :db})
 
+;; --- secrets -------------------------------------------------------------------------
+;; secrets.edn holds credentials as {"NAME" "value"}, so a key need not be
+;; exported in the shell that starts newsroom. Settings name a key as before,
+;; ${NAME} or :api-key-env, and `secret` finds it in the environment, else
+;; here. The file is read once, at startup, and only by its owner.
+
+(defonce ^:private secrets (atom {}))
+
+(defn- open-to-others
+  "The permissions on `f` that let a user other than its owner at it."
+  [f]
+  (->> (java.nio.file.Files/getPosixFilePermissions
+        (java.nio.file.Paths/get (str f) (into-array String []))
+        (into-array java.nio.file.LinkOption []))
+       (map str)
+       (remove #(str/starts-with? % "OWNER_"))))
+
+(defn read-secrets
+  "secrets.edn at `f` as a map of name to value, {} when there is no file.
+  Throws when a user other than the owner can get at it, or when it is not
+  a map of strings to strings. The error names the file and never holds a
+  value from it."
+  [f]
+  (let [f (io/file f)
+        refuse (fn [why] (throw (ex-info (str f " " why) {:file (str f)})))]
+    (cond
+      (not (.exists f)) {}
+      (seq (open-to-others f)) (refuse "is open to other users; run chmod 600 on it")
+      :else
+      (let [m (try (edn/read-string (slurp f))
+                   (catch Throwable _ (refuse "is not valid EDN")))]
+        (if (and (map? m) (every? (fn [[k v]] (and (string? k) (string? v))) m))
+          m
+          (refuse "has to be one map of string names to string values"))))))
+
+(defn load-secrets!
+  "Read secrets.edn in the config directory, or `f`, for `secret` to serve.
+  nil forgets them."
+  ([] (load-secrets! (path "secrets.edn")))
+  ([f] (reset! secrets (if f (read-secrets f) {}))))
+
+(defn secret
+  "The value of `name`: a non-blank environment variable, else the entry in
+  secrets.edn. nil when neither has one."
+  [name]
+  (when name
+    (or (env name)
+        (let [v (get @secrets name)]
+          (when-not (str/blank? v) v)))))
+
 (defn default-text [name]
   (slurp (io/resource (str "defaults/" name))))
 
