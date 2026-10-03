@@ -39,24 +39,31 @@
 ;; secrets.edn holds credentials as {"NAME" "value"}, so a key need not be
 ;; exported in the shell that starts newsroom. Settings name a key as before,
 ;; ${NAME} or :api-key-env, and `secret` finds it in the environment, else
-;; here. The file is read once, at startup, and only by its owner.
+;; here. The first run writes an empty one; it is read once, at startup, and
+;; only when no one but its owner can get at it.
 
 (defonce ^:private secrets (atom {}))
+
+(defn- nio-path [f]
+  (java.nio.file.Paths/get (str f) (into-array String [])))
 
 (defn- open-to-others
   "The permissions on `f` that let a user other than its owner at it."
   [f]
   (->> (java.nio.file.Files/getPosixFilePermissions
-        (java.nio.file.Paths/get (str f) (into-array String []))
-        (into-array java.nio.file.LinkOption []))
+        (nio-path f) (into-array java.nio.file.LinkOption []))
        (map str)
        (remove #(str/starts-with? % "OWNER_"))))
 
+(defn- owner-only! [f]
+  (java.nio.file.Files/setPosixFilePermissions
+   (nio-path f) (java.nio.file.attribute.PosixFilePermissions/fromString "rw-------")))
+
 (defn read-secrets
-  "secrets.edn at `f` as a map of name to value, {} when there is no file.
-  Throws when a user other than the owner can get at it, or when it is not
-  a map of strings to strings. The error names the file and never holds a
-  value from it."
+  "secrets.edn at `f` as a map of name to value, {} when there is no file or
+  it holds nothing. Throws when a user other than the owner can get at it,
+  or when it is not a map of strings to strings. The error names the file
+  and never holds a value from it."
   [f]
   (let [f (io/file f)
         refuse (fn [why] (throw (ex-info (str f " " why) {:file (str f)})))]
@@ -66,8 +73,8 @@
       :else
       (let [m (try (edn/read-string (slurp f))
                    (catch Throwable _ (refuse "is not valid EDN")))]
-        (if (and (map? m) (every? (fn [[k v]] (and (string? k) (string? v))) m))
-          m
+        (if (or (nil? m) (and (map? m) (every? (fn [[k v]] (and (string? k) (string? v))) m)))
+          (or m {})
           (refuse "has to be one map of string names to string values"))))))
 
 (defn load-secrets!
@@ -112,13 +119,17 @@
   (merge (default-settings) (edn/read-string (default-text "config.edn"))))
 
 (defn ensure-home!
-  "Create the config directory with the default config.edn, leaving one
-  that is already there alone."
+  "Create the config directory with the default config.edn and an empty
+  secrets.edn only its owner can read, leaving files already there alone."
   []
   (.mkdirs (io/file (path "plugins")))
   (let [f (io/file (path "config.edn"))]
     (when-not (.exists f)
-      (spit f (default-text "config.edn")))))
+      (spit f (default-text "config.edn"))))
+  (let [f (io/file (path "secrets.edn"))]
+    (when-not (.exists f)
+      (spit f (default-text "secrets.edn"))
+      (owner-only! f))))
 
 (defn read-file
   "config.edn as it is, every key it has; {} when there is none."

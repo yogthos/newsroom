@@ -9,10 +9,11 @@
   shell that starts newsroom. Whatever names a key, `:api-key-env`, a
   `${VAR}` in a provider or a plugin's settings, or a built-in name like
   `DEEPSEEK_API_KEY` or `EXA_API_KEY`, finds it there when the environment
-  doesn't have it; the environment wins when both do. The file is read once
-  at startup and never reaches the database or the export. Newsroom won't
-  start if users other than its owner can get at it, or if it isn't a map of
-  strings, and the error doesn't repeat what's in it.
+  doesn't have it; the environment wins when both do. The first start
+  writes an empty one, readable only by its owner; after that it is read
+  once at startup and never reaches the database or the export. Newsroom
+  won't start if users other than its owner can get at it, or if it isn't a
+  map of strings, and the error doesn't repeat what's in it.
 
 ## v0.6.0 — 3 October 2026
 

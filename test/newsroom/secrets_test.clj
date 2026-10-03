@@ -75,3 +75,23 @@
       (is (some? msg) text)
       (is (str/includes? msg (str f)))
       (is (not (str/includes? msg "sk-secret")) text))))
+
+(deftest the-first-run-writes-an-empty-secrets-file-only-its-owner-can-read
+  (let [home (str (fs/create-temp-dir))
+        f (io/file home "secrets.edn")]
+    (with-redefs [config/home (constantly home)]
+      (config/ensure-home!)
+      (is (.exists f))
+      (is (= #{"OWNER_READ" "OWNER_WRITE"}
+             (set (map str (java.nio.file.Files/getPosixFilePermissions
+                            (path f) (into-array java.nio.file.LinkOption []))))))
+      (is (= {} (config/read-secrets f)))
+      (testing "a file already there is left alone"
+        (spit f (pr-str {"NEWSROOM_TEST_KEY" "sk-file"}))
+        (chmod! f "rw-------")
+        (config/ensure-home!)
+        (is (= {"NEWSROOM_TEST_KEY" "sk-file"} (config/read-secrets f)))))))
+
+(deftest an-empty-file-is-no-secrets
+  (doseq [text ["" ";; nothing yet\n"]]
+    (is (= {} (config/read-secrets (secrets-file text "rw-------"))) (pr-str text))))
