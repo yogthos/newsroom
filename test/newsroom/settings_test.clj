@@ -117,9 +117,14 @@
           (is (str/includes? page "name=\"sources.0.subreddit.1\" type=\"text\" value=\"economy\""))
           (is (str/includes? page "r/technology+economy"))
           (is (str/includes? page "name=\"sources.__0__.subreddit.__1__\"") "a template for a new subreddit"))
-        (testing "a template for a new source of every type"
+        (testing "a new source picks its type in its own form, every type's fields put away until then"
+          (is (str/includes? page "data-cfg-type-select=\"\" id=\"sources.__0__.type\" name=\"sources.__0__.type\""))
+          (is (not (str/includes? page "aria-label=\"Type of source\"")) "no picker beside the button")
           (doseq [t ["rss" "scrape" "web-search" "reddit" "slack"]]
-            (is (str/includes? page (str "data-cfg-type=\"" t "\"")))))
+            (is (str/includes? page (str "<fieldset class=\"type-fields\" data-cfg-type=\"" t "\" disabled"))))
+          (is (not (re-find #"<template[^>]*data-cfg-type" page)) "one template, not one a type")
+          (is (str/includes? page "<span class=\"title\" data-cfg-default=\"New source\">New source</span>")
+              "a title the name typed takes the place of"))
         (testing "a type no adapter reads keeps its keys as EDN"
           (is (str/includes? page "No adapter reads sources of type gone"))
           (is (str/includes? page "{:x 1}</textarea>")))

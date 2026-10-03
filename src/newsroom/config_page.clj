@@ -62,7 +62,7 @@
                 [:option {:value value :selected (= value (shown v))} text])]
 
     :keyword (if-let [options (:options field)]
-               [:select {:id nm :name nm}
+               [:select {:id nm :name nm "data-cfg-type-select" (when (= :type (:key field)) "")}
                 [:option {:value ""} "—"]
                 (for [o options :let [o (name o)]]
                   [:option {:value o :selected (= o (shown v))} o])
@@ -130,26 +130,53 @@
   (let [s (try (settings/read-source src) (catch Exception _ nil))]
     (or (some-> s sources/source-name) "New source")))
 
-(defn- source-entry [nm src errors fresh?]
+(defn- source-fields-of
+  "What a source of `type` shows under its type: what the type is, its
+  fields, and the keys no field shows."
+  [nm type src errors]
+  (list
+   (when-let [doc (:doc (sources/shape type))] [:p.doc doc])
+   (for [f (settings/source-fields type)]
+     (field-row f (settings/field-name nm (:key f)) (get src (name (:key f))) errors 1))
+   (extra-row nm src errors)))
+
+(defn- source-actions [nm]
+  (list
+   [:div.source-actions
+    [:button.test {:type "button" "data-cfg-test" nm} "Test source"]
+    (remove-button "source")]
+   [:div.test-result {:aria-live "polite"}]))
+
+(defn- source-entry
+  "A source there is, its type fixed."
+  [nm src errors]
   (let [type (some-> (get src "type") not-empty keyword)
-        shape (sources/shape type)
         mine? (fn [k] (str/starts-with? k (str nm ".")))]
     [:details.entry.source {"data-cfg-entry" ""
-                            :open (boolean (or fresh? (some mine? (keys errors))))}
-     [:summary [:span.title (if fresh? "New source" (source-title src))]
+                            :open (boolean (some mine? (keys errors)))}
+     [:summary [:span.title {"data-cfg-default" (source-title (dissoc src "name"))} (source-title src)]
       [:span.type (some-> type name)]]
      [:input {:type "hidden" :name (settings/field-name nm "type") :value (some-> type name)}]
-     (when-let [doc (:doc shape)] [:p.doc doc])
      (when-not (adapter? type)
        [:p.error "No adapter reads sources of type " (some-> type name)
         ". A plugin may provide it; the source fails until one does."])
-     (for [f (settings/source-fields type)]
-       (field-row f (settings/field-name nm (:key f)) (get src (name (:key f))) errors 1))
-     (extra-row nm src errors)
-     [:div.source-actions
-      [:button.test {:type "button" "data-cfg-test" nm} "Test source"]
-      (remove-button "source")]
-     [:div.test-result {:aria-live "polite"}]]))
+     (source-fields-of nm type src errors)
+     (source-actions nm)]))
+
+(defn- new-source-entry
+  "A source being added: its type picked first, which shows that type's
+  fields. Every type's are there, each in a fieldset that is disabled, so
+  neither shown nor sent, until its type is picked."
+  [nm types]
+  [:details.entry.source {"data-cfg-entry" "" :open true}
+   [:summary [:span.title {"data-cfg-default" "New source"} "New source"] [:span.type]]
+   (field-row {:key :type :required? true :type :keyword :options types
+               :doc "What kind of source it is; a plugin can add types of its own."}
+              (settings/field-name nm "type") nil {} 1)
+   (for [t types]
+     [:fieldset.type-fields {"data-cfg-type" (name t) :disabled true :hidden true}
+      (source-fields-of nm t {} {})])
+   (source-actions nm)])
 
 (defn- sources-section [tree errors]
   (let [types (settings/source-types)]
@@ -157,14 +184,10 @@
      [:p.doc "Where the news is gathered from. A plugin can add types of its own."]
      [:div.entries
       (for [[i src] (settings/indexed (get tree "sources"))]
-        (source-entry (settings/field-name :sources i) src errors false))]
-     (for [t types]
-       [:template {"data-cfg-token" (token 0) "data-cfg-type" (name t)}
-        (source-entry (settings/field-name :sources (token 0)) {"type" (name t)} {} true)])
-     [:div.add-source
-      [:select {"data-cfg-type-select" "" :aria-label "Type of source"}
-       (for [t types] [:option {:value (name t)} (name t)])]
-      [:button.add {:type "button" "data-cfg-add" ""} "Add source"]]]))
+        (source-entry (settings/field-name :sources i) src errors))]
+     [:template {"data-cfg-token" (token 0)}
+      (new-source-entry (settings/field-name :sources (token 0)) types)]
+     [:button.add {:type "button" "data-cfg-add" ""} "Add source"]]))
 
 (defn test-result
   "What testing a source found, for its entry: what's wrong with its
@@ -201,7 +224,7 @@
     [:details.entry.provider {"data-cfg-entry" ""
                               :open (boolean (or (nil? entry)
                                                  (some #(str/starts-with? % (str nm ".")) (keys errors))))}
-     [:summary [:span.title (or (not-empty (get entry "_alias")) "New provider")]
+     [:summary [:span.title {"data-cfg-default" "New provider"} (or (not-empty (get entry "_alias")) "New provider")]
       [:span.type (get entry "model")]]
      (field-row {:key :_alias :label "Alias" :type :string :required? true
                  :doc "What roles call it by. Named after a built-in, it only overrides what it sets."}

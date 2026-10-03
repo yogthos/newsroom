@@ -156,8 +156,7 @@ details.entry[open] { padding-bottom: 14px; }
 details.entry > summary { cursor: pointer; padding: 9px 0; display: flex; gap: 10px; align-items: baseline; }
 details.entry > summary .title { font-weight: 600; overflow-wrap: anywhere; }
 details.entry > summary .type { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.add-source { display: flex; gap: 8px; }
-.add-source select { width: auto !important; }
+fieldset.type-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
 .extra { margin: 4px 0 10px; }
 .extra summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 fieldset.plugin { border: 1px solid var(--rule); border-radius: 6px; margin: 0 0 14px; padding: 6px 14px 10px; }
