@@ -13,7 +13,8 @@
      :url \"https://www.reddit.com/r/worldnews/top.rss?t=day\"}
 
   Reddit lets a client read about one feed a minute without logging in, so
-  more than one reddit source in a run gets turned away. Subreddits listed
+  more than one reddit source in a run gets turned away, and so does trying
+  a source on the config page again within the minute. Subreddits listed
   in one source are read together, in a single request, which is the way
   to follow several.
 
@@ -89,15 +90,30 @@
   (let [s (:subreddit source)]
     (if (coll? s) (str/join "+" s) s)))
 
-(defn- read-feed [url opts]
+(defn- header [headers k]
+  (some (fn [[h v]] (when (= k (str/lower-case (name h))) (str v))) headers))
+
+(defn rate-limited
+  "What to say when reddit turned `source`'s feed at `url` away for asking
+  too soon: when it lets the next one through, from the headers it
+  answered with, and, for a source of one subreddit, that several go in one
+  source, since each source is a request of its own."
+  [source url headers]
+  (let [wait (some-> (or (header headers "x-ratelimit-reset") (header headers "retry-after"))
+                     str/trim parse-double long)]
+    (str "HTTP 429 from " url ": reddit lets a client read about one feed a minute without logging in, "
+         (if wait (str "so try again in " wait "s") "so try again in a minute")
+         (when-not (coll? (:subreddit source))
+           (str "; to read several subreddits, list them in one source, as :subreddit [\"a\" \"b\"]")))))
+
+(defn- read-feed [source url opts]
   (try
     (plugin/fetch-text url opts)
     (catch Exception e
-      (if (= 429 (:status (ex-data e)))
-        (throw (ex-info (str "HTTP 429 from " url ": reddit allows about one feed a minute, so"
-                             " put the subreddits in one source, as :subreddit [\"a\" \"b\"]")
-                        (ex-data e)))
-        (throw e)))))
+      (let [{:keys [status headers]} (ex-data e)]
+        (if (= 429 status)
+          (throw (ex-info (rate-limited source url headers) (ex-data e)))
+          (throw e))))))
 
 (plugin/defsettings
   {:doc "Nothing is needed here."
@@ -122,7 +138,7 @@
         url (or (:url source) (str "https://www.reddit.com/r/" (subreddits source) ".rss"))
         opts {:timeout-ms (:page-timeout-ms source 10000) :user-agent user-agent}]
     (plugin/emit! ctx (str "Reading " (plugin/source-name source)) {:url url})
-    (let [found (take (:limit source 10) (posts (plugin/parse-xml (read-feed url opts))))]
+    (let [found (take (:limit source 10) (posts (plugin/parse-xml (read-feed source url opts))))]
       (plugin/emit! ctx (str "Following " (count found) " links from " (plugin/source-name source)))
       (->> found
            (mapv #(future (story source ctx opts %)))

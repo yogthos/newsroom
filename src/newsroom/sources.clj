@@ -72,7 +72,8 @@
 (def default-user-agent "newsroom/0.4 (+https://github.com/yogthos/newsroom)")
 
 (defn fetch-text
-  "The body of `url` as text; throws on a status other than 2xx."
+  "The body of `url` as text; throws on a status other than 2xx, with the
+  response's :status and :headers in the ex-data."
   [url {:keys [timeout-ms user-agent]}]
   (let [timeout-ms (or timeout-ms 30000)
         resp (http/get url {:headers {"User-Agent" (or user-agent default-user-agent)
@@ -82,7 +83,8 @@
                             :throw-exceptions false})]
     (if (<= 200 (:status resp) 299)
       (str (:body resp))
-      (throw (ex-info (str "HTTP " (:status resp) " from " url) {:status (:status resp)})))))
+      (throw (ex-info (str "HTTP " (:status resp) " from " url)
+                      {:status (:status resp) :headers (:headers resp)})))))
 
 ;; --- rss ---------------------------------------------------------------------------
 

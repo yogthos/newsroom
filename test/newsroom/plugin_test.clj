@@ -238,8 +238,16 @@
 
 (deftest a-rate-limited-reddit-feed-says-what-to-do
   (plugin/load-all! "plugins" {})
-  (with-redefs [http/get (fn [_ _] {:status 429 :body ""})]
-    (let [e (try (sources/fetch-items {:type :reddit :subreddit "technology"} {:day "2026-09-30" :config {}})
-                 nil (catch Exception e e))]
-      (is (str/includes? (ex-message e) "429"))
-      (is (str/includes? (ex-message e) "one source")))))
+  (let [fail (fn [source headers]
+               (with-redefs [http/get (fn [_ _] {:status 429 :body "" :headers headers})]
+                 (try (sources/fetch-items source {:day "2026-09-30" :config {}})
+                      nil (catch Exception e (ex-message e)))))]
+    (testing "when to try again, from what reddit says"
+      (let [msg (fail {:type :reddit :subreddit ["technology" "worldnews"]} {"x-ratelimit-reset" "22"})]
+        (is (str/includes? msg "429"))
+        (is (str/includes? msg "try again in 22s"))
+        (is (not (str/includes? msg "one source")) "its subreddits are in one source already")))
+    (testing "a source of one subreddit is told several go in one"
+      (let [msg (fail {:type :reddit :subreddit "technology"} {})]
+        (is (str/includes? msg "try again in a minute"))
+        (is (str/includes? msg "one source"))))))
