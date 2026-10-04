@@ -30,6 +30,11 @@ a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset:
 .jump input { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--rule);
               background: var(--paper); color: var(--ink); border-radius: 4px; }
 .stepper { display: flex; justify-content: space-between; margin-bottom: 22px; }
+.spinner { display: inline-block; width: .85em; height: .85em; margin-right: .45em; vertical-align: -.1em;
+           border: 2px solid var(--rule); border-top-color: var(--accent); border-radius: 50%;
+           animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
 .run, .history { border-top: 1px solid var(--rule); padding-top: 14px; margin-top: 14px; }
 .sidebar h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: var(--muted); margin: 0 0 8px; }
 .sidebar h3 { font-size: 13px; margin: 12px 0 4px; }

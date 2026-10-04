@@ -184,7 +184,10 @@
             (is (str/includes? page "href=\"https://feeds.bbci.co.uk/news/world/rss.xml\""))
             (is (str/includes? page "Broken failed: &lt;bad&gt;"))
             (is (< (str/index-of page "The model is writing") (str/index-of page "Reading BBC World"))
-                "newest first"))
+                "newest first")
+            (is (str/includes? page "class=\"spinner\"") "a spinner while the desk is at work"))
+          (reset! pipeline/status {:state :done :day "2026-09-30" :items 42 :cited 30})
+          (is (not (str/includes? (ui/page st "2026-09-30") "class=\"spinner\"")) "and none once it is done")
           (finally (reset! pipeline/status before)))))))
 
 (defn- fires-on-status-change?

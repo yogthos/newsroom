@@ -132,25 +132,31 @@
       :cancelled [:p.muted "The digest for " label " was cancelled."]
       [:p.muted "Idle."])))
 
+(defn- with-spinner
+  "The status line `p` led by a spinner, saying the desk is at work."
+  [[tag & body]]
+  (into [tag [:span.spinner {:aria-hidden "true"}]] body))
+
 (defn- run-panel [{:keys [state day error items cited provider model sources events digest] :as st} today]
   (let [busy? (contains? #{:starting :gathering :sorting :preparing :analysing :researching} state)]
     [:section.run
      [:h2 "Desk"]
-     (if digest
-       (digest-panel st digest)
-       (case state
-       :starting [:p "Starting the run for " (sources/long-date day) "…"]
-       :gathering [:p "Gathering the news for " (sources/long-date day) "…"]
-       :sorting [:p "Sorting " items " reports into stories for " (sources/long-date day) "…"]
-       :preparing [:p "Reading and writing dossiers on " items " stories for " (sources/long-date day) "…"]
-       :researching [:p "Looking for precedents to " items " stories for " (sources/long-date day) "…"]
-       :analysing [:p "Analysing " items " items with " provider
-                   (when model [:span.muted " (" model ")"]) "…"]
-       :done [:p "Filed " [:a {:href (str "/day/" day)} (sources/long-date day)]
-              ": " items " sources, " cited " cited."]
-       :failed [:p.bad "The run for " (sources/long-date day) " failed: " error]
-       :cancelled [:p.muted "The run for " (sources/long-date day) " was cancelled."]
-       [:p.muted "Idle."]))
+     (cond-> (if digest
+               (digest-panel st digest)
+               (case state
+               :starting [:p "Starting the run for " (sources/long-date day) "…"]
+               :gathering [:p "Gathering the news for " (sources/long-date day) "…"]
+               :sorting [:p "Sorting " items " reports into stories for " (sources/long-date day) "…"]
+               :preparing [:p "Reading and writing dossiers on " items " stories for " (sources/long-date day) "…"]
+               :researching [:p "Looking for precedents to " items " stories for " (sources/long-date day) "…"]
+               :analysing [:p "Analysing " items " items with " provider
+                           (when model [:span.muted " (" model ")"]) "…"]
+               :done [:p "Filed " [:a {:href (str "/day/" day)} (sources/long-date day)]
+                      ": " items " sources, " cited " cited."]
+               :failed [:p.bad "The run for " (sources/long-date day) " failed: " error]
+               :cancelled [:p.muted "The run for " (sources/long-date day) " was cancelled."]
+               [:p.muted "Idle."]))
+       busy? with-spinner)
      (when (and (= :analysing state) (:writing st))
        (writing (:writing st)))
      (when (and busy? (seq sources))
