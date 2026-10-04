@@ -55,6 +55,9 @@ resolved last time they met. They are the ground for the projections. When
 you say where things are likely to lead, reason from how the precedent ran
 its course, cite it, and say how today's conditions differ from then and
 what that changes. Don't force a precedent onto a story it doesn't fit.
+Project over the timescale the precedents show, months or years where that's
+how long the last episode took to resolve, and separate what's likely in
+the coming weeks from where things lead over the longer run.
 
 ## Structure
 
