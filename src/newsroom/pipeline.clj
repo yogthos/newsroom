@@ -173,18 +173,27 @@
       (recur (remove empty? (map rest lists)) (into out (map first lists)))
       out)))
 
+(defn- by-outlet
+  "`items` split by the outlet each is credited to, in the order the outlets
+  first appear."
+  [items]
+  (let [groups (group-by :source items)]
+    (map groups (distinct (map :source items)))))
+
 (defn day-items
   "The items to analyse from each source's result: those published from
   the lookback to the day after (an outlet ahead of the local timezone has
   already dated today's news tomorrow), at most :max-items-per-source from
-  each, interleaved."
+  each outlet in it, interleaved. A source that reads many outlets, like a
+  feed reader or a search credited to outlets, gives each its own share."
   [results config day]
   (let [from (minus-days day (:lookback-days config 1))
-        to (plus-days day 1)]
+        to (plus-days day 1)
+        cap (:max-items-per-source config 12)]
     (round-robin
-     (map (fn [{:keys [items]}]
-            (take (:max-items-per-source config 12) (feed/recent items from to)))
-          results))))
+     (for [{:keys [items]} results
+           outlet (by-outlet (feed/recent items from to))]
+       (take cap outlet)))))
 
 ;; --- the run -----------------------------------------------------------------------
 

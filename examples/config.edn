@@ -28,9 +28,11 @@
  ;; Undated items are always kept.
  :lookback-days 1
 
- ;; The most items taken from one source, and in all. The overall cap keeps
- ;; the most widely carried stories (see :story-threshold), and among equals
- ;; sources are taken in turn, so it trims every source evenly.
+ ;; The most items taken from one outlet in a source, and in all. A source
+ ;; that reads many outlets, like a feed reader or a search crediting its
+ ;; results to outlets, gives each its own share. The overall cap keeps the
+ ;; most widely carried stories (see :story-threshold), and among equals
+ ;; outlets are taken in turn, so it trims every one evenly.
  :max-items-per-source 12
  :max-items 180
 
