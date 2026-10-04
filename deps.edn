@@ -11,8 +11,8 @@
         ;; outbound HTTP: feeds, web search, the LLM
         jolt-lang/http-client
         {:git/url "https://github.com/jolt-lang/http-client"
-         :git/tag "v0.0.17"
-         :git/sha "77d7e310a1aab2c7d5ecc9f6cc10f77b7a7f23ba"}
+         :git/tag "v0.1.0"
+         :git/sha "d99af98cc97dcb2e4afc3eee142166585a26b859"}
 
         ;; java.time shim; data.json and date handling need it
         jolt-lang/time

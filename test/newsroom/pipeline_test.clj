@@ -523,6 +523,103 @@
         "a rate decision and an election are two stories, not one")
     (is (nil? (:also (first (:sources (store/day (:store c) "2026-09-30"))))))))
 
+(deftest a-second-round-of-research-grounds-the-day-in-history
+  (let [prompts (atom [])
+        searches (atom [])
+        c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (swap! prompts conj p)
+                       (if (str/starts-with? p "You find the historical background")
+                         {:content "{\"queries\": [\"history of central bank rate pause cycles\"]}" :model "fake"}
+                         {:content "# Today\n\n## Overview\n\nToday [1] echoes [2]: the last time this happened, markets took months to settle."
+                          :model "fake"}))))
+              (assoc-in [:config :precedents] 3)
+              (assoc :search (fn [source _]
+                               (swap! searches conj source)
+                               (m/sp {:items [{:title "The Fed's long pause of 2015"
+                                               :url "https://reuters.com/2015-fed-pause"
+                                               :source "Web search"
+                                               :summary "When the Fed paused in 2015 after years of near-zero rates, ..."
+                                               :published "16 December 2015"}]
+                                      :source "Precedent search"}))))
+        st (:store c)]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (testing "the model picks the searches from the day's stories"
+      (is (= 2 (count @prompts)) "one call for the queries, one for the briefing")
+      (is (str/includes? (first @prompts) "[1] Story 1") "it sees the day's stories")
+      (is (= ["history of central bank rate pause cycles"] (:queries (first @searches))))
+      (is (= :web-search (:type (first @searches)))))
+    (testing "the precedents join the day's sources, after today's, marked apart"
+      (let [prompt (second @prompts)]
+        (is (str/includes? prompt "[1] Story 1 (Fixture)"))
+        (is (str/includes? prompt "[2] The Fed's long pause of 2015"))
+        (is (< (str/index-of prompt "[1] Story 1") (str/index-of prompt "Historical precedents")
+               (str/index-of prompt "[2] The Fed's long pause of 2015"))
+            "a note introduces them between today's sources and theirs")))
+    (testing "they are stored, citeable and remembered"
+      (let [day (store/day st "2026-09-30")]
+        (is (= 2 (count (:sources day))))
+        (is (= "https://reuters.com/2015-fed-pause" (:url (second (:sources day)))))
+        (is (= "2026-09-30/1" (:story (first (:sources day)))) "today's stories keep their storylines")
+        (is (nil? (:story (second (:sources day)))) "a precedent starts no storyline")
+        (is (= [1 2] (map :n (:cited day))))
+        (is (str/includes? (:markdown day) "[[2]](https://reuters.com/2015-fed-pause)")))
+      (is (some #(str/includes? (:text %) "1 historical precedent")
+                (:events @pipeline/status))))))
+
+(deftest precedent-research-off-or-empty-costs-nothing
+  (testing "nil turns the round off"
+    (let [prompts (atom [])
+          searches (atom [])
+          c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]
+                     (fn [_ req] (swap! prompts conj (-> req :messages first :content))
+                       {:content "x [1]" :model "fake"}))
+                (assoc-in [:config :precedents] nil)
+                (assoc :search (fn [source _] (swap! searches conj source) (m/sp {:items [] :source "x"}))))]
+      (m/? (pipeline/run-task c "2026-09-30"))
+      (is (= 1 (count @prompts)) "no call for queries")
+      (is (empty? @searches))))
+  (testing "an answer with no queries in it searches nothing"
+    (let [searches (atom [])
+          c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]
+                     (fn [_ req]
+                       (let [p (-> req :messages first :content)]
+                         (if (str/starts-with? p "You find the historical background")
+                           {:content "I see no instructive past here." :model "fake"}
+                           {:content "x [1]" :model "fake"}))))
+                  (assoc-in [:config :precedents] 3)
+                  (assoc :search (fn [source _] (swap! searches conj source) (m/sp {:items [] :source "x"}))))]
+      (m/? (pipeline/run-task c "2026-09-30"))
+      (is (empty? @searches))
+      (is (= 1 (count (:sources (store/day (:store c) "2026-09-30")))))))
+  (testing "a failed search is logged and the day is filed without precedents"
+    (let [c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]
+                     (fn [_ req]
+                       (let [p (-> req :messages first :content)]
+                         (if (str/starts-with? p "You find the historical background")
+                           {:content "{\"queries\": [\"q\"]}" :model "fake"}
+                           {:content "x [1]" :model "fake"}))))
+                  (assoc-in [:config :precedents] 3)
+                  (assoc :search (fn [_ _] (m/sp {:error "web search answered 429"}))))]
+      (m/? (pipeline/run-task c "2026-09-30"))
+      (is (= 1 (count (:sources (store/day (:store c) "2026-09-30")))))
+      (is (some #(str/includes? (:text %) "search for precedents failed")
+                (filter #(= :error (:level %)) (:events @pipeline/status)))))
+    (let [calls (atom 0)
+          c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]
+                     (fn [_ req]
+                       (let [p (-> req :messages first :content)]
+                         (if (str/starts-with? p "You find the historical background")
+                           (do (swap! calls inc) (throw (ex-info "DeepSeek 429: rate limited" {})))
+                           {:content "x [1]" :model "fake"}))))
+                  (assoc-in [:config :precedents] 3))]
+      (m/? (pipeline/run-task c "2026-09-30"))
+      (is (= 1 @calls) "the query round ran and failed")
+      (is (= 1 (count (:sources (store/day (:store c) "2026-09-30")))) "the day is still filed")
+      (is (some #(str/includes? (:text %) "precedent research failed")
+                (filter #(= :error (:level %)) (:events @pipeline/status)))))))
+
 (deftest source-health-survives-the-run
   (let [c (ctx [{:type ::fixture :name "A" :ns [1]}
                 {:type ::broken :name "Broken"}]

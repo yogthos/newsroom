@@ -47,6 +47,7 @@
       vector text,
       story text,
       weight real,
+      precedent integer not null default 0,
       cited integer not null default 0,
       primary key (day, n))"
    "create table if not exists source_health (
@@ -103,10 +104,11 @@
        (catch Exception _ nil)))
 
 (defn- coverage-row [day cited {:keys [n story] :as source}]
-  [day n story (news/outlets source) (if (contains? cited n) 1 0)])
+  (when-not (:precedent source)
+    [day n story (news/outlets source) (if (contains? cited n) 1 0)]))
 
 (defn- insert-coverage! [conn rows]
-  (doseq [row rows]
+  (doseq [row (remove nil? rows)]
     (jdbc/execute! conn (into ["insert or replace into coverage (day, n, story, outlets, cited)
                                 values (?, ?, ?, ?, ?)"]
                               row))))
@@ -117,7 +119,8 @@
   (when (and (nil? (jdbc/fetch-one conn "select 1 as x from coverage limit 1"))
              (jdbc/fetch-one conn "select 1 as x from sources limit 1"))
     (jdbc/atomic conn
-      (insert-coverage! conn (for [r (jdbc/fetch conn "select day, n, url, source, summary, also, story, cited from sources")]
+      (insert-coverage! conn (for [r (jdbc/fetch conn "select day, n, url, source, summary, also, story, cited, precedent from sources")
+                                   :when (not= 1 (:precedent r))]
                                (coverage-row (:day r) (if (= 1 (:cited r)) #{(:n r)} #{})
                                              {:n (:n r) :story (:story r) :url (:url r) :source (:source r)
                                               :summary (:summary r)
@@ -131,7 +134,8 @@
     (doseq [stmt schema] (jdbc/execute! conn stmt))
     ;; databases from before these columns have no place for them
     (add-column! conn "briefings" "tldr" "text")
-    (doseq [[column ddl] [["also" "text"] ["vector" "text"] ["story" "text"] ["weight" "real"]]]
+    (doseq [[column ddl] [["also" "text"] ["vector" "text"] ["story" "text"] ["weight" "real"]
+                          ["precedent" "integer not null default 0"]]]
       (add-column! conn "sources" column ddl))
     (jdbc/execute! conn "create index if not exists sources_story on sources (story)")
     (jdbc/execute! conn "create index if not exists coverage_story on coverage (story)")
@@ -163,13 +167,13 @@
         (jdbc/execute! conn ["insert into briefings (day, markdown, model, provider, tldr, created_at)
                               values (?, ?, ?, ?, ?, ?)"
                              day markdown model provider tldr (now)])
-        (doseq [{:keys [n title url source summary published also story weight] v :vector} sources]
+        (doseq [{:keys [n title url source summary published also story weight] v :vector precedent? :precedent} sources]
           (jdbc/execute! conn ["insert into sources (day, n, title, url, source, summary, published, also,
-                                                     vector, story, weight, cited)
-                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                                     vector, story, weight, precedent, cited)
+                               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                                day n title url source summary published
                                (when (seq also) (pr-str also))
-                               (embed/encode v) story weight
+                               (embed/encode v) story weight (if precedent? 1 0)
                                (if (contains? cited n) 1 0)]))))
     nil))
 
@@ -184,7 +188,7 @@
   (cond-> {:n (long (:n r)) :title (:title r) :url (:url r) :source (:source r)
            :summary (:summary r) :published (:published r)}
     (:also r) (assoc :also (read-also (:also r)))
-    (:story r) (assoc :story (:story r))
+    (= 1 (:precedent r)) (assoc :precedent true)    (:story r) (assoc :story (:story r))
     (:weight r) (assoc :weight (double (:weight r)))))
 
 (defn day
@@ -214,10 +218,10 @@
    (with-db [conn store]
      (mapv (fn [r] (cond-> (assoc (row->source r) :day (:day r) :cited? (= 1 (:cited r)))
                      (and vectors? (:vector r)) (assoc :vector (embed/decode (:vector r)))))
-           (jdbc/fetch conn [(str "select day, n, title, url, source, summary, published, also, story, weight, cited"
-                                  (when vectors? ", vector")
-                                  " from sources where day >= ? and day <= ? order by day, n")
-                             from to])))))
+            (jdbc/fetch conn [(str "select day, n, title, url, source, summary, published, also, story, weight, precedent, cited"
+                                   (when vectors? ", vector")
+                                   " from sources where day >= ? and day <= ? order by day, n")
+                              from to])))))
 
 (defn archive
   "The days that have a briefing, newest first, each with its standfirst
@@ -289,7 +293,7 @@
   [store from to]
   (with-db [conn store]
     (mapv :day (jdbc/fetch conn ["select distinct day from sources
-                                  where story is null and day >= ? and day <= ? order by day" from to]))))
+                                  where story is null and precedent = 0 and day >= ? and day <= ? order by day" from to]))))
 
 (defn set-storylines!
   "Store the storyline and embedding of each of a day's `sources`, in the

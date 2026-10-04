@@ -133,15 +133,16 @@
       [:p.muted "Idle."])))
 
 (defn- run-panel [{:keys [state day error items cited provider model sources events digest] :as st} today]
-  (let [busy? (contains? #{:starting :gathering :analysing} state)]
+  (let [busy? (contains? #{:starting :gathering :analysing :researching} state)]
     [:section.run
      [:h2 "Desk"]
      (if digest
        (digest-panel st digest)
        (case state
-       :starting [:p "Starting the run for " (sources/long-date day) "…"]
-       :gathering [:p "Gathering the news for " (sources/long-date day) "…"]
-       :analysing [:p "Analysing " items " items with " provider
+        :starting [:p "Starting the run for " (sources/long-date day) "…"]
+        :gathering [:p "Gathering the news for " (sources/long-date day) "…"]
+        :researching [:p "Researching the history behind " items " stories for " (sources/long-date day) "…"]
+        :analysing [:p "Analysing " items " items with " provider
                    (when model [:span.muted " (" model ")"]) "…"]
        :done [:p "Filed " [:a {:href (str "/day/" day)} (sources/long-date day)]
               ": " items " sources, " cited " cited."]

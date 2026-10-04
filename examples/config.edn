@@ -74,6 +74,14 @@
  ;; notes off.
  :story-notes 12
 
+ ;; Before the briefing is written, a second round of research grounds it
+ ;; in history: a model is shown the day's stories and asked which have a
+ ;; past worth consulting; its search queries are run, and up to this many
+ ;; earlier events of the same kind join the day's sources as precedents,
+ ;; to ground the analysis and be cited like any other. nil turns the
+ ;; round off.
+ :precedents 6
+
  ;; Digests written from the stored days: a week's once the week is over
  ;; (weeks run Monday to Sunday), a month's once the month is. Each ranks
  ;; the storylines of the period by their coverage and says which are

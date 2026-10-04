@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+Before the analyst writes the briefing, a second round of research grounds it
+in history: a model is shown the day's stories and asked which of them have a
+past worth consulting, its search queries are run through web search, and the
+earlier events it finds join the day's sources as precedents — numbered after
+today's, introduced by a note, cited like any other, and stored with the day.
+
+### Added
+
+- **Historical precedents.** `:precedents` (default 6) turns the round on. The
+  precedents take no part in the storylines or their ranking: they are
+  background, not stories that ran. A failed search or query call is logged and
+  the day is analysed without precedents rather than lost. Blank on the config
+  page turns the round off.
+
 ## v0.5.0 — 3 October 2026
 
 Everything that can change while newsroom runs now lives in its database and

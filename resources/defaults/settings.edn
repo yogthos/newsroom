@@ -33,6 +33,14 @@
  ;; as one outlet. nil turns collapsing off
  :dupe-threshold 0.62
 
+ ;; before the analyst writes, a second round of research: a model is
+ ;; shown the day's stories and asked which of them have a past worth
+ ;; consulting; its search queries are run, and up to this many earlier
+ ;; events of the same kind join the day's sources as precedents, to
+ ;; ground the analysis and be cited like any other. nil turns the round
+ ;; off
+ :precedents 6
+
  ;; a story is followed from day to day: an item whose embedding is this
  ;; close to the sources of a story from the last :trend-days continues it.
  ;; Items are ranked by how widely and how long their story has run, the

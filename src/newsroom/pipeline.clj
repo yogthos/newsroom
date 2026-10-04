@@ -7,6 +7,12 @@
   A run is one cancellable task. Cancelling it interrupts whatever fetch or
   model call is in flight and stores nothing. Only one run goes at a time.
 
+  Before the analyst writes, a second round of research can ground the day
+  in history: the model is shown the day's stories and asked which have a
+  past worth consulting, its queries are run through web search, and the
+  results join the day's sources, marked as precedents, to be cited like
+  any other and remembered with the day.
+
   The weekly and monthly digests are runs too: they read the stored days of
   a period instead of gathering, rank its storylines (newsroom.trends) and
   have the analyst write them up. The schedule writes each one once its
@@ -26,6 +32,7 @@
             [newsroom.llm.providers :as providers]
             [newsroom.news :as news]
             [newsroom.notes :as notes]
+            [newsroom.precedents :as precedents]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.trends :as trends]))
@@ -301,6 +308,71 @@
                                  (if (= 1 n) " day" " days") " stored before storylines were kept")}))
       n)))
 
+(defn- search-source
+  "Task: the items of a web-search `source`, read as gather-one reads any
+  source. The search is `ctx`'s :search when it has one (a test's), else
+  the real one. Fails when the search fails; a cancel propagates."
+  [{:keys [run-id] :as ctx} source]
+  (m/sp
+    (let [search (or (:search ctx) gather-one)
+          result (m/? (search source ctx))]
+      (cond
+        (:error result) (throw (ex-info (:error result) {}))
+        :else (do (log! run-id {:text (str (count (:items result)) " results for the "
+                                           (count (:queries source)) " precedent queries")})
+                  (vec (:items result)))))))
+
+(defn- precedents-task
+  "Task: the second round of research. The analyst (or whichever model the
+  config gives the job) is shown the day's numbered stories and asked which
+  of them have a past worth consulting; its queries are run through web
+  search and the results come back marked as precedents, capped at
+  :precedents of them. A failed query call or search is logged and the day
+  is analysed without precedents rather than lost; only a cancel
+  propagates. nil when the round is off or finds nothing."
+  [{:keys [config store run-id] :as ctx} numbered]
+  (m/sp
+    (let [max-n (:precedents config)]
+      (when (pos? (or max-n 0))
+        (let [max-queries 5
+              llm-config (providers/role-llm config :analyst)
+              _ (update-status! run-id assoc :state :researching)
+              _ (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
+                                         ") which of the day's stories have a past worth consulting")})
+              chat (or (:chat ctx) llm/chat)
+              reply (try (m/? (m/via m/blk (chat llm-config {:messages [{:role "user"
+                                                                          :content (precedents/queries-prompt numbered max-queries)}]
+                                                                :on-delta (fn [_])})))
+                          (catch Throwable e
+                            (if (interrupted? e)
+                              (throw e)
+                              (do (log! run-id {:text (str "The precedent research failed: "
+                                                           (or (ex-message e) (str e)))
+                                                :level :error})
+                                  nil))))
+              queries (when reply
+                        (take max-queries (precedents/parse-queries (str/trim (str (:content reply))))))]
+          (if (empty? queries)
+            (do (log! run-id {:text "The day's stories have no past worth consulting"})
+                nil)
+            (let [source (precedents/search-source queries 6)
+                  items (try (m/? (search-source ctx source))
+                             (catch Throwable e
+                               (if (interrupted? e)
+                                 (throw e)
+                                 (do (log! run-id {:text (str "The search for precedents failed: "
+                                                              (or (ex-message e) (str e)))
+                                                  :level :error})
+                                     nil))))
+                  found (take (or max-n 6) (precedents/mark (or items []) (sources/source-name source)))]
+              (if (empty? found)
+                (do (log! run-id {:text "No historical precedent found for the day's stories"})
+                    nil)
+                (do (log! run-id {:text (str "Found " (count found) " historical "
+                                             (if (= 1 (count found)) "precedent" "precedents")
+                                             " for the day's stories") :level :ok})
+                    (vec found))))))))))
+
 (defn- follow-stories
   "The items linked to the storylines of the last :trend-days (7 by
   default) before `day`, then ranked by how widely and how long their
@@ -394,16 +466,20 @@
                 (log! run-id {:text (str "Followed " (count followed) " stories from earlier days, the longest"
                                          " in the news for " (apply max (map :days followed)) " days")}))
             ;; a story that starts today is named by its own day and number
-            numbered (->> ranked (take (:max-items config 80)) news/cite
-                          (mapv (fn [s] (assoc s :story (or (:story s) (str day "/" (:n s)))))))
-            _ (when (empty? numbered)
+            ranked (->> ranked (take (:max-items config 80)) news/cite
+                        (mapv (fn [s] (assoc s :story (or (:story s) (str day "/" (:n s)))))))
+            _ (when (empty? ranked)
                 (throw (ex-info (if (seq gathered)
                                   (str "every story gathered was already in the briefings up to "
                                        (sources/long-date (:day earlier)))
                                   "no items were gathered from any source")
                                 {})))
-            _ (log! run-id {:text (str (count numbered) " stories to analyse after dropping"
+            _ (log! run-id {:text (str (count ranked) " stories to analyse after dropping"
                                        " duplicates and older items")})
+            ;; the second round of research: historical precedents for the
+            ;; day's stories, numbered after them, cited like any other
+            history (m/? (precedents-task ctx ranked))
+            numbered (news/cite (into ranked (mapv (fn [p] (assoc p :precedent true)) (or history []))))
             llm-config (providers/role-llm config :analyst)
             established (some-> (:markdown earlier) news/overview)
             _ (when established

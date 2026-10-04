@@ -83,7 +83,12 @@
               :doc "An earlier day's coverage counts half as much every this many days."}
              {:key :story-notes :type :int :nullable? true :min 1 :default 12
               :doc (str "The most dated facts kept in the running note on each storyline a briefing cites. "
-                        "The notes cost a model call a day; blank turns them off.")}]}
+                        "The notes cost a model call a day; blank turns them off.")}
+             {:key :precedents :type :int :nullable? true :min 0 :default 6
+              :doc (str "Before the briefing is written, a model is asked which of the day's stories have a "
+                        "past worth consulting and its search queries are run; up to this many earlier "
+                        "events of the same kind join the sources as precedents, to ground the analysis. "
+                        "The round costs a model call and some searches; blank turns it off.")}]}
    {:title "Digests"
     :fields [{:key :digests :type :keywords :options [:week :month] :default [:week :month]
               :doc (str "The digests written once a week (Monday to Sunday) or a month is over, ranking "

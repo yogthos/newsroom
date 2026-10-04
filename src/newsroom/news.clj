@@ -218,7 +218,15 @@
        (when-not (str/blank? (:summary s)) (str "\n" (:summary s)))))
 
 (defn- source-block [sources]
-  (str/join "\n\n" (map source-line sources)))
+  (let [today (remove :precedent sources)
+        precedents (filterv :precedent sources)]
+    (str/join "\n\n" (concat (map source-line today)
+                             (when (seq precedents)
+                               [(str "Historical precedents: the sources below this line are earlier "
+                                     "events of the same kind as today's stories, found by web search. "
+                                     "Use them to ground the analysis — what happened last time, how long "
+                                     "it took, what it led to — and cite them as sources like any other.")])
+                             (map source-line precedents)))))
 
 (def ^:private overview-chars
   "About how much of the last briefing's overview the model gets: a few
