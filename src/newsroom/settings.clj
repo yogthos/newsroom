@@ -91,6 +91,31 @@
                         "next, and picks the ones that show how today's may develop. They join the sources "
                         "as precedents, for the analyst to ground its projections in and cite. This is the "
                         "most searches it may run; blank turns the research off.")}]}
+   {:title "Analysis"
+    :fields [{:key :group-stories :type :boolean :default true
+              :doc (str "Before the briefing, the model sorts the day's reports into stories, the reports on one "
+                        "event from different sides together, and gives each an importance and a status. A "
+                        "story's reports share its storyline and are ranked together, its coverage summed and "
+                        "scaled by its importance, and reports that aren't news are left out. One model call.")}
+             {:key :dossier-stories :type :int :nullable? true :min 1 :default 20
+              :doc (str "How many of the day's top stories get a dossier, written from their reports alone: "
+                        "the salient facts with their citations, the actors' positions and interests, where "
+                        "accounts disagree, how outlets frame it, what's missing, the forces it shows and why "
+                        "it matters. The briefing is written from the dossiers. A call for every four stories; "
+                        "blank turns the dossiers off, and the map and the gap searches with them.")}
+             {:key :read-articles :type :int :min 0 :default 3
+              :doc (str "How many reports of each dossier's story are read in full from the outlet's page, "
+                        "one an outlet, rather than from the feed's summary. A page behind a paywall keeps "
+                        "its summary. 0 reads none.")}
+             {:key :connect-stories :type :boolean :default true
+              :doc (str "From the dossiers, the model maps the trends running through the day, following each "
+                        "from the days before, and the links of cause and effect between the stories. The "
+                        "briefing builds on the map and its graph is drawn from the links, and the trends "
+                        "guide the precedent research and the digests. One model call.")}
+             {:key :gap-searches :type :int :nullable? true :min 1 :default 6
+              :doc (str "The dossiers note what the reports leave out, with a search that could find it. This "
+                        "is how many of those searches are run; what they find joins the sources. Blank "
+                        "turns them off.")}]}
    {:title "Digests"
     :fields [{:key :digests :type :keywords :options [:week :month] :default [:week :month]
               :doc (str "The digests written once a week (Monday to Sunday) or a month is over, ranking "
@@ -107,17 +132,20 @@
    {:title "Prompts"
     :fields [{:key :prompt :type :text :rows 18 :template? true
               :doc (str "What the model is told to write the briefing, a Selmer template: {{date}} is the day, "
-                        "{{sources}} the numbered sources and {{previous}} the last briefing's overview, and "
+                        "{{sources}} the numbered sources, {{previous}} the last briefing's overview, {{analysis}} the "
+                        "desk's dossiers and map, {{graph}} true when the graph is drawn for the analyst, and "
                         "{% if previous %}...{% endif %} shows text only when there is one. Without a place for "
-                        "them, the sources are appended and the overview goes just before them. "
+                        "them, the sources are appended and the overview and the analysis go just before them. "
                         "Blank is the default.")}
              {:key :digest-prompt :type :text :rows 12 :template? true
               :doc (str "The weekly and monthly digests' prompt, a Selmer template: {{period}}, {{days}}, "
-                        "{{stories}} and {{previous}}, the last digest's overview, are filled in. "
+                        "{{stories}}, {{previous}}, the last digest's overview, and {{trends}}, the trends the desk "
+                        "followed through the period, are filled in. "
                         "Blank is the default.")}
              {:key :precedent-prompt :type :text :rows 12 :template? true
               :doc (str "What the researcher is told when it looks for precedents, a Selmer template: {{date}} "
-                        "is the day, {{stories}} the day's numbered stories, {{searches}} and {{rounds}} what "
+                        "is the day, {{stories}} the day's numbered stories, {{trends}} the trends the desk found in "
+                        "them, {{searches}} and {{rounds}} what "
                         "it may spend. Its answers are read as JSON, {\"queries\": [...]} to search and "
                         "{\"precedents\": [...]} to pick, so keep the default's shapes in it. "
                         "Blank is the default.")}]}])
@@ -149,6 +177,9 @@
     :doc "Keeps the story notes, routine extraction a cheaper model does well; the analyst when blank."}
    {:key :research :type :keyword
     :doc "Searches for the precedents and picks them; the analyst when blank."}
+   {:key :desk :type :keyword
+    :doc (str "Sorts the day's reports into stories, writes the dossiers and maps the trends and links "
+              "between them; the analyst when blank.")}
    {:key :default :type :keyword :doc "Any role that names no provider of its own."}])
 
 (def scalar-keys

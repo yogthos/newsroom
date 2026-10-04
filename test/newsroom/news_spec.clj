@@ -14,7 +14,7 @@
   values, so duplicates are common: a story is keyed by a small number, and
   the same story comes back with a fragment or tracking parameters on it."
   (:require [clojure.string :as str]
-            [newsroom.news :refer [canonical-url dedupe-items unseen-items overview cite render-prompt has-var? place-vars
+            [newsroom.news :refer [canonical-url dedupe-items unseen-items overview cite render-prompt render-desk-prompt has-var? place-vars
                                    citations link-citations briefing collapse-similar told outlets tldr
                                    valid-day? adjacent-days]]
             [newsroom.template :as template]
@@ -47,6 +47,8 @@
 (ann overview       [String -> (Opt String)])
 (ann cite           [(List Item) -> (List Source)])
 (ann render-prompt  [Template String (List Source) (Opt String) -> String])
+(ann render-desk-prompt [Template String (List Source) (Opt String)
+                         (Opt {:analysis (Opt String), :graph? Bool}) -> String])
 (ann has-var?       [String String -> Bool])
 (ann place-vars     [String (List String) String -> String])
 (ann citations      [String -> (Vec Nat)])

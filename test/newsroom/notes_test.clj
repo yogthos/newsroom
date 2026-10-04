@@ -82,3 +82,19 @@
   (is (= [{:day "2026-09-29" :title "Powell hints" :url "https://old.example.com/2"
            :source "Wire" :fact "Powell hinted at a cut."}]
          (notes/facts-between fed-note "2026-09-28" "2026-10-04"))))
+
+(deftest a-note-keeps-where-the-story-stands
+  (let [cs (notes/candidates today [] #{"fed"})
+        {:keys [prompt ids]} (notes/compaction-prompt "2026-09-30" cs {"fed" (assoc fed-note :status "static")} 12
+                                                      {"fed" [{:fact "Rates held at 4%." :cites [1 2]}]})
+        answer (fn [status]
+                 (str "{\"storylines\": [{\"id\": \"fed\", \"summary\": \"Held.\", \"status\": " status ","
+                      " \"facts\": [{\"day\": \"2026-09-30\", \"fact\": \"Held at 4%.\", \"cite\": 1}]}]}"))]
+    (is (str/includes? prompt "Status: static\n") "the note's status is shown")
+    (is (str/includes? prompt "The desk's facts from today's reports:\n- Rates held at 4%. [1, 2]"))
+    (is (= "escalating" (:status ((notes/apply-answer "2026-09-30" cs {"fed" fed-note} ids (answer "\"Escalating\"") 12) "fed"))))
+    (is (= "static" (:status ((notes/apply-answer "2026-09-30" cs {"fed" (assoc fed-note :status "static")} ids
+                                                  (answer "\"boiling\"") 12) "fed")))
+        "a status that isn't one keeps the last")
+    (is (str/includes? (notes/background {"fed" (assoc fed-note :status "escalating")} today identity)
+                       "### The Fed's pause (escalating)\n"))))

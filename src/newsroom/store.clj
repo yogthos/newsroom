@@ -50,6 +50,7 @@
       precedent integer not null default 0,
       note text,
       informs text,
+      gap text,
       cited integer not null default 0,
       primary key (day, n))"
    "create table if not exists source_health (
@@ -75,6 +76,15 @@
       first_day text,
       last_day text not null,
       updated_at text not null)"
+   "create table if not exists day_trends (
+      day text not null,
+      idx integer not null,
+      thread text not null,
+      name text not null,
+      direction text,
+      summary text,
+      stories text,
+      primary key (day, idx))"
    "create table if not exists digests (
       kind text not null,
       period text not null,
@@ -106,7 +116,9 @@
        (catch Exception _ nil)))
 
 (defn- coverage-row [day cited {:keys [n story] :as source}]
-  (when-not (:precedent source)
+  ;; a precedent was background, and a gap search's result was found for a
+  ;; story rather than reported on it
+  (when-not (or (:precedent source) (:gap source))
     [day n story (news/outlets source) (if (contains? cited n) 1 0)]))
 
 (defn- insert-coverage! [conn rows]
@@ -137,9 +149,12 @@
     ;; databases from before these columns have no place for them
     (add-column! conn "briefings" "tldr" "text")
     (doseq [[column ddl] [["also" "text"] ["vector" "text"] ["story" "text"] ["weight" "real"]
-                          ["precedent" "integer not null default 0"] ["note" "text"] ["informs" "text"]]]
+                          ["precedent" "integer not null default 0"] ["note" "text"] ["informs" "text"]
+                          ["gap" "text"]]]
       (add-column! conn "sources" column ddl))
+    (add-column! conn "story_notes" "status" "text")
     (jdbc/execute! conn "create index if not exists sources_story on sources (story)")
+    (jdbc/execute! conn "create index if not exists day_trends_thread on day_trends (thread)")
     (jdbc/execute! conn "create index if not exists coverage_story on coverage (story)")
     (backfill-coverage! conn)
     (jdbc/execute! conn "insert or ignore into standfirsts (day, tldr)
@@ -169,15 +184,15 @@
         (jdbc/execute! conn ["insert into briefings (day, markdown, model, provider, tldr, created_at)
                               values (?, ?, ?, ?, ?, ?)"
                              day markdown model provider tldr (now)])
-        (doseq [{:keys [n title url source summary published also story weight note informs]
+        (doseq [{:keys [n title url source summary published also story weight note informs gap]
                  v :vector precedent? :precedent} sources]
           (jdbc/execute! conn ["insert into sources (day, n, title, url, source, summary, published, also,
-                                                     vector, story, weight, precedent, note, informs, cited)
-                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                                     vector, story, weight, precedent, note, informs, gap, cited)
+                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                                day n title url source summary published
                                (when (seq also) (pr-str also))
                                (embed/encode v) story weight (if precedent? 1 0)
-                               note (when (seq informs) (pr-str (vec informs)))
+                               note (when (seq informs) (pr-str (vec informs))) gap
                                (if (contains? cited n) 1 0)]))))
     nil))
 
@@ -196,6 +211,7 @@
     (= 1 (:precedent r)) (assoc :precedent true)
     (:note r) (assoc :note (:note r))
     (:informs r) (assoc :informs (edn/read-string (:informs r)))
+    (:gap r) (assoc :gap (:gap r))
     (:weight r) (assoc :weight (double (:weight r)))))
 
 (defn day
@@ -225,7 +241,7 @@
    (with-db [conn store]
      (mapv (fn [r] (cond-> (assoc (row->source r) :day (:day r) :cited? (= 1 (:cited r)))
                      (and vectors? (:vector r)) (assoc :vector (embed/decode (:vector r)))))
-           (jdbc/fetch conn [(str "select day, n, title, url, source, summary, published, also, story, weight, precedent, note, informs, cited"
+           (jdbc/fetch conn [(str "select day, n, title, url, source, summary, published, also, story, weight, precedent, note, informs, gap, cited"
                                   (when vectors? ", vector")
                                   " from sources where day >= ? and day <= ? order by day, n")
                              from to])))))
@@ -327,17 +343,18 @@
   [store notes]
   (with-db [conn store]
     (jdbc/atomic conn
-      (doseq [[story {:keys [title summary facts first-day last-day]}] notes]
+      (doseq [[story {:keys [title summary status facts first-day last-day]}] notes]
         (jdbc/execute! conn ["insert or replace into story_notes
-                                (story, title, summary, facts, first_day, last_day, updated_at)
-                              values (?, ?, ?, ?, ?, ?, ?)"
-                             story title summary (pr-str (vec facts)) first-day last-day (now)]))))
+                                (story, title, summary, status, facts, first_day, last_day, updated_at)
+                              values (?, ?, ?, ?, ?, ?, ?, ?)"
+                             story title summary status (pr-str (vec facts)) first-day last-day (now)]))))
   nil)
 
 (defn- row->note [r]
-  {:story (:story r) :title (:title r) :summary (:summary r)
-   :facts (edn/read-string (:facts r))
-   :first-day (:first_day r) :last-day (:last_day r)})
+  (cond-> {:story (:story r) :title (:title r) :summary (:summary r)
+           :facts (edn/read-string (:facts r))
+           :first-day (:first_day r) :last-day (:last_day r)}
+    (:status r) (assoc :status (:status r))))
 
 (defn all-notes
   "Every storyline's note, the latest updated first."
@@ -402,11 +419,38 @@
                                             (+ n coverage-days)])
                        ;; what outlives the days goes with the coverage
                        (jdbc/execute! conn "delete from standfirsts where day < (select min(day) from coverage)")
+                       (jdbc/execute! conn "delete from day_trends where day < (select min(day) from coverage)")
                        (jdbc/execute! conn "delete from story_notes where last_day < (select min(day) from coverage)")))
                    gone))]
       (when (seq gone)
         (with-db [conn store] (jdbc/execute! conn "vacuum")))
       gone)))
+
+;; --- trends ----------------------------------------------------------------------
+
+(defn save-trends!
+  "Store the trends the desk found on `day`, {:thread :name :direction
+  :summary :stories}, the stories by their storylines, in place of the
+  day's last."
+  [store day trends]
+  (with-db [conn store]
+    (jdbc/atomic conn
+      (jdbc/execute! conn ["delete from day_trends where day = ?" day])
+      (doseq [[i {:keys [thread name direction summary stories]}] (map-indexed vector trends)]
+        (jdbc/execute! conn ["insert into day_trends (day, idx, thread, name, direction, summary, stories)
+                              values (?, ?, ?, ?, ?, ?, ?)"
+                             day i thread name direction summary (pr-str (vec stories))]))))
+  nil)
+
+(defn trends-between
+  "The trends found on the days from `from` to `to`, both inclusive, in
+  order: {:day :thread :name :direction :summary :stories}. They are kept
+  as long as the coverage."
+  [store from to]
+  (with-db [conn store]
+    (mapv (fn [r] {:day (:day r) :thread (:thread r) :name (:name r) :direction (:direction r)
+                   :summary (:summary r) :stories (some-> (:stories r) edn/read-string)})
+          (jdbc/fetch conn ["select * from day_trends where day >= ? and day <= ? order by day, idx" from to]))))
 
 ;; --- digests -----------------------------------------------------------------------
 

@@ -133,7 +133,7 @@
       [:p.muted "Idle."])))
 
 (defn- run-panel [{:keys [state day error items cited provider model sources events digest] :as st} today]
-  (let [busy? (contains? #{:starting :gathering :analysing :researching} state)]
+  (let [busy? (contains? #{:starting :gathering :sorting :preparing :analysing :researching} state)]
     [:section.run
      [:h2 "Desk"]
      (if digest
@@ -141,6 +141,8 @@
        (case state
        :starting [:p "Starting the run for " (sources/long-date day) "…"]
        :gathering [:p "Gathering the news for " (sources/long-date day) "…"]
+       :sorting [:p "Sorting " items " reports into stories for " (sources/long-date day) "…"]
+       :preparing [:p "Reading and writing dossiers on " items " stories for " (sources/long-date day) "…"]
        :researching [:p "Looking for precedents to " items " stories for " (sources/long-date day) "…"]
        :analysing [:p "Analysing " items " items with " provider
                    (when model [:span.muted " (" model ")"]) "…"]
@@ -231,7 +233,7 @@
   [:details.gathered
    [:summary "Everything gathered for the day (" (count sources) ")"]
    [:ol
-    (for [{:keys [n title url source summary also story informs note]} sources]
+    (for [{:keys [n title url source summary also story informs note gap]} sources]
       [:li {:id (str "source-" n) :value n}
        [:a {:href url :rel "noopener" :target "_blank"} title]
        (when-not (str/blank? source) [:span.muted " — " source])
@@ -239,6 +241,7 @@
          [:span.muted " · precedent for "
           (interpose ", " (for [i informs] [:a {:href (str "#source-" i)} (str "[" i "]")]))])
        (when-not (str/blank? note) [:p.summary.note [:strong "What it teaches: "] note])
+       (when-not (str/blank? gap) [:p.summary.note [:strong "Found for what the reporting left out: "] gap])
        (when-let [note (get noted story)]
          [:span.muted " · storyline: " [:a {:href (story-href story)} (:title note)]])
        (when (seq also)

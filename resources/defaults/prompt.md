@@ -7,7 +7,7 @@ technology, and above all how the three drive one another. Put the day's
 events in their historical context, explain the material forces behind them,
 and project their economic and geopolitical impact.
 
-Make a mermaidjs graph to help yourself organize the concepts in the article, and then review the connections between them to make sure they are clear and logical. You MUST use that to help you structure the narrative that builds on itself to tell a compelling and interconnected story.
+{% if graph %}The desk has mapped the trends running through the day and how the stories drive one another, and the graph of that map is drawn for you at the start of "How it all connects". Review the map's connections against the facts to make sure they are clear and logical, drop any the facts don't bear out, and add any it missed. You MUST use it to structure a narrative that builds on itself to tell a compelling and interconnected story.{% else %}Make a mermaidjs graph to help yourself organize the concepts in the article, and then review the connections between them to make sure they are clear and logical. You MUST use that to help you structure the narrative that builds on itself to tell a compelling and interconnected story.{% endif %}
 
 You MUST use deep dialectical materialist analysis and systems thinking, avoid superficial analysis and vapid, or sensational statements. The opening paragraphs explain what is happening, the middle ones explain the mechanics of how it is happening, the closing paragraphs discuss the likely outcomes based on the mechanics. Explain clearly how and why things connect.
 
@@ -46,6 +46,18 @@ brackets, such as [3] or [2, 7], right after the claim. Do not cite a number
 that is not in the list, and do not invent facts the sources do not support.
 When you go beyond the sources, with historical background or projections, say
 so plainly.
+
+The desk's analysis, when there is one, comes before the sources. The desk
+sorted the day's reports into stories, read the main ones and wrote a
+dossier on each from its reports alone, then mapped the trends running
+through the day and the links between the stories. Take what happened from
+the dossiers and cite the sources their facts cite. Where the dossier says
+accounts are disputed, weigh them, say which way the evidence leans and
+why, and don't present one side's claim as fact. Explain what the actors do
+by the interests the dossier gives them, not only by what they say. Don't
+paper over what the dossier says the reports leave out. The trends are the
+forces to build the briefing around, and a trend that has run for days is
+part of a longer movement, so say how today moves it.
 
 The sources may end with historical precedents: past episodes, each marked
 with the stories it bears on and what it teaches. Some are parallels to a
@@ -133,7 +145,8 @@ relations between two states, and then the pattern is the subject, not the
 case.
 
 The sources are listed with the most widely and longest covered stories
-first. A source's coverage line says how many outlets carried its story today
+first, and a story told in several reports has its reports listed together
+under its title. A source's coverage line says how many outlets carried its story today
 and on how many days the story has been in the news. A story that many
 outlets carry, or one that keeps coming back day after day, is likely part of
 a major trend and deserves more weight, though coverage alone doesn't make an
@@ -151,7 +164,8 @@ out.
   heading for each part of the structure above and `###` for themes within
   a part. The blockquote is the standfirst shown in the archive, so it must
   stand alone.
-- Put the graph at the start of "How it all connects", as a fenced code block
+{% if graph %}- Don't draw a graph. The desk's is put at the start of "How it all connects"
+  for you.{% else %}- Put the graph at the start of "How it all connects", as a fenced code block
   marked `mermaid`. Group its nodes by domain with one subgraph each for
   politics, economics, and science and technology, and draw the edges between
   them, since those cross-domain links are what the section explains. Use
@@ -162,8 +176,10 @@ out.
   quotes, such as `oil["Oil prices rise"]`, and label an edge the same way,
   such as `sanctions -->|"tightens supply"| oil`. Keep brackets, quotes and
   citations out of the label text, don't reuse a subgraph id as a node id,
-  and keep it to the main connections, around twelve to twenty-four nodes.
+  and keep it to the main connections, around twelve to twenty-four nodes.{% endif %}
 - Do not write a sources list at the end. It is added automatically.
+
+{{analysis}}
 
 Sources:
 

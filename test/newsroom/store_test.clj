@@ -191,3 +191,36 @@
       (testing "nothing more to drop"
         (is (= [] (store/prune! db 3))))
       (finally (store/close db)))))
+
+(deftest the-desks-trends-are-kept-with-the-coverage
+  (let [db (fresh)]
+    (try
+      (store/save-trends! db "2026-09-29" [{:thread "2026-09-29/T1" :name "Energy squeeze" :direction "holding"
+                                            :summary "Oil up." :stories ["fed" "oil"]}])
+      (store/save-trends! db "2026-09-30" [{:thread "2026-09-29/T1" :name "Energy squeeze" :direction "strengthening"
+                                            :summary "Oil higher." :stories ["oil"]}
+                                           {:thread "2026-09-30/T2" :name "Chip blocs" :stories []}])
+      (is (= [{:day "2026-09-29" :thread "2026-09-29/T1" :name "Energy squeeze" :direction "holding"
+               :summary "Oil up." :stories ["fed" "oil"]}]
+             (store/trends-between db "2026-09-29" "2026-09-29")))
+      (is (= ["2026-09-29/T1" "2026-09-29/T1" "2026-09-30/T2"]
+             (map :thread (store/trends-between db "2026-09-01" "2026-09-30"))))
+      (store/save-trends! db "2026-09-30" [])
+      (is (= 1 (count (store/trends-between db "2026-09-01" "2026-09-30"))) "saving a day again replaces its trends")
+      (store/save-notes! db {"fed" {:title "T" :summary "S" :status "escalating" :facts [] :first-day "2026-09-29"
+                                    :last-day "2026-09-30"}})
+      (is (= "escalating" (:status (get (store/notes db ["fed"]) "fed"))) "a note keeps its status")
+      (finally (store/close db)))))
+
+(deftest a-gap-searchs-result-is-kept-but-isnt-coverage
+  (let [db (fresh)]
+    (try
+      (store/save-day! db {:day "2026-09-30"
+                           :sources [(assoc (first sources) :story "fed")
+                                     (assoc (second sources) :story "fed" :gap "The vote")]
+                           :cited [1 2] :markdown "m" :model "m" :provider "p"})
+      (is (= "The vote" (:gap (second (:sources (store/day db "2026-09-30"))))))
+      (is (= [1] (map :n (store/coverage-between db "2026-09-30" "2026-09-30")))
+          "a result found for a story isn't counted as an outlet carrying it")
+      (is (= "The vote" (:gap (second (store/sources-between db "2026-09-30" "2026-09-30")))))
+      (finally (store/close db)))))

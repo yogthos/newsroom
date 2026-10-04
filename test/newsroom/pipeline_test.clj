@@ -115,7 +115,7 @@
         (is (has? "A: 3 items"))
         (is (has? "Broken failed: feed is down"))
         (is (has? "Slow timed out"))
-        (is (has? "3 stories to analyse"))
+        (is (has? "3 reports to analyse"))
         (is (has? "Asking local (local-model) to write the briefing"))
         (is (has? "The model is thinking"))
         (is (has? "The model is writing"))
@@ -718,3 +718,65 @@
           "the context comes before today's sources"))
     (is (some #(str/includes? (:text %) "Building on the briefing for 29 September 2026")
               (:events @pipeline/status)))))
+
+(deftest the-desk-sorts-reads-and-maps-before-the-briefing
+  (let [prompts (atom {})
+        answer (fn [p]
+                 (cond
+                   (str/includes? p "You sort the reports")
+                   (str "{\"stories\": [{\"title\": \"One event\", \"reports\": [1, 2], \"importance\": 9,"
+                        " \"status\": \"escalating\"}, {\"title\": \"Another\", \"reports\": [3]}]}")
+                   (str/includes? p "prepares the dossiers")
+                   (str "{\"dossiers\": [{\"story\": \"G1\", \"summary\": \"It happened.\", \"label\": \"One event\","
+                        " \"domain\": \"economics\", \"facts\": [{\"fact\": \"Both reports agree.\", \"cites\": [1, 2]}]},"
+                        " {\"story\": \"G2\", \"summary\": \"Then this.\", \"label\": \"Another\", \"domain\": \"politics\","
+                        " \"facts\": [{\"fact\": \"It followed.\", \"cites\": [3]}]}]}")
+                   (str/includes? p "You map the day's news")
+                   (str "{\"trends\": [{\"name\": \"A squeeze\", \"direction\": \"strengthening\","
+                        " \"stories\": [\"G1\", \"G2\"], \"summary\": \"Both.\"}],"
+                        " \"links\": [{\"from\": \"G1\", \"to\": \"G2\", \"mechanism\": \"drives\", \"confidence\": \"high\"}]}")
+                   (str/includes? p "You keep the running notes")
+                   (str "{\"storylines\": [{\"id\": \"2026-09-30/1\", \"title\": \"One event\", \"summary\": \"S.\","
+                        " \"status\": \"escalating\", \"facts\": [{\"day\": \"2026-09-30\", \"fact\": \"Both agree.\", \"cite\": 1}]}]}")
+                   :else "# Today\n\n## Overview\n\nOne [1].\n\n## How it all connects\n\nChains [2, 3]."))
+        c (-> (ctx [{:type ::fixture :name "A" :ns [1 2 3]} {:type ::fixture :name "B" :ns [2 4]}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)
+                           kind (re-find #"You sort|prepares the dossiers|You map|running notes|Brief" p)]
+                       (swap! prompts assoc kind p)
+                       {:content (answer p) :model "fake"})))
+              (update :config merge {:group-stories true :dossier-stories 5 :read-articles 0
+                                     :connect-stories true :story-notes 12 :story-threshold 0.6}))
+        _ (m/? (pipeline/run-task c "2026-09-30"))
+        day (store/day (:store c) "2026-09-30")
+        brief (get @prompts "Brief")]
+    (testing "a story's reports are ranked together and share a storyline"
+      (is (= ["https://e.com/1" "https://e.com/2" "https://e.com/4"] (map :url (:sources day))))
+      (is (= ["2026-09-30/1" "2026-09-30/1" "2026-09-30/3"] (map :story (:sources day)))))
+    (testing "the analyst gets the dossiers and the map, and the reports under their story"
+      (is (str/includes? brief "## The desk's analysis"))
+      (is (str/includes? brief "- **A squeeze** (strengthening), in One event [1, 2], Another [3]: Both."))
+      (is (str/includes? brief "Facts:\n- Both reports agree. [1, 2]"))
+      (is (str/includes? brief "Story: One event\nStatus: escalating"))
+      (is (not (str/includes? brief "About 1")) "a report the dossier covers comes without its summary"))
+    (testing "the graph is drawn from the map"
+      (is (str/includes? (:markdown day) "## How it all connects\n\n```mermaid\nflowchart LR\n"))
+      (is (str/includes? (:markdown day) "g1 -->|\"drives\"| g2")))
+    (testing "the trends are kept for the days after, and the note keeps the story's status"
+      (is (= [["2026-09-30/T1" "A squeeze" ["2026-09-30/1" "2026-09-30/3"]]]
+             (map (juxt :thread :name :stories) (store/trends-between (:store c) "2026-09-30" "2026-09-30"))))
+      (is (str/includes? (get @prompts "running notes") "The desk's facts from today's reports:\n- Both reports agree. [1, 2]"))
+      (is (= "escalating" (:status (get (store/notes (:store c) ["2026-09-30/1"]) "2026-09-30/1")))))))
+
+(deftest a-desk-that-fails-leaves-the-briefing-to-be-written
+  (let [c (-> (ctx [{:type ::fixture :name "A" :ns [1 2]}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (if (str/starts-with? p "Brief")
+                         {:content "# Today\n\nOne [1]." :model "fake"}
+                         (throw (ex-info "the desk's model is down" {}))))))
+              (update :config merge {:group-stories true :dossier-stories 5 :connect-stories true}))
+        _ (m/? (pipeline/run-task c "2026-09-30"))
+        texts (map :text (:events @pipeline/status))]
+    (is (= 2 (count (:sources (store/day (:store c) "2026-09-30")))))
+    (is (some #(str/includes? % "Sorting the reports into stories failed: the desk's model is down") texts))))

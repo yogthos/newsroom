@@ -60,6 +60,21 @@
  ;; can give the job a cheaper model. nil turns the notes off
  :story-notes 12
 
+ ;; the desk's work before the briefing. The model sorts the day's reports
+ ;; into stories (:group-stories), reads the main reports of the top
+ ;; :dossier-stories stories in full, :read-articles of each, and writes a
+ ;; dossier on each from them, then maps the trends running through the
+ ;; day and the links between the stories (:connect-stories), and searches
+ ;; for what the reports leave out, at most :gap-searches times. The
+ ;; briefing is written from the dossiers and the map. A :desk role in
+ ;; :roles can give the work its own model. nil :dossier-stories turns the
+ ;; dossiers, the map and the gap searches off
+ :group-stories true
+ :dossier-stories 20
+ :read-articles 3
+ :connect-stories true
+ :gap-searches 6
+
  ;; digests written from the stored days: a week's after the week ends
  ;; (Monday to Sunday), a month's after the month does, each ranking the
  ;; storylines of the period and saying which are emerging, persistent or
@@ -149,7 +164,8 @@
   ;; :llama    {:type :local :base-url "http://127.0.0.1:8080/v1" :thinking? true}
   }
 
- ;; the :analyst role writes the briefing and the digests, and keeps the
- ;; story notes unless a :notes role is given; with no :roles, the first
+ ;; the :analyst role writes the briefing and the digests, keeps the
+ ;; story notes unless a :notes role is given, and does the desk's work
+ ;; unless a :desk role is given; with no :roles, the first
  ;; built-in whose key is in the environment serves, else a local endpoint
  :roles {:analyst :deepseek}}

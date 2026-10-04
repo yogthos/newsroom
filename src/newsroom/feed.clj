@@ -6,7 +6,8 @@
 
   An item is {:title :url :source :summary :published}, every value a string
   but :published, which is the feed's own date text or nil."
-  (:require [clojure.string :as str]))
+  (:require [clojure.data.json :as json]
+            [clojure.string :as str]))
 
 ;; --- text --------------------------------------------------------------------------
 
@@ -253,3 +254,52 @@
      :description (or (get m "og:description") (get m "description") (get m "twitter:description"))
      :published (or (get m "article:published_time") (get m "og:published_time")
                     (get m "datepublished") (get m "pubdate"))}))
+
+;; --- article text ------------------------------------------------------------------
+
+(def article-chars
+  "The most of an article's text the analysis reads: enough for the facts,
+  the figures and who said what, which news stories put first."
+  4000)
+
+(def ^:private min-article-chars
+  "Less text than this is a teaser or a paywall, not the article."
+  400)
+
+(def ^:private min-paragraph-chars
+  "A shorter paragraph is a caption, a byline or a link, not the story."
+  60)
+
+(def ^:private boilerplate
+  #"(?i)\b(cookies?|subscribe|subscription|sign up|newsletter|all rights reserved|advertisement|log in|javascript)\b")
+
+(defn- article-body
+  "The articleBody a page's structured data gives, which is the story's
+  text without the page around it, or nil."
+  [html]
+  (some (fn [[_ quoted]]
+          (let [s (try (json/read-str quoted) (catch Throwable _ nil))]
+            (when (string? s) (plain-text s))))
+        (re-seq #"\"articleBody\"\s*:\s*(\"(?:[^\"\\]|\\.)*\")" html)))
+
+(defn- paragraphs
+  "The text of the page's paragraphs, from its <article> when it has one,
+  leaving out short ones and those that read like the page around the story."
+  [html]
+  (let [html (str/replace html #"(?is)<(script|style|noscript|nav|header|footer|aside|form|figure)\b[^>]*>.*?</\1>" " ")
+        scope (or (some-> (re-find #"(?is)<article\b[^>]*>(.*)</article>" html) second) html)]
+    (->> (re-seq #"(?is)<p\b[^>]*>(.*?)</p>" scope)
+         (map (comp plain-text second))
+         (filter #(>= (count %) min-paragraph-chars))
+         (remove #(re-find boilerplate %))
+         (str/join "\n\n"))))
+
+(defn article-text
+  "The text of the story on an article page, cut to `article-chars`: its
+  structured data's articleBody when it has one, else its paragraphs. nil
+  when there is too little to be the article, as behind a paywall."
+  [html]
+  (let [html (str html)
+        text (or (article-body html) (paragraphs html))]
+    (when (>= (count text) min-article-chars)
+      (clip text article-chars))))

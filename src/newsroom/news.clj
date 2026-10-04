@@ -198,31 +198,47 @@
 
 ;; --- the prompt ------------------------------------------------------------------
 
+(defn- coverage-text [n days]
+  (when (or (> n 1) (> days 1))
+    (str "Coverage: "
+         (str/join ", " (cond-> []
+                          (> n 1) (conj (str n " outlets today"))
+                          (> days 1) (conj (str "in the news on " days " days")))))))
+
 (defn- coverage
   "How widely and how long a source's story has run, for the model to weigh
   it by: nil for a story one outlet carried on one day."
   [s]
-  (let [n (outlets s)
-        days (or (:days s) 1)]
-    (when (or (> n 1) (> days 1))
-      (str "Coverage: "
-           (str/join ", " (cond-> []
-                            (> n 1) (conj (str n " outlets today"))
-                            (> days 1) (conj (str "in the news on " days " days"))))))))
+  (coverage-text (outlets s) (or (:days s) 1)))
 
-(defn- source-line [s]
+(defn- source-line
+  "A source as the analyst sees it. One told among a story's other reports
+  leaves its coverage to the story, and one the desk wrote a dossier on
+  leaves its summary to the dossier."
+  [s grouped?]
   (str "[" (:n s) "] " (:title s)
        (when-not (str/blank? (:source s)) (str " (" (:source s) ")"))
        (when-let [p (:published s)] (str ", " p))
        "\n" (:url s)
-       (when-let [c (coverage s)] (str "\n" c))
-       (when-not (str/blank? (:summary s)) (str "\n" (:summary s)))))
+       (when-not grouped? (when-let [c (coverage s)] (str "\n" c)))
+       (when-let [g (:gap s)]
+         (str "\nFound for what the reporting on " (:gap-story s) " left out: " g))
+       (when-not (or (:briefed s) (str/blank? (:summary s))) (str "\n" (:summary s)))))
+
+(defn- group-header
+  "The line a story told in several reports opens with: its title, status
+  and the coverage of all its reports."
+  [{:keys [group-title status group-outlets days briefed]}]
+  (str "Story: " group-title
+       (when status (str "\nStatus: " status))
+       (when-let [c (coverage-text (or group-outlets 1) (or days 1))] (str "\n" c))
+       (when briefed "\nThe desk's dossier on it is above, so its reports are listed without their summaries.")))
 
 (defn- precedent-line
   "A precedent as the model sees it: a source, with the day's stories it
   informs and what the researcher found it teaches."
   [{:keys [informs note] :as s}]
-  (str (source-line (dissoc s :summary))
+  (str (source-line (dissoc s :summary) false)
        (when (seq informs) (str "\nPrecedent for " (str/join ", " (map #(str "[" % "]") informs))))
        (when-not (str/blank? note) (str "\nWhat it teaches: " note))
        (when-not (str/blank? (:summary s)) (str "\n" (:summary s)))))
@@ -235,10 +251,25 @@
        "resolved, then how today's conditions differ and what that changes. Cite them by number like any "
        "other source."))
 
+(defn- today-block
+  "The day's sources in order, the reports of a story told in several
+  together under its header."
+  [today]
+  (let [sizes (frequencies (keep :group today))
+        several? #(> (get sizes (:group %) 0) 1)]
+    (first (reduce (fn [[out seen] s]
+                     (if (several? s)
+                       [(-> (cond-> out (not (seen (:group s))) (conj (group-header s)))
+                            (conj (source-line s true)))
+                        (conj seen (:group s))]
+                       [(conj out (source-line s false)) seen]))
+                   [[] #{}]
+                   today))))
+
 (defn- source-block [sources]
   (let [today (remove :precedent sources)
         precedents (filter :precedent sources)]
-    (str/join "\n\n" (concat (map source-line today)
+    (str/join "\n\n" (concat (today-block today)
                              (when (seq precedents) [precedents-note])
                              (map precedent-line precedents)))))
 
@@ -316,6 +347,20 @@
           template
           vars))
 
+(defn render-desk-prompt
+  "The briefing's prompt as render-prompt fills it, with the desk's work
+  before the briefing too, `desk`: {{analysis}}, its dossiers and map,
+  placed just before the sources when the template has no place for it,
+  and {{graph}}, true when the graph is drawn for the analyst."
+  [template day sources previous {:keys [analysis graph?]}]
+  (template/fill (place-vars template (cond-> []
+                                        previous (conj "previous")
+                                        analysis (conj "analysis")
+                                        true (conj "sources"))
+                             "sources")
+                 {:date day :sources (source-block sources) :previous previous
+                  :analysis analysis :graph (boolean graph?)}))
+
 (defn render-prompt
   "The briefing's prompt: the Selmer `template` with {{date}}, {{sources}}
   and {{previous}}, text about the last briefing, filled in. A template
@@ -323,8 +368,7 @@
   sees what it may cite, and one with no place for `previous` gets it just
   before the sources."
   [template day sources previous]
-  (template/fill (place-vars template (if previous ["previous" "sources"] ["sources"]) "sources")
-        {:date day :sources (source-block sources) :previous previous}))
+  (render-desk-prompt template day sources previous nil))
 
 ;; --- citations -------------------------------------------------------------------
 

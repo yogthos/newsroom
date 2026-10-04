@@ -17,6 +17,13 @@ another over weeks rather than days.
 
 You MUST use deep dialectical materialist analysis and systems thinking, avoid superficial analysis and vapid, or sensational statements. Look for the transformation of quantity into quality: the slow accumulation across the period that turned into a change of kind, and the developments that look large on one day but changed little over the period. But don't use the direct and overt language like contradictions or negation of negation, these are thinking tools we want to apply to analysis.
 
+Every day the desk also named the trends running through the day's stories,
+the forces like debt piling up while rates stay high or trade splitting into
+blocs, and followed each from one day to the next. They come before the
+storylines, with how many days each ran and which way it moved. They are the
+currents to build the digest around: say what each did over the period and
+which storylines carried it.
+
 Weigh the storylines by their coverage and their trend, but don't simply list
 them in order. A storyline that many outlets carried for many days is likely a
 major trend, and an emerging one may matter more than its count suggests.
@@ -79,6 +86,10 @@ The day by day standfirsts of the period's briefings:
 
 {{days}}
 
-Storylines:
+{% if trends %}The trends the desk followed through the period:
+
+{{trends}}
+
+{% endif %}Storylines:
 
 {{stories}}

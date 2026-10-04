@@ -59,20 +59,40 @@
          (when-not (str/blank? (:summary note))
            (str "\nThe storyline so far"
                 (when-let [d (:first-day note)] (str ", since " (long-date d)))
+                (when-let [st (:status note)] (str ", " st))
                 ": " (clip (:summary note) 400))))))
+
+(defn- story-heads
+  "The sources the researcher is shown, the first `max-stories` stories:
+  of a story told in several reports, its first, under the story's title."
+  [sources]
+  (->> sources
+       (reduce (fn [[seen out] s]
+                 (if (and (:group s) (contains? seen (:group s)))
+                   [seen out]
+                   [(cond-> seen (:group s) (conj (:group s)))
+                    (conj out (cond-> s (:group-title s) (assoc :title (:group-title s))))]))
+               [#{} []])
+       second
+       (take max-stories)))
 
 (defn render-prompt
   "The researcher's first prompt: the Selmer `template` with {{date}},
   {{stories}}, the day's numbered `sources` with the `notes` on their
-  storylines, {story note}, and {{searches}} and {{rounds}}, the budget,
-  filled in. A template with no place for the stories gets them after it."
-  [template date sources notes searches long-date]
-  (template/fill (news/place-vars template ["stories"] "stories")
-                 {:date date
-                  :stories (str/join "\n\n" (map #(story-line % (get notes (:story %)) long-date)
-                                                 (take max-stories sources)))
-                  :searches searches
-                  :rounds max-rounds}))
+  storylines, {story note}, {{trends}}, the trends the desk found running
+  through the day, and {{searches}} and {{rounds}}, the budget, filled in.
+  A template with no place for the stories gets them after it, and one
+  with no place for the trends gets them just before the stories."
+  ([template date sources notes searches long-date]
+   (render-prompt template date sources notes searches long-date nil))
+  ([template date sources notes searches long-date trends]
+   (template/fill (news/place-vars template (if trends ["trends" "stories"] ["stories"]) "stories")
+                  {:date date
+                   :stories (str/join "\n\n" (map #(story-line % (get notes (:story %)) long-date)
+                                                  (story-heads sources)))
+                   :trends trends
+                   :searches searches
+                   :rounds max-rounds})))
 
 (defn- json-object
   "The JSON object in `answer`, read with string keys, or nil. A fence or

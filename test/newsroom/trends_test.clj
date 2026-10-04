@@ -147,3 +147,20 @@
                (trends/render-digest-prompt "Digest {{period}}.\n\n{{stories}}" "p" "" "STORIES" "LAST"))))
       (testing "a template without {{stories}} gets them at the end"
         (is (str/ends-with? (trends/render-digest-prompt "Digest." "p" "" "STORIES" nil) "\n\nSTORIES"))))))
+
+(deftest the-desks-trends-are-followed-through-a-period
+  (let [rows [{:day "2026-09-28" :thread "a" :name "Energy" :direction "holding" :summary "Old."}
+              {:day "2026-09-29" :thread "b" :name "Chips" :direction "strengthening" :summary "Chips."}
+              {:day "2026-09-29" :thread "a" :name "Energy squeeze" :direction "holding" :summary "Mid."}
+              {:day "2026-09-30" :thread "a" :name "Energy squeeze" :direction "strengthening" :summary "New."}]
+        threads (trends/trend-threads rows)]
+    (is (= ["a" "b"] (map :thread threads)) "the longest running first")
+    (is (= {:name "Energy squeeze" :summary "New." :days 3 :first-day "2026-09-28" :last-day "2026-09-30"}
+           (select-keys (first threads) [:name :summary :days :first-day :last-day])))
+    (is (= "### Energy squeeze\nSeen on 3 days, from 2026-09-28 to 2026-09-30. Direction: holding (2026-09-28), strengthening (2026-09-30).\nWhere it stood last: New."
+           (first (str/split (trends/trends-block threads identity) #"\n\n"))))
+    (is (nil? (trends/trends-block [] identity)))))
+
+(deftest a-gap-searchs-result-doesnt-make-a-storyline
+  (is (= [1] (map :n (:sources (first (trends/storylines [{:n 1 :story "fed" :vector fed}
+                                                          {:n 2 :story "fed" :vector fed :gap "The vote"}])))))))

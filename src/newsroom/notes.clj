@@ -14,6 +14,16 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]))
 
+(def statuses
+  "Where a storyline stands."
+  ["developing" "escalating" "de-escalating" "concluding" "static"])
+
+(defn status-of
+  "`v` as one of `statuses`, or nil."
+  [v]
+  (let [s (some-> v str str/trim str/lower-case)]
+    (some #{s} statuses)))
+
 (def max-candidates
   "The most storylines one day's compaction updates."
   20)
@@ -54,6 +64,7 @@
 (defn- note-block [note ids]
   (if note
     (str "Notes so far:\nTitle: " (:title note) "\nSummary: " (:summary note) "\n"
+         (when (:status note) (str "Status: " (:status note) "\n"))
          (str/join "\n" (for [[id f] ids]
                           (str id " " (:day f) ": " (:text f)
                                (when-not (str/blank? (:source f)) (str " (" (:source f) ")"))))))
@@ -63,10 +74,22 @@
   (str "[" n "] " title (when-not (str/blank? source) (str " (" source ")"))
        (when-not (str/blank? summary) (str "\n" summary))))
 
+(defn- dossier-block
+  "The facts the desk's dossier found in the day's reports on a storyline,
+  each with the reports it cites."
+  [facts]
+  (when (seq facts)
+    (str "\nThe desk's facts from today's reports:\n"
+         (str/join "\n" (for [{:keys [fact cites]} facts]
+                          (str "- " fact " [" (str/join ", " cites) "]"))))))
+
 (defn compaction-prompt
   "The prompt that has the analyst update the notes of `candidates` with
-  the day's reports, and the fact ids it names, {:prompt :ids}."
-  [day candidates notes max-facts]
+  the day's reports, and the fact ids it names, {:prompt :ids}.
+  `dossiers` are the facts the desk drew from the day's reports, {story
+  [{:fact :cites}]}, which the update can take with their citations."
+  ([day candidates notes max-facts] (compaction-prompt day candidates notes max-facts nil))
+  ([day candidates notes max-facts dossiers]
   (let [per-story (numbered-facts notes (map first candidates))]
     {:ids (into {} (mapcat val per-story))
      :prompt
@@ -77,11 +100,12 @@
           "repeat, drop a detail a later fact supersedes unless the change itself matters, and leave "
           "out colour, quotes and speculation. Every fact must come from the notes or from today's "
           "reports. Keep at most " max-facts " facts for each storyline, the ones that matter most "
-          "for its course, in the order they happened.\n\n"
+          "for its course, in the order they happened. A fact taken from the desk's facts cites the "
+          "first report they name. Say where the story stands now: " (str/join ", " statuses) ".\n\n"
           "Answer with JSON only, in this shape:\n"
           "{\"storylines\": [{\"id\": \"the storyline's id\", \"title\": \"a short name for the story, "
           "kept from the notes unless the story has changed\", \"summary\": \"two or three sentences on "
-          "what the story is and where it stands now\", \"facts\": [{\"day\": \"YYYY-MM-DD\", \"fact\": "
+          "what the story is and where it stands now\", \"status\": \"escalating\", \"facts\": [{\"day\": \"YYYY-MM-DD\", \"fact\": "
           "\"one sentence\", \"cite\": \"E3 to keep a fact from the notes, or the number of today's "
           "report it comes from\"}]}]}\n\n"
           "Storylines:\n\n"
@@ -90,7 +114,8 @@
                       (str "### id: " story "\n"
                            (note-block (get notes story) (get per-story story)) "\n"
                            "Today's reports:\n"
-                           (str/join "\n" (map report sources))))))}))
+                           (str/join "\n" (map report sources))
+                           (dossier-block (get dossiers story))))))})))
 
 ;; --- the answer ------------------------------------------------------------------
 
@@ -150,6 +175,7 @@
                                                    (:title (first (wanted story))))
                                                120)
                                   :summary (clip (or (get line "summary") (:summary old)) 600)
+                                  :status (or (status-of (get line "status")) (:status old))
                                   :facts facts
                                   :first-day (or (:first-day old) day)
                                   :last-day day}]))))))
@@ -173,8 +199,8 @@
            "Take them as background the reader already has, and say what today's reports add or "
            "change. Their facts are not today's sources, so cite only the numbered sources below.\n\n"
            (str/join "\n\n"
-                     (for [{:keys [title summary facts]} running]
-                       (str "### " title "\n" summary
+                     (for [{:keys [title summary status facts]} running]
+                       (str "### " title (when status (str " (" status ")")) "\n" summary
                             (when (seq facts)
                               (str "\n" (str/join "\n" (for [f (take-last 4 facts)]
                                                          (str "- " (long-date (:day f)) ": " (:text f)))))))))))))

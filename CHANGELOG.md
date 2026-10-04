@@ -2,8 +2,54 @@
 
 ## Unreleased
 
+The briefing is no longer written from the raw reports in one pass. A desk
+works the day over first, in stages, each a narrower model call: it sorts
+the reports into stories, reads the main ones in full, writes a dossier on
+each from its reports alone, and maps the trends running through the day
+and how the stories drive one another. The analyst then writes from the
+dossiers and the map, with the numbered sources to cite.
+
 ### Added
 
+- **Stories.** `:group-stories` (on by default) has the model sort the
+  day's reports into stories, the reports on one event from different sides
+  together and related events apart, each with a neutral title, an
+  importance from 1 to 10 and a status. A story's reports share a storyline
+  and are ranked together: their outlets are summed and the weight scaled by
+  the importance. Reports that aren't news at all, like index pages and
+  adverts, are left out. The analyst sees a story's reports listed together
+  under its title.
+- **Full text.** `:read-articles` (default 3) reports of each dossier's
+  story, one an outlet, are read from the outlet's page, its structured data
+  or its paragraphs. A page behind a paywall keeps its feed summary.
+- **Dossiers.** `:dossier-stories` (default 20) of the day's top stories get
+  a dossier, written a few stories a call from their reports alone: the
+  salient facts with their citations, a fact citing no report of its story
+  dropped; the actors with their stated positions and their interests; the
+  accounts that disagree; how outlets frame the story; what the reports
+  leave out; the forces it is an instance of; and why it matters. A report a
+  dossier covers comes to the analyst without its summary.
+- **The map.** `:connect-stories` (on by default) has the model map, from
+  the dossiers, the trends running through the day and the links of cause
+  and effect between stories, each with its mechanism and how sure the
+  evidence makes it. A trend continues one of the days before by name, so
+  trends are followed from day to day. The briefing's graph is drawn from
+  the links, a link the evidence is least sure of dashed, and put at the
+  start of "How it all connects". A briefing whose prompt still asks it to
+  draw its own keeps its own.
+- **Trends in the research and the digests.** The researcher looking for
+  precedents is given the day's trends, and the digests the trends followed
+  through the period, how long each ran and which way it moved. `{{trends}}`
+  places them in the precedent and digest prompts.
+- **Gap searches.** The dossiers say what the reports leave out, with a
+  search that could find it, and up to `:gap-searches` (default 6) of those
+  searches are run. What they find joins the sources, marked with the gap it
+  was found for.
+- **A status on the notes.** A storyline's note says whether it is
+  developing, escalating, de-escalating, concluding or static, and the notes
+  are updated with the dossiers' facts.
+- **A `:desk` role** gives the desk's work its own model; the analyst's when
+  it's left out.
 - **secrets.edn.** Keys can be kept in `secrets.edn` in the config directory,
   a map from each key's name to its value, instead of being exported in the
   shell that starts newsroom. Whatever names a key, `:api-key-env`, a
@@ -17,6 +63,10 @@
 
 ### Changed
 
+- The default prompts ask the analyst to build on the desk's work. A prompt
+  already saved in the settings is left alone: the dossiers and the map go
+  just before its sources, through `{{analysis}}`, and it goes on drawing its
+  own graph unless it is changed to use `{{graph}}` as the default does.
 - **The item cap is per outlet.** `:max-items-per-source` now caps each
   outlet within a source, by the outlet its items are credited to, rather
   than the source as a whole. A source that reads one feed is unchanged; a

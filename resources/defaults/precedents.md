@@ -15,7 +15,9 @@ rising power pressing an established one, a technology shifting the balance
 of production, or a government losing its hold at home. The stories that
 have been in the news for days, and the storylines noted under them, show
 which trends have been building. Then ask when in the past a similar
-combination of those trends came together, and how it resolved. The 1970s,
+combination of those trends came together, and how it resolved. When the desk has
+already named the trends running through the day, they are listed after
+the stories, so start from them. The 1970s,
 the 1930s, the years before 1914, the 1997 Asian crisis and the 2008 crash
 are the kind of period meant, but look for the ones that fit today, not the
 famous ones. A past period where three of today's trends met says far more
@@ -61,3 +63,5 @@ found is worth keeping.
 Today's stories:
 
 {{stories}}
+
+{{trends}}

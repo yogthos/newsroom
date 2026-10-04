@@ -84,6 +84,24 @@
  ;; turns the research off.
  :precedent-searches 12
 
+ ;; The desk's work before the briefing. The model sorts the day's reports
+ ;; into stories, the reports on one event from different sides together,
+ ;; each with an importance and a status, and leaves out what isn't news.
+ ;; It reads the main reports of the top :dossier-stories stories in full,
+ ;; :read-articles of each, one an outlet, and writes a dossier on each from
+ ;; them alone: the salient facts with citations, the actors' positions and
+ ;; interests, disputed accounts, framing, what's missing, the forces at
+ ;; work. Then it maps the trends running through the day, following each
+ ;; from the days before, and the links between the stories, which the
+ ;; briefing's graph is drawn from, and runs up to :gap-searches searches
+ ;; for what the reports left out. nil :dossier-stories turns the
+ ;; dossiers, the map and the gap searches off.
+ :group-stories true
+ :dossier-stories 20
+ :read-articles 3
+ :connect-stories true
+ :gap-searches 6
+
  ;; Digests written from the stored days: a week's once the week is over
  ;; (weeks run Monday to Sunday), a month's once the month is. Each ranks
  ;; the storylines of the period by their coverage and says which are
@@ -210,7 +228,10 @@
  ;; digests. :notes keeps the story notes, the analyst when it's left out;
  ;; it's routine extraction, so a cheaper or faster model does well here.
  ;; :research looks for the precedents, the analyst when it's left out.
+ ;; :desk sorts the day's reports into stories, writes the dossiers and
+ ;; maps the trends and links between them, the analyst when it's left out.
  :roles {:analyst :deepseek
          ;; :notes :glm
          ;; :research :glm
+         ;; :desk :glm
          }}

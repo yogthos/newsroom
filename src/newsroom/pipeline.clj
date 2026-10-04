@@ -25,6 +25,7 @@
             [ebb.core :as m]
             [glimmer.ratom :as ratom]
             [jolt.time]
+            [newsroom.analysis :as analysis]
             [newsroom.config :as config]
             [newsroom.embed :as embed]
             [newsroom.feed :as feed]
@@ -384,7 +385,7 @@
   search is logged and the day is analysed without precedents rather than
   lost; only a cancel propagates. nil when the research is off or keeps
   nothing."
-  [{:keys [config run-id] :as ctx} day stories notes]
+  [{:keys [config run-id] :as ctx} day stories notes trends]
   (m/sp
     (let [searches (:precedent-searches config)]
       (when (pos? (or searches 0))
@@ -394,7 +395,7 @@
                                          ") to look for precedents for the day's stories")})
               prompt (precedents/render-prompt (config/precedent-template config)
                                                (str (sources/long-date day) " (" day ")")
-                                               stories notes searches sources/long-date)
+                                               stories notes searches sources/long-date trends)
               outcome (m/? (m/attempt (research ctx llm-config stories prompt searches)))
               {:keys [picks shown]} (try (outcome)
                                          (catch Throwable e
@@ -414,16 +415,207 @@
                                          " of the " (count shown) " results read") :level :ok})
                 found)))))))
 
-(defn- follow-stories
-  "The items linked to the storylines of the last :trend-days (7 by
-  default) before `day`, then ranked by how widely and how long their
-  stories have run, heaviest first."
-  [store config day items]
-  (let [threshold (:story-threshold config)
-        lines (when threshold
-                (trends/storylines (store/sources-between store (minus-days day (:trend-days config 7))
-                                                          (minus-days day 1))))]
-    (trends/rank (trends/link-stories items lines threshold) lines day (:half-life-days config 2))))
+(defn- recent-storylines
+  "The storylines of the last :trend-days (7 by default) before `day`,
+  none when :story-threshold is nil."
+  [store config day]
+  (when (:story-threshold config)
+    (trends/storylines (store/sources-between store (minus-days day (:trend-days config 7))
+                                              (minus-days day 1)))))
+
+;; --- the desk ----------------------------------------------------------------------
+;; Before the analyst writes, the desk sorts the day's reports into stories,
+;; reads the main ones in full, writes a dossier on each and maps the trends
+;; and links between them (see newsroom.analysis). Each stage is a model call
+;; or a few, and one that fails is logged and the run goes on without it.
+
+(defn- softly
+  "Task: what `task` completes with, or nil when it fails, which is logged
+  as `what` failing. Only a cancel propagates."
+  [run-id what task]
+  (m/sp
+    (let [outcome (m/? (m/attempt task))]
+      (try (outcome)
+           (catch Throwable e
+             (when (interrupted? e) (throw e))
+             (log! run-id {:text (str what " failed: " (or (ex-message e) (str e))) :level :error})
+             nil)))))
+
+(defn- ask
+  "Task: the model's answer to `prompt`, not streamed."
+  [ctx llm-config prompt]
+  (m/sp
+    (let [chat (or (:chat ctx) llm/chat)
+          reply (m/? (m/via m/blk (chat llm-config {:messages [{:role "user" :content prompt}]
+                                                    :on-delta (fn [_])})))]
+      (str (:content reply)))))
+
+(defn- desk-llm
+  "The model the desk works with: the :desk role's when the config gives
+  it one, else the analyst's."
+  [config]
+  (providers/role-llm config (if (get-in config [:roles :desk]) :desk :analyst)))
+
+(defn- dated [day] (str (sources/long-date day) " (" day ")"))
+
+(defn- group-task
+  "Task: the day's `items` sorted into stories by the desk (see
+  analysis/apply-grouping), or nil when :group-stories is off, or the
+  sorting fails or says nothing."
+  [{:keys [config store run-id] :as ctx} day items]
+  (m/sp
+    (when (and (:group-stories config) (seq items))
+      (let [llm-config (desk-llm config)
+            _ (update-status! run-id assoc :state :sorting :items (count items))
+            _ (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
+                                       ") to sort " (count items) " reports into stories")})
+            notes (store/notes store (keep :story items))
+            answer (m/? (softly run-id "Sorting the reports into stories"
+                                (ask ctx llm-config (analysis/grouping-prompt (dated day) items notes))))
+            parsed (some-> answer (analysis/parse-grouping (count items)))]
+        (if parsed
+          (let [grouped (analysis/apply-grouping items parsed)
+                junk (- (count items) (count grouped))]
+            (log! run-id {:text (str "Sorted " (count grouped) " reports into "
+                                     (count (distinct (map :group grouped))) " stories"
+                                     (when (pos? junk) (str ", leaving out " junk " that weren't news")))
+                          :level :ok})
+            grouped)
+          (do (when answer
+                (log! run-id {:text "The sorting's answer held no stories, so the reports stay as they are"
+                              :level :error}))
+              nil))))))
+
+(def ^:private article-timeout-ms 20000)
+
+(defn- read-article
+  "The text of the article at `url`, or nil when it can't be read. Blocks."
+  [url]
+  (try (feed/article-text (sources/fetch-text url {:timeout-ms article-timeout-ms}))
+       (catch Exception e
+         (when (instance? InterruptedException e) (throw e))
+         nil)))
+
+(defn- read-articles
+  "Task: `stories` with the text of their main reports, :read-articles of
+  each (none when it is 0), read from the outlets' pages, all at once. A
+  page that can't be read, or holds too little to be the article, leaves
+  its report with its summary."
+  [{:keys [config run-id]} stories]
+  (m/sp
+    (let [wanted (vec (mapcat #(analysis/readers % (:read-articles config 0)) stories))]
+      (if (empty? wanted)
+        stories
+        (let [_ (log! run-id {:text (str "Reading " (count wanted) " articles in full for the dossiers")})
+              texts (m/? (apply m/join vector
+                                (map (fn [s] (m/timeout (m/via m/blk (read-article (:url s)))
+                                                        (+ article-timeout-ms 5000) nil))
+                                     wanted)))
+              by-url (into {} (keep (fn [[s t]] (when t [(:url s) t]))) (map vector wanted texts))]
+          (log! run-id {:text (str "Read " (count by-url) " of " (count wanted) " articles in full;"
+                                   " the rest stay as their summaries")
+                        :level :ok})
+          (mapv (fn [st] (update st :sources (fn [ss] (mapv #(if-let [t (by-url (:url %))] (assoc % :text t) %) ss))))
+                stories))))))
+
+(defn- dossiers-task
+  "Task: the desk's dossiers on `stories`, {key dossier}, written a few
+  stories a call, the calls at once. A call that fails costs only its
+  stories' dossiers."
+  [{:keys [config run-id] :as ctx} day stories notes]
+  (m/sp
+    (let [llm-config (desk-llm config)
+          batches (vec (partition-all analysis/dossier-batch stories))
+          _ (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
+                                     ") to write dossiers on " (count stories) " stories")})
+          answers (m/? (apply m/join vector
+                              (map (fn [b]
+                                     (softly run-id "A call for dossiers"
+                                             (ask ctx llm-config (analysis/dossier-prompt (dated day) b notes
+                                                                                          sources/long-date))))
+                                   batches)))
+          dossiers (apply merge {} (map (fn [b a] (when a (analysis/parse-dossiers a b))) batches answers))]
+      (log! run-id {:text (str "Wrote dossiers on " (count dossiers) " of " (count stories) " stories")
+                    :level (if (seq dossiers) :ok :error)})
+      dossiers)))
+
+(defn- connect-task
+  "Task: the desk's map of the trends and links among `stories`, from
+  their `dossiers`, the trends of the days before given to continue: see
+  analysis/parse-connections. nil when the call fails."
+  [{:keys [config store run-id] :as ctx} day stories dossiers]
+  (m/sp
+    (let [llm-config (desk-llm config)
+          recent (->> (store/trends-between store (minus-days day (:trend-days config 7)) (minus-days day 1))
+                      trends/trend-threads
+                      (take 15)
+                      vec)
+          _ (log! run-id {:text "Mapping the trends running through the day and how the stories connect"})
+          answer (m/? (softly run-id "Mapping the day"
+                              (ask ctx llm-config (analysis/connection-prompt (dated day) stories dossiers recent
+                                                                              sources/long-date))))]
+      (when answer
+        (let [{:keys [trends links] :as found} (analysis/parse-connections answer (keys dossiers)
+                                                                            (map :thread recent) day)]
+          (log! run-id {:text (str "Mapped " (count trends) (if (= 1 (count trends)) " trend" " trends")
+                                   " and " (count links) (if (= 1 (count links)) " link" " links")
+                                   (let [n (count (filter #(contains? (set (map :thread recent)) (:thread %)) trends))]
+                                     (when (pos? n) (str ", " n " of the trends running from the days before"))))
+                        :level :ok})
+          found)))))
+
+(def ^:private results-per-gap
+  "How many results of a gap's search join the sources."
+  2)
+
+(defn- gap-task
+  "Task: what the searches for the dossiers' gaps found, at most
+  :gap-searches of them, each result a source to be numbered after the
+  day's, with the :key of its story, the :gap it was searched for and
+  :gap-story, its story's sources as the analyst cites them. A result
+  that is one of the day's sources is left out."
+  [{:keys [config] :as ctx} stories dossiers seen]
+  (m/sp
+    (let [queries (analysis/gap-queries stories dossiers (or (:gap-searches config) 0))]
+      (when (seq queries)
+        (log! (:run-id ctx) {:text (str "Searching for " (count queries)
+                                        (if (= 1 (count queries)) " gap" " gaps") " in the reporting")})
+        (let [by-key (into {} (map (juxt :key identity)) stories)
+              results (m/? (apply m/join vector
+                                  (map-indexed (fn [i {:keys [query]}]
+                                                 (gather-one {:type :web-search :name (str "Gap search " (inc i))
+                                                              :results 3 :queries [query]}
+                                                             ctx))
+                                               queries)))]
+          (first
+           (reduce (fn [[out seen] [{:keys [key gap]} {:keys [items]}]]
+                     (let [fresh (take results-per-gap (news/unseen-items (news/dedupe-items items) seen))
+                           cites (str "[" (str/join ", " (map :n (:sources (by-key key)))) "]")]
+                       [(into out (map #(assoc (dissoc % :vector) :key key :gap gap :gap-story cites
+                                                   :story (:story (by-key key)))
+                                          fresh))
+                        (into seen fresh)]))
+                   [[] (vec seen)]
+                   (map vector queries results))))))))
+
+(defn- desk-task
+  "Task: the desk's work on the day's `stories` before the briefing:
+  {:stories :dossiers :map :found}, the main :dossier-stories of them read
+  and written up, their trends and links mapped when :connect-stories is
+  on, and the gaps in their reporting searched for. nil when the dossiers
+  are off or none could be written."
+  [{:keys [config run-id] :as ctx} day stories notes seen]
+  (m/sp
+    (let [n (:dossier-stories config)]
+      (when (pos? (or n 0))
+        (let [main (vec (take n stories))
+              _ (update-status! run-id assoc :state :preparing :items (count main))
+              main (m/? (read-articles ctx main))
+              dossiers (m/? (dossiers-task ctx day main notes))]
+          (when (seq dossiers)
+            (let [the-map (when (:connect-stories config) (m/? (connect-task ctx day main dossiers)))
+                  found (m/? (softly run-id "Searching for the gaps" (gap-task ctx main dossiers seen)))]
+              {:stories main :dossiers dossiers :map the-map :found (vec found)})))))))
 
 (defn- notes-llm
   "The model that keeps the notes: the :notes role's when the config gives
@@ -435,12 +627,12 @@
   "Task: the notes on the day's storylines updated from its reports by the
   analyst, and stored. A failure is logged rather than thrown, since the
   day's briefing is already filed; only a cancel propagates."
-  [{:keys [config store run-id] :as ctx} day numbered cited noted max-facts]
+  [{:keys [config store run-id] :as ctx} day numbered cited noted max-facts dossier-facts]
   (m/sp
     (let [candidates (notes/candidates numbered cited noted)]
       (when (seq candidates)
         (let [old (store/notes store (map first candidates))
-              {:keys [prompt ids]} (notes/compaction-prompt day candidates old max-facts)
+              {:keys [prompt ids]} (notes/compaction-prompt day candidates old max-facts dossier-facts)
               llm-config (notes-llm config)
               _ (log! run-id {:text (str "Updating the notes on " (count candidates) " storylines")})
               chat (or (:chat ctx) llm/chat)
@@ -502,27 +694,51 @@
             _ (when (< (count collapsed) (count embedded-items))
                 (log! run-id {:text (str "Collapsed " (- (count embedded-items) (count collapsed))
                                          " near-duplicate stories across outlets")}))
-            ranked (follow-stories store config day collapsed)
+            lines (recent-storylines store config day)
+            linked (trends/link-stories collapsed lines (:story-threshold config))
+            ;; the desk sorts the reports into stories, which are ranked whole
+            grouped (m/? (group-task ctx day linked))
+            half-life (:half-life-days config 2)
+            ranked (if grouped
+                     (trends/rank-groups grouped lines day half-life)
+                     (trends/rank linked lines day half-life))
             _ (when-let [followed (seq (filter #(> (:days %) 1) ranked))]
                 (log! run-id {:text (str "Followed " (count followed) " stories from earlier days, the longest"
                                          " in the news for " (apply max (map :days followed)) " days")}))
-            ;; a story that starts today is named by its own day and number
-            ranked (->> ranked (take (:max-items config 80)) news/cite
-                        (mapv (fn [s] (assoc s :story (or (:story s) (str day "/" (:n s)))))))
+            ;; a story that starts today is named by the day and number of
+            ;; its first source
+            ranked (-> (->> ranked (take (:max-items config 80)) news/cite)
+                       (analysis/story-ids day))
             _ (when (empty? ranked)
                 (throw (ex-info (if (seq gathered)
                                   (str "every story gathered was already in the briefings up to "
                                        (sources/long-date (:day earlier)))
                                   "no items were gathered from any source")
                                 {})))
-            _ (log! run-id {:text (str (count ranked) " stories to analyse after dropping"
-                                       " duplicates and older items")})
-            ;; the second round of research: historical precedents for the
-            ;; day's stories, numbered after them, cited like any other
+            _ (log! run-id {:text (str (count ranked) " reports"
+                                       (when grouped
+                                         (str " in " (count (distinct (map :group ranked))) " stories"))
+                                       " to analyse after dropping duplicates and older items")})
             max-facts (:story-notes config)
             kept (when max-facts (store/notes store (map :story ranked)))
-            history (m/? (precedents-task ctx day ranked kept))
-            numbered (news/cite (into ranked history))
+            stories (analysis/stories ranked)
+            desk (when (seq stories) (m/? (desk-task ctx day stories kept ranked)))
+            {:keys [dossiers found] the-map :map} desk
+            ;; what the gap searches found is numbered after the day's sources
+            ranked (cond->> ranked
+                     (seq dossiers) (mapv #(cond-> % (contains? dossiers (analysis/story-key %))
+                                                   (assoc :briefed true))))
+            day-sources (analysis/story-ids (news/cite (into ranked found)) day)
+            found (vec (drop (count ranked) day-sources))
+            ;; the second round of research: historical precedents for the
+            ;; day's stories, numbered after them, cited like any other
+            history (m/? (precedents-task ctx day ranked kept
+                                          (analysis/trends-block stories (:trends the-map))))
+            numbered (news/cite (into day-sources history))
+            graph (when (:map desk)
+                    (analysis/graph (:stories desk) dossiers (:links the-map)))
+            analysed (when desk
+                       (analysis/analysis-block (:stories desk) dossiers the-map found (some? graph)))
             llm-config (providers/role-llm config :analyst)
             established (some-> (:markdown earlier) news/overview)
             _ (when established
@@ -530,18 +746,20 @@
             running (notes/background kept numbered sources/long-date)
             _ (when running
                 (log! run-id {:text "Giving the model the notes on the stories still running"}))
-            prompt (news/render-prompt (or (:template ctx) (config/prompt-template config))
-                                       (str (sources/long-date day) " (" day ")")
+            prompt (news/render-desk-prompt (or (:template ctx) (config/prompt-template config))
+                                       (dated day)
                                        numbered
                                        (some->> [(some->> established
                                                           (previous-context (:day earlier)))
                                                  running]
                                                 (remove nil?)
                                                 seq
-                                                (str/join "\n\n")))
+                                                (str/join "\n\n"))
+                                       {:analysis analysed :graph? (some? graph)})
             _ (update-status! run-id assoc :state :analysing :items (count numbered)
                               :provider (name (:alias llm-config)) :model (:model llm-config))
             {:keys [answer reply]} (m/? (write-up ctx llm-config prompt "the briefing"))
+            answer (analysis/with-graph answer graph)
             doc (news/briefing answer numbered)
             known (set (map :n numbered))
             cited (filterv known (news/citations answer))]
@@ -552,11 +770,16 @@
                                 :tldr (news/tldr doc)
                                 :model (or (:model reply) (:model llm-config))
                                 :provider (name (:alias llm-config))})
+        (when-let [ts (seq (:trends the-map))]
+          (let [by-key (into {} (map (juxt :key identity)) stories)]
+            (store/save-trends! store day (map (fn [t] (update t :stories #(vec (distinct (keep (comp :story by-key) %)))))
+                                               ts))))
         (write-markdown! (or (:markdown-dir ctx) (config/path "briefings")) day doc)
         (log! run-id {:text (str "Filed the briefing: " (count cited) " of " (count numbered)
                                  " sources cited") :level :ok})
         (when max-facts
-          (m/? (update-notes ctx day numbered cited (keys kept) max-facts)))
+          (m/? (update-notes ctx day numbered cited (keys kept) max-facts
+                             (analysis/dossier-notes (:stories desk) dossiers))))
         (when-let [gone (seq (prune-days! ctx))]
           (log! run-id {:text (str "Dropped " (count gone) " old "
                                    (if (= 1 (count gone)) "day" "days")
@@ -664,12 +887,16 @@
             days (store/standfirsts-between store from to)
             last-period (trends/period-of kind (trends/plus-days from -1))
             established (some-> (store/digest store kind last-period) :markdown news/overview)
+            threads (trends/trend-threads (store/trends-between store from to))
+            _ (when (seq threads)
+                (log! run-id {:text (str "Following " (count threads) " trends the desk found through the period")}))
             prompt (trends/render-digest-prompt
                     (or (:digest-template ctx) (config/digest-template config))
                     label
                     (trends/days-block days sources/long-date)
                     (trends/digest-block lines sources/long-date)
-                    (some->> established (previous-digest-context kind last-period)))
+                    (some->> established (previous-digest-context kind last-period))
+                    (trends/trends-block threads sources/long-date))
             llm-config (providers/role-llm config :analyst)
             _ (update-status! run-id assoc :state :analysing :items (count lines)
                               :provider (name (:alias llm-config)) :model (:model llm-config))

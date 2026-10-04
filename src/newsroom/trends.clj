@@ -42,9 +42,12 @@
   "The stored sources grouped by the storyline they belong to, each
   {:story :centroid :sources}. A storyline is known by its centroid, the
   mean of its sources' vectors, so one whose sources have no vectors can't
-  be continued and is left out."
+  be continued and is left out. A gap search's result is left out too:
+  it was found for a story, not reported on it, so it doesn't count as
+  coverage."
   [history]
   (->> (filter :story history)
+       (remove :gap)
        (group-by :story)
        (keep (fn [[id ss]]
                (when-let [c (embed/centroid (keep :vector ss))]
@@ -95,6 +98,15 @@
 (defn- decay [age half-life]
   (m/pow 2.0 (- (/ (double age) half-life))))
 
+(defn- past-weight
+  "The weight of a storyline's earlier days: the outlets of each of its
+  `past` sources, each counting half as much every `half-life` days."
+  [past day half-life]
+  (reduce + (map (fn [s] (* (news/outlets s) (decay (days-between (:day s) day) half-life)))
+                 past)))
+
+(defn- round2 [x] (/ (m/round (* 100 x)) 100.0))
+
 (defn rank
   "The items by weight, heaviest first, each with its :weight and :days,
   the days its story has been in the news counting today. Items of equal
@@ -102,18 +114,57 @@
   [items lines day half-life]
   (let [by-story (into {} (map (juxt :story identity)) lines)
         weigh (fn [item]
-                (let [past (:sources (by-story (:story item)))
-                      weight (+ (news/outlets item)
-                                (reduce + (map (fn [s]
-                                                 (* (news/outlets s)
-                                                    (decay (days-between (:day s) day) half-life)))
-                                               past)))]
+                (let [past (:sources (by-story (:story item)))]
                   (assoc item
-                         :weight (/ (m/round (* 100 weight)) 100.0)
+                         :weight (round2 (+ (news/outlets item) (past-weight past day half-life)))
                          :days (inc (count (distinct (map :day past)))))))]
     (->> (map-indexed (fn [i item] [i (weigh item)]) items)
          (sort-by (fn [[i item]] [(- (:weight item)) i]))
          (mapv second))))
+
+(defn group-outlets
+  "How many outlets carried a story told in several of the day's reports,
+  `members`: the distinct origins of them all and of their copies."
+  [[lead & others :as members]]
+  (news/outlets (assoc lead :also (vec (concat others (mapcat :also members))))))
+
+(defn importance-factor
+  "How much a story's importance, 1 to 10, scales its weight: 5 leaves it
+  as its coverage has it, 10 doubles it, 1 cuts it to a fifth. A story
+  with no importance is left as it is."
+  [importance]
+  (if importance (/ importance 5.0) 1.0))
+
+(defn rank-groups
+  "The items, sorted into stories by their :group, ranked a story at a
+  time: by the story's weight, the outlets that carried any of its reports
+  today plus its storyline's earlier days, scaled by its :importance (see
+  importance-factor). Heaviest story first, the reports of one story
+  together, the most widely carried first. Each item gets its story's
+  :weight, :days and :group-outlets. Stories of equal score keep their
+  order."
+  [items lines day half-life]
+  (let [by-story (into {} (map (juxt :story identity)) lines)
+        groups (group-by :group items)]
+    (->> (distinct (map :group items))
+         (map-indexed
+          (fn [i g]
+            (let [members (->> (get groups g)
+                               (map-indexed vector)
+                               (sort-by (fn [[j s]] [(- (news/outlets s)) j]))
+                               (mapv second))
+                  lead (first members)
+                  past (:sources (by-story (:story lead)))
+                  outlets (group-outlets members)
+                  weight (+ outlets (past-weight past day half-life))
+                  days (inc (count (distinct (map :day past))))]
+              {:i i
+               :score (* weight (importance-factor (:importance lead)))
+               :members (mapv #(assoc % :weight (round2 weight) :days days :group-outlets outlets)
+                              members)})))
+         (sort-by (fn [{:keys [i score]}] [(- score) i]))
+         (mapcat :members)
+         vec)))
 
 ;; --- periods ---------------------------------------------------------------------
 
@@ -310,11 +361,69 @@
 
 (defn render-digest-prompt
   "The digest's prompt: the Selmer `template` with {{period}}, {{days}},
-  {{stories}} and {{previous}}, about the last digest, filled in. A template
-  with no place for the stories gets them after it, so the model always
-  sees what it may cite, and one with no place for `previous` gets it just
-  before them."
-  [template period days stories previous]
-  (template/fill (news/place-vars template (if previous ["previous" "stories"] ["stories"]) "stories")
-             {:period period :days days :stories stories :previous previous}))
+  {{stories}}, {{previous}}, about the last digest, and {{trends}}, the
+  trends the desk followed through the period, filled in. A template with
+  no place for the stories gets them after it, so the model always sees
+  what it may cite, and one with no place for `previous` or `trends` gets
+  them just before them."
+  ([template period days stories previous] (render-digest-prompt template period days stories previous nil))
+  ([template period days stories previous trends]
+   (template/fill (news/place-vars template (cond-> []
+                                              previous (conj "previous")
+                                              trends (conj "trends")
+                                              true (conj "stories"))
+                                   "stories")
+                  {:period period :days days :stories stories :previous previous :trends trends})))
+
+;; --- the desk's trends -------------------------------------------------------------
+
+(defn trend-threads
+  "The desk's daily trends, `rows` as the store keeps them, followed as
+  threads: each {:thread :name :summary :direction :days :first-day
+  :last-day :directions}, its name and summary its latest, :directions the
+  direction of each day it was seen. The longest running first, then the
+  latest seen."
+  [rows]
+  (->> (group-by :thread rows)
+       (map (fn [[thread rs]]
+              (let [rs (sort-by :day rs)
+                    latest (last rs)]
+                {:thread thread
+                 :name (:name latest)
+                 :summary (:summary latest)
+                 :direction (:direction latest)
+                 :days (count (distinct (map :day rs)))
+                 :first-day (:day (first rs))
+                 :last-day (:day latest)
+                 :day (:day latest)
+                 :directions (vec (keep (fn [r] (when (:direction r) [(:day r) (:direction r)])) rs))})))
+       (sort (fn [a b] (compare [(:days b) (:last-day b) (:thread a)]
+                                [(:days a) (:last-day a) (:thread b)])))
+       vec))
+
+(defn- turns
+  "The [day direction] pairs where the direction changed, the first one
+  included."
+  [directions]
+  (map first (partition-by second directions)))
+
+(defn trends-block
+  "The trend threads of a period for the digest prompt: how many days
+  each ran, how its direction moved, and where it stood last. nil when
+  there are none."
+  [threads long-date]
+  (when (seq threads)
+    (str/join "\n\n"
+              (for [{:keys [name summary days first-day last-day directions]} threads]
+                (str "### " name "\n"
+                     "Seen on " days (if (= 1 days) " day" " days")
+                     (when (not= first-day last-day)
+                       (str ", from " (long-date first-day) " to " (long-date last-day)))
+                     "."
+                     (when (seq directions)
+                       (str " Direction: "
+                            (str/join ", " (for [[d dir] (turns directions)]
+                                             (str dir " (" (long-date d) ")")))
+                            "."))
+                     (when summary (str "\nWhere it stood last: " summary)))))))
 
