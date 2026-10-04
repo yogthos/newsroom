@@ -50,7 +50,8 @@
               :doc (str "Items dated more than this many days before the briefing's day are skipped. "
                         "Undated items are always kept, and so are items dated the day after.")}
              {:key :max-items-per-source :type :int :min 1 :default 12
-              :doc "The most items taken from one source."}
+              :doc (str "The most items taken from one outlet in a source. A source that reads many "
+                        "outlets, like a feed reader, gives each its own share.")}
              {:key :max-items :type :int :min 1 :default 180
               :doc (str "The most items in all. The most widely carried stories are kept, and among "
                         "equals sources are taken in turn.")}

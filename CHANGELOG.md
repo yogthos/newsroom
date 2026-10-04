@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The item cap is per outlet.** `:max-items-per-source` now caps each
+  outlet within a source, by the outlet its items are credited to, rather
+  than the source as a whole. A source that reads one feed is unchanged; a
+  search whose queries credit outlets, or a plugin that reads many feeds
+  through one source, gives each outlet its own share instead of 12 between
+  them.
+
 ## v0.6.0 — 3 October 2026
 
 Before the analyst writes the briefing, a researcher grounds it in history.

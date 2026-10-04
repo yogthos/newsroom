@@ -159,6 +159,18 @@
             "https://e.com/2" "https://e.com/11" "https://e.com/3"]
            (map :url (pipeline/day-items results {:max-items-per-source 5} "2026-09-30"))))))
 
+(deftest the-item-cap-is-per-outlet
+  (let [from (fn [outlet n] (assoc (item n "2026-09-30") :source outlet))
+        results [{:items [(from "A" 1) (from "B" 2) (from "A" 3) (from "A" 4) (from "B" 5) (from "C" 6)]}
+                 {:items [(from "A" 10) (from "A" 11) (from "A" 12)]}]]
+    (testing "each outlet in a result gets the cap, the outlets taken in turn"
+      (is (= ["https://e.com/1" "https://e.com/2" "https://e.com/6" "https://e.com/10"
+              "https://e.com/3" "https://e.com/5" "https://e.com/11"]
+             (map :url (pipeline/day-items results {:max-items-per-source 2} "2026-09-30")))))
+    (testing "an outlet in two results is capped in each"
+      (is (= 4 (count (filter #(= "A" (:source %))
+                              (pipeline/day-items results {:max-items-per-source 2} "2026-09-30"))))))))
+
 (deftest the-window-runs-from-the-lookback-to-the-next-day
   (let [dated (fn [n day] (assoc (item n day) :published (str day "T08:00:00Z")))
         results [{:items [(dated 1 "2026-09-28") (dated 2 "2026-09-29") (dated 3 "2026-09-30")
