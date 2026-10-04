@@ -472,10 +472,10 @@
             notes (store/notes store (keep :story items))
             answer (m/? (softly run-id "Sorting the reports into stories"
                                 (ask ctx llm-config (analysis/grouping-prompt (dated day) items notes))))
-            parsed (some-> answer (analysis/parse-grouping (count items)))]
-        (if parsed
-          (let [grouped (analysis/apply-grouping items parsed)
-                junk (- (count items) (count grouped))]
+            parsed (some-> answer (analysis/parse-grouping (count items)))
+            grouped (some->> parsed (analysis/apply-grouping items))]
+        (if (seq grouped)
+          (let [junk (- (count items) (count grouped))]
             (log! run-id {:text (str "Sorted " (count grouped) " reports into "
                                      (count (distinct (map :group grouped))) " stories"
                                      (when (pos? junk) (str ", leaving out " junk " that weren't news")))
@@ -492,8 +492,8 @@
   "The text of the article at `url`, or nil when it can't be read. Blocks."
   [url]
   (try (feed/article-text (sources/fetch-text url {:timeout-ms article-timeout-ms}))
-       (catch Exception e
-         (when (instance? InterruptedException e) (throw e))
+       (catch Throwable e
+         (when (interrupted? e) (throw e))
          nil)))
 
 (defn- read-articles
@@ -610,10 +610,11 @@
       (when (pos? (or n 0))
         (let [main (vec (take n stories))
               _ (update-status! run-id assoc :state :preparing :items (count main))
-              main (m/? (read-articles ctx main))
+              main (or (m/? (softly run-id "Reading the articles" (read-articles ctx main))) main)
               dossiers (m/? (dossiers-task ctx day main notes))]
           (when (seq dossiers)
-            (let [the-map (when (:connect-stories config) (m/? (connect-task ctx day main dossiers)))
+            (let [the-map (when (:connect-stories config)
+                            (m/? (softly run-id "Mapping the day" (connect-task ctx day main dossiers))))
                   found (m/? (softly run-id "Searching for the gaps" (gap-task ctx main dossiers seen)))]
               {:stories main :dossiers dossiers :map the-map :found (vec found)})))))))
 
@@ -697,7 +698,7 @@
             lines (recent-storylines store config day)
             linked (trends/link-stories collapsed lines (:story-threshold config))
             ;; the desk sorts the reports into stories, which are ranked whole
-            grouped (m/? (group-task ctx day linked))
+            grouped (m/? (softly run-id "Sorting the reports into stories" (group-task ctx day linked)))
             half-life (:half-life-days config 2)
             ranked (if grouped
                      (trends/rank-groups grouped lines day half-life)
@@ -722,12 +723,17 @@
             max-facts (:story-notes config)
             kept (when max-facts (store/notes store (map :story ranked)))
             stories (analysis/stories ranked)
-            desk (when (seq stories) (m/? (desk-task ctx day stories kept ranked)))
+            desk (when (seq stories)
+                   (m/? (softly run-id "The desk's work" (desk-task ctx day stories kept ranked))))
             {:keys [dossiers found] the-map :map} desk
-            ;; what the gap searches found is numbered after the day's sources
+            ;; a report a dossier was written from is briefed by it
+            briefed (set (for [st (:stories desk)
+                               :when (contains? dossiers (:key st))
+                               s (analysis/dossier-sources st)]
+                           (:n s)))
             ranked (cond->> ranked
-                     (seq dossiers) (mapv #(cond-> % (contains? dossiers (analysis/story-key %))
-                                                   (assoc :briefed true))))
+                     (seq briefed) (mapv #(cond-> % (contains? briefed (:n %)) (assoc :briefed true))))
+            ;; what the gap searches found is numbered after the day's sources
             day-sources (analysis/story-ids (news/cite (into ranked found)) day)
             found (vec (drop (count ranked) day-sources))
             ;; the second round of research: historical precedents for the
@@ -770,10 +776,10 @@
                                 :tldr (news/tldr doc)
                                 :model (or (:model reply) (:model llm-config))
                                 :provider (name (:alias llm-config))})
-        (when-let [ts (seq (:trends the-map))]
-          (let [by-key (into {} (map (juxt :key identity)) stories)]
-            (store/save-trends! store day (map (fn [t] (update t :stories #(vec (distinct (keep (comp :story by-key) %)))))
-                                               ts))))
+        ;; in place of a rerun's, even when this run found none
+        (let [by-key (into {} (map (juxt :key identity)) stories)]
+          (store/save-trends! store day (map (fn [t] (update t :stories #(vec (distinct (keep (comp :story by-key) %)))))
+                                             (:trends the-map))))
         (write-markdown! (or (:markdown-dir ctx) (config/path "briefings")) day doc)
         (log! run-id {:text (str "Filed the briefing: " (count cited) " of " (count numbered)
                                  " sources cited") :level :ok})

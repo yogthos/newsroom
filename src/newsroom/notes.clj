@@ -42,6 +42,8 @@
   (let [cited (set cited)
         noted (set noted)]
     (->> (filter :story sources)
+         ;; what a gap search found is background, not the day's reporting
+         (remove :gap)
          (group-by :story)
          (filter (fn [[story ss]] (or (contains? noted story) (some #(contains? cited (:n %)) ss))))
          (sort-by (fn [[story ss]] [(- (reduce max (map #(or (:weight %) 1) ss))) story]))

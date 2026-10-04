@@ -26,7 +26,10 @@
   (let [cs (notes/candidates today [5] #{"fed"})]
     (is (= ["fed" "cited-one"] (map first cs))
         "heaviest first: one already noted, one the briefing cited, not one it passed over")
-    (is (= [1 2] (map :n (second (first cs)))) "with every report of the day on it")))
+    (is (= [1 2] (map :n (second (first cs)))) "with every report of the day on it"))
+  (testing "what a gap search found isn't the day's reporting"
+    (let [cs (notes/candidates (conj today (assoc (src 6 "fed") :gap "why now")) [5 6] #{"fed"})]
+      (is (= [1 2] (map :n (second (first cs))))))))
 
 (deftest the-prompt-names-each-fact-and-report
   (let [cs (notes/candidates today [4 5] #{"fed"})

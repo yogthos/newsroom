@@ -266,6 +266,11 @@
   "Less text than this is a teaser or a paywall, not the article."
   400)
 
+(def ^:private max-page-chars
+  "The most of a page that is searched for the article, so a huge page or
+  a file that isn't one costs no more than a long article's page."
+  1000000)
+
 (def ^:private min-paragraph-chars
   "A shorter paragraph is a caption, a byline or a link, not the story."
   60)
@@ -288,7 +293,9 @@
   [html]
   (let [html (str/replace html #"(?is)<(script|style|noscript|nav|header|footer|aside|form|figure)\b[^>]*>.*?</\1>" " ")
         scope (or (some-> (re-find #"(?is)<article\b[^>]*>(.*)</article>" html) second) html)]
-    (->> (re-seq #"(?is)<p\b[^>]*>(.*?)</p>" scope)
+    ;; a paragraph also ends where the next starts, since HTML lets </p> be
+    ;; left out, and scanning to the end from each <p> would be quadratic
+    (->> (re-seq #"(?is)<p\b[^>]*>(.*?)(?=</p>|<p\b|\z)" scope)
          (map (comp plain-text second))
          (filter #(>= (count %) min-paragraph-chars))
          (remove #(re-find boilerplate %))
@@ -296,10 +303,11 @@
 
 (defn article-text
   "The text of the story on an article page, cut to `article-chars`: its
-  structured data's articleBody when it has one, else its paragraphs. nil
-  when there is too little to be the article, as behind a paywall."
+  structured data's articleBody when it holds the article, else its
+  paragraphs. nil when there is too little to be the article, as behind a
+  paywall."
   [html]
-  (let [html (str html)
-        text (or (article-body html) (paragraphs html))]
-    (when (>= (count text) min-article-chars)
-      (clip text article-chars))))
+  (let [html (let [s (str html)] (cond-> s (> (count s) max-page-chars) (subs 0 max-page-chars)))]
+    (some-> (some #(when (>= (count %) min-article-chars) %)
+                  [(article-body html) (paragraphs html)])
+            (clip article-chars))))

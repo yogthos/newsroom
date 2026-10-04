@@ -32,7 +32,14 @@
            groups)
         "a report out of range is dropped, one already placed stays where it was first named")
     (is (= #{5} junk) "a report put in a story isn't junk"))
-  (is (nil? (analysis/parse-grouping "no idea" 5))))
+  (is (nil? (analysis/parse-grouping "no idea" 5)))
+  (testing "an answer that sorts nothing into a story is no sorting"
+    (is (nil? (analysis/parse-grouping "{\"stories\": [], \"junk\": [1, 2]}" 2))))
+  (testing "a number too big to mean anything is dropped, not thrown on"
+    (is (= [{:title "Big" :members [1] :importance nil :status nil}]
+           (:groups (analysis/parse-grouping
+                     "{\"stories\": [{\"title\": \"Big\", \"reports\": [1, 12345678901234567890, \"99999999999999999999\"],
+                       \"importance\": 1e300}]}" 2))))))
 
 (deftest grouping-sorts-the-items-into-stories
   (let [items [(item 1 :story "fed") (item 2) (item 3 :story "old") (item 4 :story "fed") (item 5)]
@@ -201,4 +208,16 @@
                     "<p>Subscribe to our newsletter to keep reading the latest news every day.</p></article>")]
       (is (= (str/trim para) (feed/article-text html)))))
   (testing "a teaser is not the article"
-    (is (nil? (feed/article-text "<p>Only a short teaser behind the paywall, nothing more to read here.</p>")))))
+    (is (nil? (feed/article-text "<p>Only a short teaser behind the paywall, nothing more to read here.</p>"))))
+  (testing "an empty or teaser articleBody leaves the paragraphs to give the text"
+    (is (= (str/trim para)
+           (feed/article-text (str "<script type=\"application/ld+json\">{\"articleBody\": \"\"}</script>"
+                                   "<article><p>" para "</p></article>")))))
+  (testing "a paragraph left open ends where the next starts"
+    (is (= (str (str/trim para) "\n\n" (str/trim para))
+           (feed/article-text (str "<article><p>" para "<p>" para "</article>")))))
+  (testing "a long page of unclosed paragraphs is read quickly"
+    (let [html (apply str (repeat 20000 "<p>x"))
+          start (System/currentTimeMillis)]
+      (is (nil? (feed/article-text html)))
+      (is (< (- (System/currentTimeMillis) start) 5000)))))

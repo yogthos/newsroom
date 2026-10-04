@@ -57,12 +57,18 @@
 
 (defn- maps [v] (filterv map? (if (sequential? v) v [])))
 
+(defn- small-number
+  "The whole number `v` is or names, 3 or \"[3]\", when it is small enough
+  to mean anything here, else nil."
+  [v]
+  (cond (number? v) (when (< -1e9 v 1e9) (long v))
+        (string? v) (some-> (re-find #"\d+" v) (as-> d (when (<= (count d) 9) (parse-long d))))))
+
 (defn- numbers
   "The numbers `v` names, 3, \"3\", \"[3]\" or a list of them."
   [v]
   (->> (if (sequential? v) v [v])
-       (keep #(cond (integer? %) (long %)
-                    (string? %) (some-> (re-find #"\d+" %) parse-long)))
+       (keep #(when (or (integer? %) (string? %)) (small-number %)))
        distinct
        vec))
 
@@ -71,9 +77,8 @@
 (def status-of notes/status-of)
 
 (defn- importance-of [v]
-  (let [n (cond (number? v) (long v)
-                (string? v) (some-> (re-find #"\d+" v) parse-long))]
-    (when n (max 1 (min 10 n)))))
+  (when-let [n (small-number v)]
+    (max 1 (min 10 n))))
 
 ;; --- 1. sorting the reports into stories -------------------------------------------
 
@@ -124,7 +129,7 @@
   {:groups [{:title :members :importance :status}] :junk #{i}}, the
   reports by their number. A report is in the first story that names it,
   a number out of range is dropped, and a report named as junk and in a
-  story is kept. nil when the answer has no stories."
+  story is kept. nil when the answer sorts no report into a story."
   [answer n]
   (let [m (json-object answer)
         in-range? #(<= 1 % n)]
@@ -144,8 +149,9 @@
                           [groups placed])))
                     [[] #{}]
                     (maps (get m "stories")))]
-        {:groups groups
-         :junk (set (remove placed (filter in-range? (numbers (get m "junk")))))}))))
+        (when (seq groups)
+          {:groups groups
+           :junk (set (remove placed (filter in-range? (numbers (get m "junk")))))})))))
 
 (defn- shared-story
   "The storyline most of `members` continue, the first of them on a tie,
@@ -236,6 +242,11 @@
   "The most reports a dossier is written from."
   6)
 
+(defn dossier-sources
+  "The sources of `story` its dossier is written from."
+  [story]
+  (take reports-per-dossier (:sources story)))
+
 (defn readers
   "The sources of `story` worth reading in full: up to `n`, one a source,
   the most widely carried first, which is the order they come in."
@@ -270,7 +281,7 @@
        (when status (str "Status as sorted: " status "\n"))
        (when-let [bg (note-background (get notes story) long-date)] (str bg "\n"))
        "Reports:\n\n"
-       (str/join "\n\n" (map report-block (take reports-per-dossier sources)))))
+       (str/join "\n\n" (map report-block (dossier-sources {:sources sources})))))
 
 (defn dossier-prompt
   "The prompt that has the desk write a dossier on each of `stories`, with
