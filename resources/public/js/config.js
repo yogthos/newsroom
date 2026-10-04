@@ -91,3 +91,22 @@ document.addEventListener('input', (e) => {
   if (!title) return;
   title.textContent = el.value.trim() || title.dataset.cfgDefault;
 });
+
+// A prompt's reset button puts the default packaged with newsroom in its
+// field. Nothing is saved until the form is: Save keeps it, Discard
+// changes brings the old prompt back.
+document.addEventListener('click', (e) => {
+  const button = e.target.closest('[data-cfg-reset]');
+  if (!button) return;
+  e.preventDefault();
+  const name = button.dataset.cfgReset;
+  const field = document.getElementById(name);
+  const source = [...document.querySelectorAll('[data-cfg-default-for]')]
+    .find((el) => el.dataset.cfgDefaultFor === name);
+  if (!field || !source) return;
+  field.value = source.value;
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  field.focus();
+  const state = button.parentElement.querySelector('.reset-state');
+  if (state) state.textContent = ' Reset to the default. Save to keep it, or discard changes to undo.';
+});

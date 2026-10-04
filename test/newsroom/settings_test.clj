@@ -352,3 +352,20 @@
                       (finally (store/close st)))]
         (is (str/includes? page "data-cfg-test=\"sources.0\""))
         (is (str/includes? page "data-cfg-test=\"sources.__0__\""))))))
+
+(deftest a-prompt-can-be-reset-to-the-default
+  (let [page (fn [tree] (str (h/html (config-page/article {:tree tree}))))
+        default (config/default-text "prompt.md")
+        mine (page {"prompt" "Mine: {{sources}}" "digest-prompt" (config/default-text "digest.md")})]
+    (testing "each prompt has a button that fills in the default packaged with newsroom"
+      (is (str/includes? mine "data-cfg-reset=\"prompt\""))
+      (is (str/includes? mine "data-cfg-reset=\"digest-prompt\""))
+      (is (str/includes? mine "data-cfg-reset=\"precedent-prompt\""))
+      (is (str/includes? mine (str (h/html [:textarea {:hidden true :disabled true "data-cfg-default-for" "prompt"}
+                                             default])))
+          "the default rides along with no name, so the form doesn't send it"))
+    (testing "the page says whether a prompt is the default"
+      (is (str/includes? mine "This differs from the default"))
+      (is (str/includes? mine "This is the default."))
+      (is (str/includes? mine "Blank, so the default is used.")))
+    (is (not (str/includes? (page {}) "data-cfg-reset=\"max-items\"")) "only prompts reset")))

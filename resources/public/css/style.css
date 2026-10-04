@@ -145,6 +145,7 @@ main { padding: 48px clamp(20px, 6vw, 80px) 80px; }
 .settings-form button { width: auto; margin: 0; padding: 5px 12px; }
 .settings-form button.add, .settings-form button.remove { background: var(--paper); color: var(--accent); }
 .settings-form button.remove { color: var(--bad); border-color: var(--rule); }
+.settings-form .prompt-reset { margin: .3rem 0; font-size: 13px; }
 .checks label { margin-right: 14px; font-weight: normal; }
 .list .entries { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .entry.inline { display: flex; gap: 6px; }

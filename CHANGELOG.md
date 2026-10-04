@@ -50,6 +50,10 @@ dossiers and the map, with the numbered sources to cite.
   are updated with the dossiers' facts.
 - **A `:desk` role** gives the desk's work its own model; the analyst's when
   it's left out.
+- **Resetting a prompt.** Each prompt on the config page has a button that
+  fills in the default packaged with newsroom, and says whether the saved
+  prompt is that default. Nothing changes until the form is saved, so a
+  prompt can be looked over, or parts of an old one carried across, first.
 - **secrets.edn.** Keys can be kept in `secrets.edn` in the config directory,
   a map from each key's name to its value, instead of being exported in the
   shell that starts newsroom. Whatever names a key, `:api-key-env`, a
@@ -66,7 +70,8 @@ dossiers and the map, with the numbered sources to cite.
 - The default prompts ask the analyst to build on the desk's work. A prompt
   already saved in the settings is left alone: the dossiers and the map go
   just before its sources, through `{{analysis}}`, and it goes on drawing its
-  own graph unless it is changed to use `{{graph}}` as the default does.
+  own graph until it is reset to the default, or changed to use `{{graph}}`
+  as the default does.
 - **The item cap is per outlet.** `:max-items-per-source` now caps each
   outlet within a source, by the outlet its items are credited to, rather
   than the source as a whole. A source that reads one feed is unchanged; a

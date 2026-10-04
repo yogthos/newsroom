@@ -8,6 +8,7 @@
   add button is pressed; a source has a template per type, from the type's
   shape."
   (:require [clojure.string :as str]
+            [newsroom.config :as config]
             [newsroom.llm.providers :as providers]
             [newsroom.plugin :as plugin]
             [newsroom.settings :as settings]
@@ -51,11 +52,38 @@
 
 (declare field-row extra-row)
 
+(defn- prompt-default
+  "The default a prompt field resets to, the text packaged with newsroom,
+  or nil for a field that isn't a prompt."
+  [field]
+  (some-> (get config/prompts (:key field)) config/default-text))
+
+(defn- normalized [s] (str/trim (str/replace (str s) "\r\n" "\n")))
+
+(defn- prompt-reset
+  "Under a prompt: whether it is the default packaged with this newsroom,
+  and a button that puts that default in the field, for the user to look
+  over and save, or discard. The default rides along in a textarea with no
+  name, which the form doesn't send."
+  [nm v default]
+  [:div.prompt-reset
+   [:textarea {:hidden true :disabled true "data-cfg-default-for" nm} default]
+   [:button.add {:type "button" "data-cfg-reset" nm} "Reset to default"]
+   [:span.muted.reset-state
+    (cond
+      (str/blank? (shown v)) " Blank, so the default is used."
+      (= (normalized v) (normalized default)) " This is the default."
+      :else (str " This differs from the default packaged with this newsroom. Resetting fills in the "
+                 "default here; save to keep it, or discard to keep yours."))]])
+
 (defn- input
   "The control for `field`, named `nm`, holding the form value `v`."
   [field nm v errors depth]
   (case (:type field)
-    :text [:textarea {:id nm :name nm :rows (:rows field 4)} (shown v)]
+    :text (if-let [default (prompt-default field)]
+            (list [:textarea {:id nm :name nm :rows (:rows field 4)} (shown v)]
+                  (prompt-reset nm v default))
+            [:textarea {:id nm :name nm :rows (:rows field 4)} (shown v)])
 
     :boolean [:select {:id nm :name nm}
               (for [[value text] [["" "Default"] ["true" "Yes"] ["false" "No"]]]
