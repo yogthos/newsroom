@@ -10,6 +10,7 @@
             [newsroom.news-test]
             [newsroom.notes-test]
             [newsroom.pipeline-test]
+            [newsroom.precedents-test]
             [newsroom.settings-test]
             [newsroom.plugin-test]
             [newsroom.sources-test]
@@ -26,6 +27,7 @@
     newsroom.markdown-test
     newsroom.news-test
     newsroom.notes-test
+    newsroom.precedents-test
     newsroom.store-test
     newsroom.trends-test
     newsroom.pipeline-test

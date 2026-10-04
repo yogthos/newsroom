@@ -38,13 +38,23 @@
 (defn default-text [name]
   (slurp (io/resource (str "defaults/" name))))
 
+(def prompts
+  "The prompts, by setting, with the file in resources/defaults each one's
+  default is."
+  {:prompt "prompt.md"
+   :digest-prompt "digest.md"
+   :precedent-prompt "precedents.md"})
+
+(defn default-prompts
+  "Each prompt's default text, by setting."
+  []
+  (into {} (for [[k f] prompts] [k (default-text f)])))
+
 (defn default-settings
   "The settings before any are saved: resources/defaults/settings.edn, with
-  the default prompts as :prompt and :digest-prompt."
+  the default prompts."
   []
-  (assoc (edn/read-string (default-text "settings.edn"))
-         :prompt (default-text "prompt.md")
-         :digest-prompt (default-text "digest.md")))
+  (merge (edn/read-string (default-text "settings.edn")) (default-prompts)))
 
 (defn defaults
   "The whole default config, the static part and the settings."
@@ -72,17 +82,25 @@
   [file settings]
   (merge (defaults) settings (select-keys file static-keys)))
 
+(defn- template [config k]
+  (let [p (get config k)]
+    (if (str/blank? p) (default-text (prompts k)) p)))
+
 (defn prompt-template
   "The analysis prompt: the config's :prompt, the default when blank."
   [config]
-  (let [p (:prompt config)]
-    (if (str/blank? p) (default-text "prompt.md") p)))
+  (template config :prompt))
 
 (defn digest-template
   "The digest prompt: the config's :digest-prompt, the default when blank."
   [config]
-  (let [p (:digest-prompt config)]
-    (if (str/blank? p) (default-text "digest.md") p)))
+  (template config :digest-prompt))
+
+(defn precedent-template
+  "The researcher's prompt: the config's :precedent-prompt, the default
+  when blank."
+  [config]
+  (template config :precedent-prompt))
 
 (defn db-file [config]
   (or (:db config) (path "newsroom.sqlite3")))

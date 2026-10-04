@@ -1,74 +1,181 @@
 (ns newsroom.precedents
   "The pure core of the historical round: no IO, no clock, no storage.
 
-  Before the analyst writes the briefing, it is asked which of the day's
-  stories have a past worth knowing: an earlier event of the same kind,
-  whose course says what today's may lead to. The answer is search
-  queries; their results are gathered as sources of their own, marked
-  :precedent true, numbered after the day's, and cited like any other.
-  A precedent takes no part in the storylines: it is background, not a
-  story that started today or an earlier day of one that did."
+  Before the analyst writes the briefing, a researcher (the analyst's
+  model, or the :research role's) looks for the past that says how the
+  day's situation may develop: above all a period when a similar
+  combination of the day's trends came together, and how it resolved,
+  then earlier events like single stories. Their course is the ground the
+  briefing's projections stand on. To see the trends, it is shown how long
+  and how widely each story has run and the note on its storyline. It works in
+  rounds. It is shown the day's stories and the prompt, precedents.md by
+  default, and answers with search queries; it is shown their results,
+  each with an id, and searches again or picks. A pick names a result, the
+  day's stories it informs and a note on what it teaches: what happened,
+  how long it took, what it led to.
+
+  The picks become sources of their own, marked :precedent true, numbered
+  after the day's, and cited like any other. A precedent takes no part in
+  the storylines: it is background, not a story that started today or an
+  earlier day of one that did."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
-            [newsroom.news :as news]))
+            [newsroom.news :as news]
+            [newsroom.template :as template]))
 
 (def max-stories
-  "How many of the day's stories the queries are chosen from: the heaviest,
-  which are the ones the briefing will lead with."
-  10)
+  "How many of the day's stories the researcher is shown: the heaviest,
+  which are the ones the briefing will lead with, and enough of them to
+  see the trends that run through the day."
+  30)
 
-(defn- story-line [s]
-  (str "[" (:n s) "] " (:title s)
-       (when-not (str/blank? (:source s)) (str " (" (:source s) ")"))
-       (when-not (str/blank? (:summary s))
-         (str "\n" (subs (:summary s) 0 (min (count (:summary s)) 280))))))
+(def max-rounds
+  "The most rounds of searching, each a model call, before the researcher
+  has to pick from what it has found."
+  4)
 
-(defn queries-prompt
-  "The prompt that asks for the search queries, given the day's `sources`
-  numbered as the prompt shows them."
-  [sources max-queries]
-  (str "You find the historical background for a daily news briefing, to ground its analysis in precedent.\n\n"
-       "Here are the day's stories. For each one where the past has something to teach — an earlier event "
-       "of the same kind, a policy tried before, a cycle or standoff that has run before — write a web "
-       "search query that would find the telling coverage of that earlier episode. Name the actors and the "
-       "measure in it, and the years that matter. Leave out a story whose past is a curiosity rather than "
-       "a guide, and don't write a query for the day's news itself: search what came before.\n\n"
-       "Answer with JSON only, in this shape:\n"
-       "{\"queries\": [\"central bank rate pause cycles history 2015 2019\", \"EU tariffs on Chinese steel 2018 outcome\"]}\n\n"
-       "At most " max-queries " queries, the most instructive first. An empty list is a fine answer "
-       "when none of the day's stories has a past worth consulting.\n\n"
-       "Today's stories:\n\n"
-       (str/join "\n\n" (map story-line (take max-stories sources)))))
+(def results-per-query
+  "How many results each query brings back."
+  5)
 
-(defn parse-queries
-  "The search queries of the model's JSON answer, or nil when it isn't any.
-  A fence or prose around the JSON is ignored."
+(defn- clip [s n]
+  (let [s (str s)]
+    (if (> (count s) n) (str (subs s 0 n) "…") s)))
+
+(defn- story-line
+  "A story as the researcher sees it: how widely and how long it has run,
+  which says whether it is part of a trend, and its storyline's `note`
+  when it has one, which says what the trend is."
+  [s note long-date]
+  (let [outlets (news/outlets s)
+        days (or (:days s) 1)]
+    (str "[" (:n s) "] " (:title s)
+         (when-not (str/blank? (:source s)) (str " (" (:source s) ")"))
+         (when (or (> outlets 1) (> days 1))
+           (str "\nCoverage: " (str/join ", " (cond-> []
+                                                (> outlets 1) (conj (str outlets " outlets today"))
+                                                (> days 1) (conj (str "in the news on " days " days"))))))
+         (when-not (str/blank? (:summary s)) (str "\n" (clip (:summary s) 280)))
+         (when-not (str/blank? (:summary note))
+           (str "\nThe storyline so far"
+                (when-let [d (:first-day note)] (str ", since " (long-date d)))
+                ": " (clip (:summary note) 400))))))
+
+(defn render-prompt
+  "The researcher's first prompt: the Selmer `template` with {{date}},
+  {{stories}}, the day's numbered `sources` with the `notes` on their
+  storylines, {story note}, and {{searches}} and {{rounds}}, the budget,
+  filled in. A template with no place for the stories gets them after it."
+  [template date sources notes searches long-date]
+  (template/fill (news/place-vars template ["stories"] "stories")
+                 {:date date
+                  :stories (str/join "\n\n" (map #(story-line % (get notes (:story %)) long-date)
+                                                 (take max-stories sources)))
+                  :searches searches
+                  :rounds max-rounds}))
+
+(defn- json-object
+  "The JSON object in `answer`, read with string keys, or nil. A fence or
+  prose around it is ignored."
   [answer]
   (let [s (str answer)
         from (str/index-of s "{")
         to (str/last-index-of s "}")]
     (when (and from to (< from to))
-      (let [parsed (try (json/read-str (subs s from (inc to))) (catch Throwable _ nil))
-            queries (get parsed "queries")]
-        (when (sequential? queries)
-          (->> (map #(str/trim (str %)) queries)
-               (remove str/blank?)
-               (distinct)
-               (vec)))))))
+      (let [parsed (try (json/read-str (subs s from (inc to))) (catch Throwable _ nil))]
+        (when (map? parsed) parsed)))))
+
+(defn- story-numbers [v]
+  (->> (if (sequential? v) v [v])
+       (keep #(cond (integer? %) (long %)
+                    (string? %) (parse-long (str/trim (str/replace % #"[\[\]]" "")))))
+       distinct
+       vec))
+
+(defn parse-answer
+  "What the researcher's `answer` asks for: {:picks [{:id :stories :note}]}
+  when it has picked, which ends the research, {:queries [...]} when it
+  wants to search, nil when it says neither. Ids are upper-cased, so r4 is
+  R4."
+  [answer]
+  (let [m (json-object answer)
+        picks (get m "precedents")
+        queries (get m "queries")]
+    (cond
+      (sequential? picks)
+      {:picks (vec (for [p picks
+                         :when (map? p)
+                         :let [id (str/upper-case (str/trim (str (get p "id"))))]
+                         :when (not (str/blank? id))]
+                     {:id id
+                      :stories (story-numbers (or (get p "stories") (get p "story")))
+                      :note (str/trim (str (get p "note")))}))}
+
+      (sequential? queries)
+      {:queries (->> queries
+                     (map #(str/trim (str %)))
+                     (remove str/blank?)
+                     distinct
+                     vec)})))
 
 (defn search-source
-  "A :web-search source that runs the queries the model chose: at most
-  `max-queries` of them, `results` results each."
-  [queries results]
+  "A :web-search source that runs `queries`."
+  [queries]
   {:type :web-search :name "Precedent search"
-   :results results :queries queries})
+   :results results-per-query :queries queries})
 
-(defn mark
-  "The search results as precedent sources: marked :precedent true, credited
-  to the search that found them, without their :vector and :story, and with
-  copies of one story kept once."
-  [items source]
-  (mapv #(-> %
-             (dissoc :vector :story :n)
-             (assoc :precedent true :source source))
-        (news/dedupe-items items)))
+(defn new-results
+  "The `items` a search found that the researcher hasn't seen: none that is
+  one of the day's `stories` or a result shown in an earlier round, and
+  each story once. Each gets an :id, R1 on from `shown`'s count, which
+  the researcher picks it by."
+  [items stories shown]
+  (->> (news/unseen-items (news/dedupe-items items) (concat stories shown))
+       (map-indexed (fn [i item] (assoc (dissoc item :vector :story :n)
+                                        :id (str "R" (+ 1 i (count shown))))))
+       vec))
+
+(defn- result-entry [{:keys [id title source published url summary]}]
+  (str id ". " title
+       (when-not (str/blank? source) (str " (" source ")"))
+       (when published (str ", " published))
+       "\n" url
+       (when-not (str/blank? summary) (str "\n" (clip summary 600)))))
+
+(defn results-message
+  "What the researcher is told after a round: the `results` it brought
+  back, then what it has left to search with, `searches` over `rounds`
+  rounds. With none left of either, it is told to pick."
+  [results searches rounds]
+  (str (if (seq results)
+         (str "Results:\n\n" (str/join "\n\n" (map result-entry results)))
+         "The searches found nothing new.")
+       "\n\n"
+       (if (and (pos? searches) (pos? rounds))
+         (str "You have " searches (if (= 1 searches) " search" " searches") " left over "
+              rounds (if (= 1 rounds) " round" " rounds")
+              ". Search again, as {\"queries\": [...]}, or pick, as {\"precedents\": [...]}.")
+         "That was the last round. Pick now, as {\"precedents\": [...]}.")))
+
+(def pick-now
+  "What the researcher is told when it searched with nothing left to
+  search with."
+  "There are no searches left. Pick from the results you have, as {\"precedents\": [...]}.")
+
+(defn picked
+  "The precedents the researcher `picks` from the `results` it was shown,
+  as sources: each a result marked :precedent true, with the :informs
+  numbers of the day's stories, those of `day-ns`, and the researcher's
+  :note. A pick of no result shown is dropped, and so is a second pick of
+  one."
+  [picks results day-ns]
+  (let [by-id (into {} (map (juxt :id identity)) results)
+        day-ns (set day-ns)]
+    (->> picks
+         (keep (fn [{:keys [id stories note]}]
+                 (when-let [r (by-id id)]
+                   (cond-> (assoc (dissoc r :id) :precedent true)
+                     (seq (filter day-ns stories)) (assoc :informs (vec (filter day-ns stories)))
+                     (not (str/blank? note)) (assoc :note note)))))
+         (news/dedupe-items)
+         vec)))

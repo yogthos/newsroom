@@ -139,10 +139,10 @@
      (if digest
        (digest-panel st digest)
        (case state
-        :starting [:p "Starting the run for " (sources/long-date day) "…"]
-        :gathering [:p "Gathering the news for " (sources/long-date day) "…"]
-        :researching [:p "Researching the history behind " items " stories for " (sources/long-date day) "…"]
-        :analysing [:p "Analysing " items " items with " provider
+       :starting [:p "Starting the run for " (sources/long-date day) "…"]
+       :gathering [:p "Gathering the news for " (sources/long-date day) "…"]
+       :researching [:p "Looking for precedents to " items " stories for " (sources/long-date day) "…"]
+       :analysing [:p "Analysing " items " items with " provider
                    (when model [:span.muted " (" model ")"]) "…"]
        :done [:p "Filed " [:a {:href (str "/day/" day)} (sources/long-date day)]
               ": " items " sources, " cited " cited."]
@@ -231,10 +231,14 @@
   [:details.gathered
    [:summary "Everything gathered for the day (" (count sources) ")"]
    [:ol
-    (for [{:keys [n title url source summary also story]} sources]
+    (for [{:keys [n title url source summary also story informs note]} sources]
       [:li {:id (str "source-" n) :value n}
        [:a {:href url :rel "noopener" :target "_blank"} title]
        (when-not (str/blank? source) [:span.muted " — " source])
+       (when (seq informs)
+         [:span.muted " · precedent for "
+          (interpose ", " (for [i informs] [:a {:href (str "#source-" i)} (str "[" i "]")]))])
+       (when-not (str/blank? note) [:p.summary.note [:strong "What it teaches: "] note])
        (when-let [note (get noted story)]
          [:span.muted " · storyline: " [:a {:href (story-href story)} (:title note)]])
        (when (seq also)

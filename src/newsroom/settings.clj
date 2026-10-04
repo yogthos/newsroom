@@ -84,11 +84,12 @@
              {:key :story-notes :type :int :nullable? true :min 1 :default 12
               :doc (str "The most dated facts kept in the running note on each storyline a briefing cites. "
                         "The notes cost a model call a day; blank turns them off.")}
-             {:key :precedents :type :int :nullable? true :min 0 :default 6
-              :doc (str "Before the briefing is written, a model is asked which of the day's stories have a "
-                        "past worth consulting and its search queries are run; up to this many earlier "
-                        "events of the same kind join the sources as precedents, to ground the analysis. "
-                        "The round costs a model call and some searches; blank turns it off.")}]}
+             {:key :precedent-searches :type :int :nullable? true :min 1 :default 12
+              :doc (str "Before the briefing is written, a researcher searches the web for earlier events "
+                        "like the day's stories, in a few rounds, reading what each round finds before the "
+                        "next, and picks the ones that show how today's may develop. They join the sources "
+                        "as precedents, for the analyst to ground its projections in and cite. This is the "
+                        "most searches it may run; blank turns the research off.")}]}
    {:title "Digests"
     :fields [{:key :digests :type :keywords :options [:week :month] :default [:week :month]
               :doc (str "The digests written once a week (Monday to Sunday) or a month is over, ranking "
@@ -112,6 +113,12 @@
              {:key :digest-prompt :type :text :rows 12 :template? true
               :doc (str "The weekly and monthly digests' prompt, a Selmer template: {{period}}, {{days}}, "
                         "{{stories}} and {{previous}}, the last digest's overview, are filled in. "
+                        "Blank is the default.")}
+             {:key :precedent-prompt :type :text :rows 12 :template? true
+              :doc (str "What the researcher is told when it looks for precedents, a Selmer template: {{date}} "
+                        "is the day, {{stories}} the day's numbered stories, {{searches}} and {{rounds}} what "
+                        "it may spend. Its answers are read as JSON, {\"queries\": [...]} to search and "
+                        "{\"precedents\": [...]} to pick, so keep the default's shapes in it. "
                         "Blank is the default.")}]}])
 
 (def source-name-field
@@ -139,6 +146,8 @@
   [{:key :analyst :type :keyword :doc "Writes the briefing and the digests."}
    {:key :notes :type :keyword
     :doc "Keeps the story notes, routine extraction a cheaper model does well; the analyst when blank."}
+   {:key :research :type :keyword
+    :doc "Searches for the precedents and picks them; the analyst when blank."}
    {:key :default :type :keyword :doc "Any role that names no provider of its own."}])
 
 (def scalar-keys
@@ -624,6 +633,17 @@
           (spit f (static-text (select-keys file config/static-keys))))))
     (doseq [[_ f] prompts] (move-aside! f))
     (vec (keys imported))))
+
+(defn seed-prompts!
+  "Store the default of each prompt the database has none of, so a new
+  database, or one from before a prompt was added, holds every prompt to
+  edit. One the user has saved is left alone. Returns the keys stored."
+  [store]
+  (let [stored (store/settings store)
+        missing (into {} (remove (fn [[k _]] (contains? stored k))) (config/default-prompts))]
+    (when (seq missing)
+      (store/save-settings! store (merge stored missing)))
+    (vec (keys missing))))
 
 (defn stored
   "The stored settings, those of `setting-keys`."

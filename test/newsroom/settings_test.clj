@@ -167,6 +167,20 @@
             (is (= [] (settings/import! st (config/read-file)))))))
       (finally (store/close st)))))
 
+(deftest the-default-prompts-are-stored-to-edit
+  (let [st (store/open "sqlite::memory:")]
+    (try
+      (store/save-settings! st {:max-items 50 :prompt "Mine: {{sources}}"})
+      (is (= #{:digest-prompt :precedent-prompt} (set (settings/seed-prompts! st))))
+      (let [stored (settings/stored st)]
+        (is (= "Mine: {{sources}}" (:prompt stored)) "a prompt of the user's own is left alone")
+        (is (= (config/default-text "digest.md") (:digest-prompt stored)))
+        (is (= (config/default-text "precedents.md") (:precedent-prompt stored)))
+        (is (= 50 (:max-items stored))))
+      (testing "a second start has nothing to store"
+        (is (= [] (settings/seed-prompts! st))))
+      (finally (store/close st)))))
+
 (deftest saving-the-form-runs-with-it-from-then-on
   (plugin/load-all! "plugins" {})
   (let [st (store/open "sqlite::memory:")

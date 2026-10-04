@@ -33,13 +33,14 @@
  ;; as one outlet. nil turns collapsing off
  :dupe-threshold 0.62
 
- ;; before the analyst writes, a second round of research: a model is
- ;; shown the day's stories and asked which of them have a past worth
- ;; consulting; its search queries are run, and up to this many earlier
- ;; events of the same kind join the day's sources as precedents, to
- ;; ground the analysis and be cited like any other. nil turns the round
- ;; off
- :precedents 6
+ ;; before the analyst writes, a researcher searches the web for earlier
+ ;; events like the day's stories, in rounds, reading each round's results
+ ;; before the next, and picks the ones that show how today's may develop.
+ ;; They join the day's sources as precedents, for the analyst to ground
+ ;; its projections in and cite. At most this many searches; nil turns the
+ ;; research off. A :research role in :roles can give the job its own
+ ;; model; its prompt is :precedent-prompt
+ :precedent-searches 12
 
  ;; a story is followed from day to day: an item whose embedding is this
  ;; close to the sources of a story from the last :trend-days continues it.

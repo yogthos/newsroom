@@ -257,13 +257,14 @@
    :strategy :fibers})
 
 (defn start!
-  "Open the store, bring in any settings still in files, load plugins,
-  start the schedule and the server."
+  "Open the store, bring in any settings still in files and the default
+  prompts it doesn't have, load plugins, start the schedule and the server."
   []
   (config/ensure-home!)
   (let [file (config/read-file)
         st (store/open (config/db-file file))
         imported (settings/import! st file)
+        _ (settings/seed-prompts! st)
         cfg (config/effective file (settings/stored st))
         plugins (plugin/load-all! (config/path "plugins") cfg)
         _ (reset! system {:config cfg :store st :file (select-keys file config/static-keys)})

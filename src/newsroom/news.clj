@@ -176,11 +176,12 @@
   "The stories `sources` told: each source and the copies collapsed into it,
   which are what unseen-items checks a new day's items against."
   [sources]
+  ;; a precedent was background, not a story the day told
   (mapcat (fn [s]
             (cons s (for [{:keys [url] :as copy} (:also s) :when url]
                       (merge {:title "" :source "" :summary "" :published nil}
                              (select-keys copy [:title :url :source])))))
-          sources))
+          (remove :precedent sources)))
 
 (defn outlets
   "How many outlets carried a source: the distinct origins of it and of the
@@ -217,16 +218,29 @@
        (when-let [c (coverage s)] (str "\n" c))
        (when-not (str/blank? (:summary s)) (str "\n" (:summary s)))))
 
+(defn- precedent-line
+  "A precedent as the model sees it: a source, with the day's stories it
+  informs and what the researcher found it teaches."
+  [{:keys [informs note] :as s}]
+  (str (source-line (dissoc s :summary))
+       (when (seq informs) (str "\nPrecedent for " (str/join ", " (map #(str "[" % "]") informs))))
+       (when-not (str/blank? note) (str "\nWhat it teaches: " note))
+       (when-not (str/blank? (:summary s)) (str "\n" (:summary s)))))
+
+(def ^:private precedents-note
+  (str "Historical precedents. The sources below are past episodes a researcher found and picked as the "
+       "best guide to how today's situation may develop. One that bears on several of today's stories "
+       "is a parallel to a combination of today's trends, and says the most about where they are heading "
+       "together. Ground your projections in them: say what happened then, how long it took and how it "
+       "resolved, then how today's conditions differ and what that changes. Cite them by number like any "
+       "other source."))
+
 (defn- source-block [sources]
   (let [today (remove :precedent sources)
-        precedents (filterv :precedent sources)]
+        precedents (filter :precedent sources)]
     (str/join "\n\n" (concat (map source-line today)
-                             (when (seq precedents)
-                               [(str "Historical precedents: the sources below this line are earlier "
-                                     "events of the same kind as today's stories, found by web search. "
-                                     "Use them to ground the analysis — what happened last time, how long "
-                                     "it took, what it led to — and cite them as sources like any other.")])
-                             (map source-line precedents)))))
+                             (when (seq precedents) [precedents-note])
+                             (map precedent-line precedents)))))
 
 (def ^:private overview-chars
   "About how much of the last briefing's overview the model gets: a few

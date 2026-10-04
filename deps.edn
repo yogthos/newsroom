@@ -92,7 +92,8 @@
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {jlt-commons/writ
                                {:git/url "https://github.com/jlt-commons/writ"
-                                :git/sha "121af7eec49f579def1b8db3f132db90830f5e78"}}
+                                :git/tag "v0.1.2"
+                                :git/sha "57d863b290e7abe9f2918f969c2a6c74ee6d5a21"}}
                   :main-opts ["-m" "newsroom.test-runner"]}}
 
  :tasks {serve {:doc "run the newsroom server" :main-opts ["-m" "newsroom.core"]}

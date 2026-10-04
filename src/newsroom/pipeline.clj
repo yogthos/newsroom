@@ -7,11 +7,11 @@
   A run is one cancellable task. Cancelling it interrupts whatever fetch or
   model call is in flight and stores nothing. Only one run goes at a time.
 
-  Before the analyst writes, a second round of research can ground the day
-  in history: the model is shown the day's stories and asked which have a
-  past worth consulting, its queries are run through web search, and the
-  results join the day's sources, marked as precedents, to be cited like
-  any other and remembered with the day.
+  Before the analyst writes, a researcher can ground the day in history:
+  it searches the web for earlier events like the day's stories, over a
+  few rounds, and the ones it picks join the day's sources as precedents
+  (see newsroom.precedents), to be cited like any other and remembered
+  with the day.
 
   The weekly and monthly digests are runs too: they read the stored days of
   a period instead of gathering, rank its storylines (newsroom.trends) and
@@ -308,70 +308,102 @@
                                  (if (= 1 n) " day" " days") " stored before storylines were kept")}))
       n)))
 
-(defn- search-source
-  "Task: the items of a web-search `source`, read as gather-one reads any
-  source. The search is `ctx`'s :search when it has one (a test's), else
-  the real one. Fails when the search fails; a cancel propagates."
-  [{:keys [run-id] :as ctx} source]
+(defn- research-llm
+  "The model that looks for the precedents: the :research role's when the
+  config gives it one, else the analyst's."
+  [config]
+  (providers/role-llm config (if (get-in config [:roles :research]) :research :analyst)))
+
+(defn- search-round
+  "Task: the items `queries` find, read as gather-one reads any source,
+  through `ctx`'s :search when it has one (a test's). Fails when the
+  search does; a cancel propagates."
+  [ctx queries]
   (m/sp
     (let [search (or (:search ctx) gather-one)
-          result (m/? (search source ctx))]
-      (cond
-        (:error result) (throw (ex-info (:error result) {}))
-        :else (do (log! run-id {:text (str (count (:items result)) " results for the "
-                                           (count (:queries source)) " precedent queries")})
-                  (vec (:items result)))))))
+          result (m/? (search (precedents/search-source queries) ctx))]
+      (if (:error result)
+        (throw (ex-info (:error result) {}))
+        (vec (:items result))))))
+
+(defn- research
+  "Task: the researcher's rounds over the day's `stories`, from the first
+  `prompt`: {:picks :shown}, what it picked and every result it was shown.
+  Each round its queries are searched, up to the `searches` it has left,
+  and it is shown what they found. It stops when it picks, when it answers
+  with neither queries nor picks, or, once it is out of searches or
+  rounds, when it is told to pick and doesn't. Fails when a call or a
+  search does."
+  [{:keys [run-id] :as ctx} llm-config stories prompt searches]
+  (let [chat (or (:chat ctx) llm/chat)]
+    (m/sp
+      (loop [messages [{:role "user" :content prompt}]
+             shown []
+             left searches
+             rounds precedents/max-rounds
+             told-to-pick? false]
+        (let [reply (m/? (m/via m/blk (chat llm-config {:messages messages :on-delta (fn [_])})))
+              content (str/trim (str (:content reply)))
+              {:keys [picks queries]} (precedents/parse-answer content)
+              messages (conj messages {:role "assistant" :content content})]
+          (cond
+            picks {:picks picks :shown shown}
+            (empty? queries) {:picks [] :shown shown}
+            (or (zero? left) (zero? rounds))
+            (if told-to-pick?
+              {:picks [] :shown shown}
+              (recur (conj messages {:role "user" :content precedents/pick-now}) shown left rounds true))
+            :else
+            (let [queries (vec (take left queries))
+                  _ (log! run-id {:text (str "Searching for precedents: "
+                                             (str/join "; " (map #(str "“" % "”") queries)))})
+                  fresh (precedents/new-results (m/? (search-round ctx queries)) stories shown)
+                  left (- left (count queries))
+                  rounds (dec rounds)]
+              (log! run-id {:text (str (count fresh) " new results for the researcher to read")})
+              (recur (conj messages {:role "user" :content (precedents/results-message fresh left rounds)})
+                     (into shown fresh) left rounds false))))))))
 
 (defn- precedents-task
-  "Task: the second round of research. The analyst (or whichever model the
-  config gives the job) is shown the day's numbered stories and asked which
-  of them have a past worth consulting; its queries are run through web
-  search and the results come back marked as precedents, capped at
-  :precedents of them. A failed query call or search is logged and the day
-  is analysed without precedents rather than lost; only a cancel
-  propagates. nil when the round is off or finds nothing."
-  [{:keys [config store run-id] :as ctx} numbered]
+  "Task: the research before the briefing. A researcher, the :research
+  role's model or the analyst's, is shown the day's numbered `stories`,
+  with the `notes` on their storylines, and searches the web over a few
+  rounds for past periods when today's trends came together and for
+  earlier events like single stories,
+  then picks the results that show how today's may develop, with a note
+  on each. Its picks come back as precedent sources. A failed call or
+  search is logged and the day is analysed without precedents rather than
+  lost; only a cancel propagates. nil when the research is off or keeps
+  nothing."
+  [{:keys [config run-id] :as ctx} day stories notes]
   (m/sp
-    (let [max-n (:precedents config)]
-      (when (pos? (or max-n 0))
-        (let [max-queries 5
-              llm-config (providers/role-llm config :analyst)
-              _ (update-status! run-id assoc :state :researching)
+    (let [searches (:precedent-searches config)]
+      (when (pos? (or searches 0))
+        (let [llm-config (research-llm config)
+              _ (update-status! run-id assoc :state :researching :items (count stories))
               _ (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
-                                         ") which of the day's stories have a past worth consulting")})
-              chat (or (:chat ctx) llm/chat)
-              reply (try (m/? (m/via m/blk (chat llm-config {:messages [{:role "user"
-                                                                          :content (precedents/queries-prompt numbered max-queries)}]
-                                                                :on-delta (fn [_])})))
-                          (catch Throwable e
-                            (if (interrupted? e)
-                              (throw e)
-                              (do (log! run-id {:text (str "The precedent research failed: "
-                                                           (or (ex-message e) (str e)))
-                                                :level :error})
-                                  nil))))
-              queries (when reply
-                        (take max-queries (precedents/parse-queries (str/trim (str (:content reply))))))]
-          (if (empty? queries)
-            (do (log! run-id {:text "The day's stories have no past worth consulting"})
+                                         ") to look for precedents for the day's stories")})
+              prompt (precedents/render-prompt (config/precedent-template config)
+                                               (str (sources/long-date day) " (" day ")")
+                                               stories notes searches sources/long-date)
+              outcome (m/? (m/attempt (research ctx llm-config stories prompt searches)))
+              {:keys [picks shown]} (try (outcome)
+                                         (catch Throwable e
+                                           (when (interrupted? e) (throw e))
+                                           (log! run-id {:text (str "The research for precedents failed: "
+                                                                    (or (ex-message e) (str e)))
+                                                         :level :error})
+                                           nil))
+              found (precedents/picked picks shown (map :n stories))]
+          (if (empty? found)
+            (do (when picks
+                  (log! run-id {:text (if (seq shown)
+                                        (str "No precedents kept from the " (count shown) " results read")
+                                        "The researcher found no past worth searching for")}))
                 nil)
-            (let [source (precedents/search-source queries 6)
-                  items (try (m/? (search-source ctx source))
-                             (catch Throwable e
-                               (if (interrupted? e)
-                                 (throw e)
-                                 (do (log! run-id {:text (str "The search for precedents failed: "
-                                                              (or (ex-message e) (str e)))
-                                                  :level :error})
-                                     nil))))
-                  found (take (or max-n 6) (precedents/mark (or items []) (sources/source-name source)))]
-              (if (empty? found)
-                (do (log! run-id {:text "No historical precedent found for the day's stories"})
-                    nil)
-                (do (log! run-id {:text (str "Found " (count found) " historical "
-                                             (if (= 1 (count found)) "precedent" "precedents")
-                                             " for the day's stories") :level :ok})
-                    (vec found))))))))))
+            (do (log! run-id {:text (str "Kept " (count found) (if (= 1 (count found)) " precedent" " precedents")
+                                         " of the " (count shown) " results read") :level :ok})
+                found)))))))
 
 (defn- follow-stories
   "The items linked to the storylines of the last :trend-days (7 by
@@ -478,14 +510,14 @@
                                        " duplicates and older items")})
             ;; the second round of research: historical precedents for the
             ;; day's stories, numbered after them, cited like any other
-            history (m/? (precedents-task ctx ranked))
-            numbered (news/cite (into ranked (mapv (fn [p] (assoc p :precedent true)) (or history []))))
+            max-facts (:story-notes config)
+            kept (when max-facts (store/notes store (map :story ranked)))
+            history (m/? (precedents-task ctx day ranked kept))
+            numbered (news/cite (into ranked history))
             llm-config (providers/role-llm config :analyst)
             established (some-> (:markdown earlier) news/overview)
             _ (when established
                 (log! run-id {:text (str "Building on the briefing for " (sources/long-date (:day earlier)))}))
-            max-facts (:story-notes config)
-            kept (when max-facts (store/notes store (map :story numbered)))
             running (notes/background kept numbered sources/long-date)
             _ (when running
                 (log! run-id {:text "Giving the model the notes on the stories still running"}))

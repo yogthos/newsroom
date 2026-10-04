@@ -13,7 +13,10 @@
       (store/save-day! st {:day "2026-09-29" :sources [] :cited [] :markdown "old" :model "m" :provider "p"})
       (store/save-day! st {:day "2026-09-30"
                            :sources [{:n 1 :title "<script>alert(1)</script>" :url "https://e.com/1"
-                                      :source "Wire" :summary "s" :published nil}]
+                                      :source "Wire" :summary "s" :published nil}
+                                     {:n 2 :title "The 1973 oil shock" :url "https://e.com/1973"
+                                      :source "Precedent search" :summary "" :published nil
+                                      :precedent true :informs [1] :note "It took a decade to settle."}]
                            :cited [1]
                            :markdown "# Big day\n\nClaim [[1]](https://e.com/1).\n\n## Sources\n\n- [1] [x](https://e.com/1)"
                            :model "deepseek-v4-flash" :provider "deepseek"})
@@ -32,6 +35,9 @@
         (testing "the sidebar steps to the day before and lists the archive"
           (is (str/includes? page "href=\"/day/2026-09-29\">← Earlier"))
           (is (str/includes? page "29 September 2026")))
+        (testing "a precedent shows the stories it bears on and what it teaches"
+          (is (str/includes? page "precedent for <a href=\"#source-1\">[1]</a>"))
+          (is (str/includes? page "What it teaches: </strong>It took a decade to settle.")))
         (is (str/includes? page "deepseek / deepseek-v4-flash"))
         (is (re-find #"src=\"/js/diagrams.js\?v=[0-9a-f]+\"" page) "the page can draw diagrams")
         (testing "an asset's address changes with its content, so a cached one isn't kept"

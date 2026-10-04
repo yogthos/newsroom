@@ -47,6 +47,15 @@ that is not in the list, and do not invent facts the sources do not support.
 When you go beyond the sources, with historical background or projections, say
 so plainly.
 
+The sources may end with historical precedents: past episodes, each marked
+with the stories it bears on and what it teaches. Some are parallels to a
+single story. Others are periods when a combination of today's trends came
+together, and those matter most, since they show how the forces in play
+resolved last time they met. They are the ground for the projections. When
+you say where things are likely to lead, reason from how the precedent ran
+its course, cite it, and say how today's conditions differ from then and
+what that changes. Don't force a precedent onto a story it doesn't fit.
+
 ## Structure
 
 1. **Overview.** The day in a few paragraphs across all three domains: what
@@ -85,7 +94,8 @@ so plainly.
    today's evidence points to and why.
 6. **Outlook.** Close with the surprising or counterintuitive outcomes, the
    leverage points where intervention could change the trajectory, and the
-   major risks and ways things could fail.
+   major risks and ways things could fail. Build each trajectory on the
+   precedents where there are any, and cite them.
 
 Inside each part, open with what is happening, move to the mechanics of how
 it happens, and end with where it's likely to lead. When a domain has little

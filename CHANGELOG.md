@@ -2,19 +2,44 @@
 
 ## Unreleased
 
-Before the analyst writes the briefing, a second round of research grounds it
-in history: a model is shown the day's stories and asked which of them have a
-past worth consulting, its search queries are run through web search, and the
-earlier events it finds join the day's sources as precedents — numbered after
-today's, introduced by a note, cited like any other, and stored with the day.
+Before the analyst writes the briefing, a researcher grounds it in history.
+It reads the day's stories together, with how long each has run and the
+note on its storyline, to see the trends running through the day, and looks
+first for past periods when a similar combination of trends came together
+and how they resolved, then for earlier events like single stories. It
+searches over a few rounds, reading what each round finds before it searches
+again, then picks the results that show how today's situation may develop,
+with a note on each: what happened, how long it took, how it resolved, and
+how today differs. Its picks join the day's sources as precedents, numbered
+after today's, tied to the stories they bear on, cited like any other and
+stored with the day, notes and all. The analyst is told to build its
+projections on them.
 
 ### Added
 
-- **Historical precedents.** `:precedents` (default 6) turns the round on. The
-  precedents take no part in the storylines or their ranking: they are
-  background, not stories that ran. A failed search or query call is logged and
-  the day is analysed without precedents rather than lost. Blank on the config
-  page turns the round off.
+- **Historical precedents.** `:precedent-searches` (default 12) is the most
+  searches the researcher may run, over at most four rounds; blank on the
+  config page turns the research off. The precedents take no part in the
+  storylines or their ranking: they are background, not stories that ran,
+  and they don't count as told when the next day's stories are checked
+  against the last briefings. A failed search or model call is logged and
+  the day is analysed without precedents rather than lost.
+- **The researcher's prompt**, `:precedent-prompt`, is edited on the config
+  page with the others. Its default is `resources/defaults/precedents.md`.
+- **A `:research` role** gives the research its own model; the analyst's
+  when it's left out.
+- **The day page** shows each precedent's note and links the stories it
+  bears on.
+
+### Changed
+
+- **writ** is at v0.1.2 for the spec check.
+
+- **The default prompts are stored in the database** the first time
+  newsroom starts without them, so the config page holds each one to edit.
+  A prompt already saved is left alone.
+- **The briefing's prompt** tells the analyst to ground its projections in
+  the precedents and cite them.
 
 ## v0.5.0 — 3 October 2026
 
