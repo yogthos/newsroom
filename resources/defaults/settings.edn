@@ -17,7 +17,7 @@
  ;; sources and markdown files, after each new briefing. -1 keeps them all.
  :keep-days 100
 
- ;; the most items taken from one source, and in all
+ ;; the most items taken from one outlet in a source, and in all
  :max-items-per-source 12
  :max-items 180
 

@@ -54,7 +54,7 @@
                         "outlets, like a feed reader, gives each its own share.")}
              {:key :max-items :type :int :min 1 :default 180
               :doc (str "The most items in all. The most widely carried stories are kept, and among "
-                        "equals sources are taken in turn.")}
+                        "equals outlets are taken in turn.")}
              {:key :seen-days :type :int :min 0 :default 3
               :doc (str "A story told in any of this many past briefings is left out of today's, so one "
                         "dropped for space yesterday is not retold today.")}
