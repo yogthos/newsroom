@@ -1,0 +1,3 @@
+# LF everywhere, a Windows checkout included: the resources a build embeds and
+# the tests that compare against them expect it
+* text=auto eol=lf
