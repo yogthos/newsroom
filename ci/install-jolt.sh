@@ -18,5 +18,8 @@ case "$target" in
     exe=$(find "$dest" -name jolt -type f -perm -u+x | head -1) ;;
 esac
 [ -n "$exe" ] || { echo "no jolt binary in the ${ver} ${target} archive"; exit 1; }
-dirname "$exe" >> "$GITHUB_PATH"
+dir=$(dirname "$exe")
+# GITHUB_PATH takes a Windows path, which an MSYS2 shell has to convert to
+if command -v cygpath >/dev/null; then dir=$(cygpath -w "$dir"); fi
+echo "$dir" >> "$GITHUB_PATH"
 "$exe" --version

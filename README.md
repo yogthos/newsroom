@@ -10,7 +10,7 @@ It's written in Clojure and runs on [jolt](https://github.com/jolt-lang/jolt).
 
 ## Running it
 
-The [releases](https://github.com/yogthos/newsroom/releases) page has builds for macOS and Linux, so you can grab one of those and run `newsroom` without installing anything else. Windows isn't there yet, since the web server it runs on doesn't support Windows sockets. From a checkout you'd run it with jolt instead.
+The [releases](https://github.com/yogthos/newsroom/releases) page has builds for macOS, Linux and Windows, so you can grab one of those and run `newsroom` without installing anything else. The Windows archive carries the libraries it needs beside `newsroom.exe`. From a checkout you'd run it with jolt instead.
 
 Running in dev mode from the repo:
 

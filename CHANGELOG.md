@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Windows builds.** A release carries an x86_64 Windows archive, with the
+  sqlite, libxml2, OpenSSL and zlib DLLs it loads beside `newsroom.exe`, and
+  the test suite runs on Windows too. It needs Windows 10 or later, and jolt
+  0.8.16 or later to build.
+
+### Fixed
+
+- **secrets.edn on Windows.** The check that only its owner can read the
+  file is skipped where the file system has no POSIX permissions, which
+  used to stop the start.
+
 ## v0.8.0 — 5 October 2026
 
 ### Added

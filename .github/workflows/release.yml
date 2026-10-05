@@ -1,6 +1,7 @@
 name: release
 
-# Build standalone binaries for macOS (arm64) and Linux (x86_64) and attach
+# Build standalone binaries for macOS (arm64), Linux (x86_64) and Windows
+# (x86_64) and attach
 # them to the GitHub release when a v* tag is pushed.
 # workflow_dispatch builds the same archives as workflow artifacts without
 # publishing anything.
@@ -23,19 +24,38 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # No Windows row: jolt's fiber poller and ring-chez-adapter's server are
-        # POSIX-only (jolt-lang/jolt#1107), so the web server can't run there yet.
         include:
           - os: macos-latest
             target: aarch64-macos
+            shell: bash
           - os: ubuntu-latest
             target: x86_64-linux
+            shell: bash
+          # Windows has none of the native libraries, so the archive carries
+          # MSYS2's, with the DLLs they load in turn
+          - os: windows-latest
+            target: x86_64-windows
+            shell: msys2 {0}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        shell: bash
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up MSYS2
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: >-
+            curl unzip zip
+            mingw-w64-ucrt-x86_64-ntldd
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-libxml2
+            mingw-w64-ucrt-x86_64-sqlite3
+            mingw-w64-ucrt-x86_64-zlib
 
       - name: Resolve jolt version
         env:
@@ -55,6 +75,13 @@ jobs:
       - name: Install jolt
         run: ci/install-jolt.sh "${JOLT_VERSION}" "${{ matrix.target }}"
 
+      # The runner's PATH has the AWS CLI's sqlite3.dll ahead of MSYS2's
+      # libsqlite3-0.dll, and jolt-lang/db crashes on it. A DLL beside jolt.exe
+      # is found first.
+      - name: Use MSYS2's sqlite
+        if: runner.os == 'Windows'
+        run: cp /ucrt64/bin/libsqlite3-0.dll "$(dirname "$(command -v jolt)")/sqlite3.dll"
+
       - name: Test
         run: jolt -M:test
 
@@ -71,9 +98,25 @@ jobs:
           esac
           mkdir -p "$name"
           exe=newsroom
+          [ -f newsroom.exe ] && exe=newsroom.exe
           cp "$exe" README.md CHANGELOG.md "$name/"
           cp examples/config.edn "$name/config.example.edn"
           cp -r plugins "$name/plugins"
+          # Windows looks beside the exe first, for a library and for the DLLs
+          # it loads. sqlite goes in under the first name jolt-lang/db asks
+          # for, so another program's sqlite3.dll on the PATH can't stand in.
+          if [ "$RUNNER_OS" = Windows ]; then
+            libs="libcrypto-3-x64.dll libssl-3-x64.dll zlib1.dll libsqlite3-0.dll"
+            libs="$libs $(cd /ucrt64/bin && ls libxml2-*.dll)"
+            for l in $libs; do
+              cp "/ucrt64/bin/$l" "$name/"
+              # grep finds nothing for a DLL that loads only system ones
+              deps=$(ntldd -R "/ucrt64/bin/$l" | grep -ioE '[^ ]*ucrt64[\\/]bin[\\/][^ ]*\.dll' || true)
+              for d in $deps; do cp "$(cygpath -u "$d")" "$name/"; done
+            done
+            mv "$name/libsqlite3-0.dll" "$name/sqlite3.dll"
+            ls "$name"
+          fi
           echo "PKG_DIR=$name" >> "$GITHUB_ENV"
           echo "PKG_EXE=$exe" >> "$GITHUB_ENV"
 
@@ -82,24 +125,37 @@ jobs:
       # own dependency checkouts are hidden while it runs: a binary still
       # finds a library's files there by the paths it was built from, which a
       # user's machine doesn't have, and v0.5.0 shipped needing one.
+      # On Windows MSYS2 leaves the PATH too, so the archive has to carry
+      # every DLL the binary loads.
       - name: Smoke test
         run: |
-          for d in "$HOME/.jolt/gitlibs" "$HOME/.m2"; do
-            if [ -d "$d" ]; then mv "$d" "$d.hidden"; fi
+          homes="$HOME"
+          if [ -n "${USERPROFILE:-}" ]; then homes="$homes $(cygpath -u "$USERPROFILE")"; fi
+          hidden=""
+          for h in $homes; do
+            for d in "$h/.jolt/gitlibs" "$h/.m2"; do
+              if [ -d "$d" ]; then mv "$d" "$d.hidden"; hidden="$hidden $d"; fi
+            done
           done
+          if [ "$RUNNER_OS" = Windows ]; then
+            PATH=$(printf %s "$PATH" | tr : '\n' | grep -vi ucrt64 | paste -sd:)
+          fi
           cd "$PKG_DIR"
           status=0
           ../ci/smoke.sh "./$PKG_EXE" || status=$?
           rm -f smoke.log
-          for d in "$HOME/.jolt/gitlibs" "$HOME/.m2"; do
-            if [ -d "$d.hidden" ]; then mv "$d.hidden" "$d"; fi
-          done
+          for d in $hidden; do mv "$d.hidden" "$d"; done
           exit $status
 
       - name: Archive
         run: |
-          tar czf "${PKG_DIR}.tar.gz" "$PKG_DIR"
-          echo "PKG=${PKG_DIR}.tar.gz" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = Windows ]; then
+            zip -qr "${PKG_DIR}.zip" "$PKG_DIR"
+            echo "PKG=${PKG_DIR}.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "${PKG_DIR}.tar.gz" "$PKG_DIR"
+            echo "PKG=${PKG_DIR}.tar.gz" >> "$GITHUB_ENV"
+          fi
 
       - name: Publish to release
         if: startsWith(github.ref, 'refs/tags/')
@@ -109,11 +165,11 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "newsroom ${GITHUB_REF_NAME}" \
             --verify-tag \
-            --notes "Standalone binaries for macOS (arm64) and Linux (x86_64).
+            --notes "Standalone binaries for macOS (arm64), Linux (x86_64) and Windows (x86_64).
 
           Unpack the archive and run \`newsroom\`, then open http://127.0.0.1:3000. The first run writes its config to \`~/.config/newsroom\`, and \`config.example.edn\` shows every option. The plugins in \`plugins/\` add sources newsroom doesn't read itself; copy a plugin's folder to \`~/.config/newsroom/plugins/\` to use it. The default model is DeepSeek, which reads \`DEEPSEEK_API_KEY\`.
 
-          Runtime libraries: Linux needs sqlite3, libxml2 and OpenSSL 3, which most distributions have. macOS needs OpenSSL 3 (\`brew install openssl@3\`).
+          Runtime libraries: Linux needs sqlite3, libxml2 and OpenSSL 3, which most distributions have. macOS needs OpenSSL 3 (\`brew install openssl@3\`). The Windows archive carries its own, beside \`newsroom.exe\`.
 
           The macOS binary is unsigned, so clear the quarantine flag before the first run: \`xattr -d com.apple.quarantine ./newsroom\`." \
             || echo "release already exists, uploading asset"

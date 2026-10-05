@@ -11,21 +11,38 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # No Windows row: jolt's fiber poller and ring-chez-adapter's server are
-        # POSIX-only (jolt-lang/jolt#1107), so the web server can't run there yet.
         include:
           - os: ubuntu-latest
             target: x86_64-linux
+            shell: bash
           - os: macos-latest
             target: aarch64-macos
+            shell: bash
+          # the jolt.exe archive carries no DLLs; MSYS2's UCRT64 has them all
+          - os: windows-latest
+            target: x86_64-windows
+            shell: msys2 {0}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        shell: bash
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
 
-      # sqlite3, libxml2 and OpenSSL are loaded at runtime; the runners have them.
+      - name: Set up MSYS2
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: >-
+            curl unzip
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-libxml2
+            mingw-w64-ucrt-x86_64-sqlite3
+            mingw-w64-ucrt-x86_64-zlib
+
+      # sqlite3, libxml2 and OpenSSL are loaded at runtime; the POSIX runners have them.
       # Latest jolt by default; the JOLT_PIN repository variable pins one.
       - name: Resolve jolt version
         env:
@@ -44,6 +61,13 @@ jobs:
 
       - name: Install jolt
         run: ci/install-jolt.sh "${JOLT_VERSION}" "${{ matrix.target }}"
+
+      # The runner's PATH has the AWS CLI's sqlite3.dll ahead of MSYS2's
+      # libsqlite3-0.dll, and jolt-lang/db crashes on it. A DLL beside jolt.exe
+      # is found first.
+      - name: Use MSYS2's sqlite
+        if: runner.os == 'Windows'
+        run: cp /ucrt64/bin/libsqlite3-0.dll "$(dirname "$(command -v jolt)")/sqlite3.dll"
 
       - name: Cache git deps
         uses: actions/cache@v4
