@@ -12,9 +12,19 @@
 
 (defn- path [f] (java.nio.file.Paths/get (str f) (into-array String [])))
 
+(defn- permissions [f]
+  (try (set (map str (java.nio.file.Files/getPosixFilePermissions
+                      (path f) (into-array java.nio.file.LinkOption []))))
+       (catch UnsupportedOperationException _ nil)))
+
+(def ^:private posix?
+  "Whether this file system has POSIX permissions; Windows' doesn't."
+  (some? (permissions (fs/create-temp-dir))))
+
 (defn- chmod! [f mode]
-  (java.nio.file.Files/setPosixFilePermissions
-   (path f) (java.nio.file.attribute.PosixFilePermissions/fromString mode)))
+  (when posix?
+    (java.nio.file.Files/setPosixFilePermissions
+     (path f) (java.nio.file.attribute.PosixFilePermissions/fromString mode))))
 
 (defn- secrets-file
   "A secrets.edn in a new temporary home, holding `text`, set to `mode`."
@@ -57,7 +67,7 @@
   (config/load-secrets! nil))
 
 (deftest a-file-others-can-read-is-refused
-  (doseq [mode ["rw-r-----" "rw----r--" "rw--w----"]]
+  (doseq [mode (when posix? ["rw-r-----" "rw----r--" "rw--w----"])]
     (let [f (secrets-file (pr-str {"NEWSROOM_TEST_KEY" "sk-file"}) mode)
           msg (message #(config/load-secrets! f))]
       (is (some? msg) mode)
@@ -82,9 +92,8 @@
     (with-redefs [config/home (constantly home)]
       (config/ensure-home!)
       (is (.exists f))
-      (is (= #{"OWNER_READ" "OWNER_WRITE"}
-             (set (map str (java.nio.file.Files/getPosixFilePermissions
-                            (path f) (into-array java.nio.file.LinkOption []))))))
+      (when posix?
+        (is (= #{"OWNER_READ" "OWNER_WRITE"} (permissions f))))
       (is (= {} (config/read-secrets f)))
       (testing "a file already there is left alone"
         (spit f (pr-str {"NEWSROOM_TEST_KEY" "sk-file"}))

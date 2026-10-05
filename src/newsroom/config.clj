@@ -47,17 +47,25 @@
 (defn- nio-path [f]
   (java.nio.file.Paths/get (str f) (into-array String [])))
 
+;; Windows has no POSIX permissions and throws UnsupportedOperationException
+;; for them. There the file is in the user's profile, which by default only
+;; its owner can read, so there is nothing to check or set.
+
 (defn- open-to-others
   "The permissions on `f` that let a user other than its owner at it."
   [f]
-  (->> (java.nio.file.Files/getPosixFilePermissions
-        (nio-path f) (into-array java.nio.file.LinkOption []))
-       (map str)
-       (remove #(str/starts-with? % "OWNER_"))))
+  (try
+    (->> (java.nio.file.Files/getPosixFilePermissions
+          (nio-path f) (into-array java.nio.file.LinkOption []))
+         (map str)
+         (remove #(str/starts-with? % "OWNER_")))
+    (catch UnsupportedOperationException _ nil)))
 
 (defn- owner-only! [f]
-  (java.nio.file.Files/setPosixFilePermissions
-   (nio-path f) (java.nio.file.attribute.PosixFilePermissions/fromString "rw-------")))
+  (try
+    (java.nio.file.Files/setPosixFilePermissions
+     (nio-path f) (java.nio.file.attribute.PosixFilePermissions/fromString "rw-------"))
+    (catch UnsupportedOperationException _ nil)))
 
 (defn read-secrets
   "secrets.edn at `f` as a map of name to value, {} when there is no file or
