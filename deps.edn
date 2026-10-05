@@ -1,12 +1,12 @@
-{:jolt/min-version "0.8.13"
+{:jolt/min-version "0.8.16"
 
  :paths ["src" "resources"]
 
- :deps {;; HTTP server: HTTP/1.1 over BSD sockets through jolt.ffi
+ :deps {;; HTTP server: HTTP/1.1 over jolt.socket.native (jolt 0.8.16+). Past
+        ;; v0.7.11 for the Windows sockets, which no tag carries yet
         jolt-lang/ring-chez-adapter
         {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-         :git/tag "v0.7.10"
-         :git/sha "8c93fa6fadad917f488358392d496752759a53e6"}
+         :git/sha "36ac49d21c30a91d37f2104b31b9fc29e6991b27"}
 
         ;; outbound HTTP: feeds, web search, the LLM
         jolt-lang/http-client
@@ -83,9 +83,6 @@
         weavejester/hiccup
         {:git/url "https://github.com/weavejester/hiccup"
          :git/sha "b6b12097ba973141fe87c1b4d6a27ddcce5d5929"}}
-
- ;; ring-chez-adapter binds sockets through the process's own libc symbols
- :jolt/native [{:name "libc (POSIX sockets)" :process true}]
 
  :jolt/build {:embed ["resources"]}
 
