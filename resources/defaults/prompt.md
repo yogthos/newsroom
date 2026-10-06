@@ -9,7 +9,7 @@ and project their economic and geopolitical impact.
 
 {% if graph %}The desk has mapped the trends running through the day and how the stories drive one another, and the graph of that map is drawn for you at the start of "How it all connects". Review the map's connections against the facts to make sure they are clear and logical, drop any the facts don't bear out, and add any it missed. You MUST use it to structure a narrative that builds on itself to tell a compelling and interconnected story.{% else %}Make a mermaidjs graph to help yourself organize the concepts in the article, and then review the connections between them to make sure they are clear and logical. You MUST use that to help you structure the narrative that builds on itself to tell a compelling and interconnected story.{% endif %}
 
-You MUST use deep dialectical materialist analysis and systems thinking, avoid superficial analysis and vapid, or sensational statements. The opening paragraphs explain what is happening, the middle ones explain the mechanics of how it is happening, the closing paragraphs discuss the likely outcomes based on the mechanics. Explain clearly how and why things connect.
+You MUST use deep dialectical materialist analysis and systems thinking, avoid superficial analysis and vapid, or sensational statements. Explain clearly how and why things connect.
 
 Focus on identifying the contradictions, unity and struggle of opposites, the transformation of quantity into quality, and the negation of the negation which govern the evolutionary process. The article MUST be grounded in diamat and use systemic logic. But don't use the direct and overt language like contradictions or negation of negation, these are thinking tools we want to apply to analysis.
 
@@ -33,11 +33,6 @@ Rules:
 Not just outcomes — walk through the detailed cause and effect explanation at each phase.
 
 Prioritize deep, interconnected reasoning and go beyond the generic or predictable conclusions.
-
-Conclude the analysis by connecting the dots:
-– Highlight the most surprising or counterintuitive outcomes
-– Key leverage points where intervention could meaningfully alter the trajectory
-– Major risks and potential failure scenarios
 
 ## Grounding
 
@@ -73,8 +68,12 @@ the coming weeks from where things lead over the longer run.
 
 ## Structure
 
-1. **Overview.** The day in a few paragraphs across all three domains: what
-   matters most, and why.
+1. **Overview.** The shape of the day in two or three short paragraphs: the
+   few developments that matter most and the force that ties them together.
+   Name each one in a sentence and say why it matters, and leave the
+   figures, the competing claims and the detail to the part that covers it.
+   A reader who stops here should know what kind of day it was, and a
+   reader who goes on should meet the details for the first time below.
 2. **Politics.** Geopolitics, war and security, diplomacy, sanctions, and
    domestic politics that carries weight beyond a country's borders.
 3. **Economics.** Trade and tariffs, markets, bond yields, currencies,
@@ -84,7 +83,11 @@ the coming weeks from where things lead over the longer run.
    weight: AI, semiconductors, energy technology, biotech and health systems,
    space, telecoms, industrial policy, and the tech competition between
    states and blocs, export controls included.
-5. **How it all connects.** The heart of the briefing. Trace how the day's
+5. **How it all connects.** The heart of the briefing. The reader has just
+   read the domain parts, so don't retell the events or repeat their
+   figures. Point back to them in a phrase and spend the room on the links
+   between them, the steps of cause and effect the domain parts didn't
+   spell out. Trace how the day's
    developments in each domain move the others, through concrete chains of
    cause and effect:
    - how political moves travel into the global economy, as when a tariff
@@ -107,15 +110,38 @@ the coming weeks from where things lead over the longer run.
    way: what happens if tariffs go up and what happens if they come down,
    what a rise in yields does and what a fall does, then say which direction
    today's evidence points to and why.
-6. **Outlook.** Close with the surprising or counterintuitive outcomes, the
-   leverage points where intervention could change the trajectory, and the
-   major risks and ways things could fail. Build each trajectory on the
-   precedents where there are any, and cite them.
+6. **Outlook.** Where things go from here. The reader has read everything
+   above, so don't recap the day, the events or the chains of cause and
+   effect, and don't open by restating them. Start from what comes next:
+   the trajectories over the coming weeks and the longer run, the
+   surprising or counterintuitive outcomes, the leverage points where
+   intervention could change the course, and the major risks and ways
+   things could fail. Build each trajectory on the precedents where there
+   are any, and cite them. Each of those is a new claim about the future,
+   so a risk that only restates a projection made above, or a leverage
+   point that only names the opposite of a risk, doesn't earn its place.
 
-Inside each part, open with what is happening, move to the mechanics of how
-it happens, and end with where it's likely to lead. When a domain has little
-of general significance on a given day, keep its part short rather than
-filling it with minor news.
+Inside each domain part, open with what is happening and move to the
+mechanics of how it happens. Leave where it leads to the outlook, unless
+it's a near step that only makes sense told with the story. When a domain
+has little of general significance on a given day, keep its part short
+rather than filling it with minor news.
+
+## Say each thing once
+
+Every paragraph has to tell the reader something they haven't read yet in
+the briefing. Each event, figure and claim is told in full once, in the part
+it belongs to, and anywhere else it comes up it gets a short reference, a
+clause that points back, without the numbers, the quotes or the competing
+accounts again. A story that touches two domains is told where its main
+weight lies, and the other part takes up only the side of it that's new
+there. Don't give a story its own section in one part and a second section
+in another. Don't close a paragraph or a part by summing up what it just
+said, and don't end on a line that only says the stories are connected:
+show the connection or leave it out. Before you finish, read the briefing
+through and cut any sentence that repeats an earlier one in other words.
+A shorter briefing where every line adds something beats a longer one that
+circles back.
 
 ## What belongs in the briefing
 

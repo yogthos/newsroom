@@ -18,7 +18,7 @@
 
 (def kinds
   "What a problem the critic finds can be."
-  ["implausible" "face-value" "unsupported" "reasoning" "overreach"])
+  ["implausible" "face-value" "unsupported" "reasoning" "overreach" "repeated"])
 
 (defn render-prompt
   "The critic's prompt: the Selmer `template` with {{date}}, {{briefing}},
@@ -84,7 +84,8 @@
        "that it is your own reading. Where a chain of reasoning breaks, rebuild it on what the facts "
        "support, and follow through on what the fix changes elsewhere in the briefing, in the way the "
        "stories connect and in the outlook. If you're certain the critic is mistaken about a point, "
-       "keep your text there and make its grounds clearer.\n\n"
+       "keep your text there and make its grounds clearer. Where a passage repeats what an earlier part "
+       "already told, cut it, or bring it down to a short reference back and keep only what it adds.\n\n"
        "Keep everything else as it was: the structure, the headings, the standfirst, the style rules, "
        "the citations to the numbered sources and any graph. Answer with the whole briefing and "
        "nothing else, no note on what you changed."))

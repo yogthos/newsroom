@@ -66,8 +66,9 @@ so plainly.
 
 ## Structure
 
-1. **Overview.** What the period added up to across all three domains, in a
-   few paragraphs.
+1. **Overview.** What the period added up to across all three domains, in
+   two or three short paragraphs. Name the main movements and why they
+   matter, and leave their course and detail to the parts below.
 2. **The main currents.** A `###` section for each of the few movements that
    defined the period, each joining the storylines that belong to it. Open
    with where it stood at the start of the period, move through what drove
@@ -76,9 +77,18 @@ so plainly.
    what faded, with what its fading means.
 4. **How it all connects.** Trace how the currents in each domain moved the
    others over the period, through concrete chains of cause and effect.
+   Point back to the currents in a phrase rather than retelling them, and
+   spend the room on the links.
 5. **Outlook.** The trajectories the period sets up, the leverage points
    where intervention could change them, and the major risks and ways things
-   could fail.
+   could fail. The reader has read everything above, so don't recap it.
+   Start from what comes next.
+
+Every paragraph has to tell the reader something they haven't read yet in
+the digest. Each development is told in full once, in the part it belongs
+to, and anywhere else it comes up it gets a short reference back, without
+its figures and detail again. Don't close a part by summing up what it just
+said, and cut any sentence that repeats an earlier one in other words.
 
 ## Format
 

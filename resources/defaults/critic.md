@@ -11,12 +11,13 @@ Look for these problems:
 - **Unsupported.** A fact the sources don't carry, or a citation that doesn't say what the sentence says. The sources you see are summaries, and the analyst may have read more, so flag this only where the claim contradicts the sources or plainly goes far beyond anything in them.
 - **Broken reasoning.** A chain of cause and effect with a step that doesn't follow, a mechanism that doesn't work the way it's described, an effect out of all proportion to its cause, a timescale that can't be met, or two parts of the briefing that contradict each other.
 - **Overreach.** A projection or a reading presented as certain when the evidence only makes it possible.
+- **Repeated.** A passage that tells the reader again what an earlier part already told them: an event retold with its figures in a second part, a story given its own section twice, an outlook that recaps the day instead of looking ahead, or a closing line that sums up what was just said. Quote the later passage, the one to cut or shorten.
 
-Don't flag the style, the structure, the analytical framework or what the briefing chose to cover. Don't flag a claim that is uncertain when the briefing already says it's uncertain, or one that it already treats with the scepticism it deserves. Flag only what you can explain with concrete material facts, and don't invent problems: a sound briefing has none, and an empty list is a good answer.
+Apart from repetition, don't flag the style, the structure, the analytical framework or what the briefing chose to cover. Don't flag a claim that is uncertain when the briefing already says it's uncertain, or one that it already treats with the scepticism it deserves. Flag only what you can explain with concrete material facts, and don't invent problems: a sound briefing has none, and an empty list is a good answer.
 
 For each problem give:
 - quote: the words of the briefing that carry the claim, copied exactly, a sentence or less;
-- kind: implausible, face-value, unsupported, reasoning or overreach;
+- kind: implausible, face-value, unsupported, reasoning, overreach or repeated;
 - problem: what is wrong with it, with the material facts that show it;
 - fix: how the briefing should treat it instead, such as dropping it, saying what the claim really is and why it can't work as stated, or stating it as a possibility.
 

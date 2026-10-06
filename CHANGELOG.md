@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Each part of the briefing says something new.** The default prompt
+  gives every part its own job: the overview names the day's main
+  developments without their detail, the domain parts tell each story in
+  full once and leave projections to the outlook, "How it all connects"
+  points back to the events instead of retelling them, and the outlook
+  starts from what comes next rather than recapping the day. The digest
+  prompt gets the same rules. The critic has a new kind of problem,
+  `repeated`, for a passage that retells what an earlier part already told,
+  and the analyst cuts it or brings it down to a reference back. A prompt
+  already saved keeps its text, so use "Reset to default" on the config
+  page to pick up the new one.
+
 ## v0.8.2 — 5 October 2026
 
 ### Added

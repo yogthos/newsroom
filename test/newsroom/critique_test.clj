@@ -30,12 +30,14 @@
            :problem "Ukraine has no launch capability."
            :fix "Say what the announcement is for."}
           {:quote nil :kind "face-value" :problem "An interested figure." :fix nil}
+          {:quote nil :kind "repeated" :problem "Retells the overview." :fix nil}
           {:quote nil :kind "reasoning" :problem "Doesn't follow." :fix nil}]
          (critique/parse-issues
           (str "Here it is:\n```json\n"
                "{\"issues\": [{\"quote\": \" Kyiv will launch its own Starlink \", \"kind\": \"Implausible\","
                " \"problem\": \"Ukraine has no launch capability.\", \"fix\": \"Say what the announcement is for.\"},"
                " {\"kind\": \"face value\", \"problem\": \"An interested figure.\"},"
+               " {\"kind\": \"Repeated\", \"problem\": \"Retells the overview.\"},"
                " {\"kind\": \"something else\", \"problem\": \"Doesn't follow.\"},"
                " {\"quote\": \"no problem given\"}, \"not an issue\"]}\n```"))))
   (testing "no problems is an empty list, and an answer with no list is nil"
