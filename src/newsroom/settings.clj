@@ -115,7 +115,13 @@
              {:key :gap-searches :type :int :nullable? true :min 1 :default 6
               :doc (str "The dossiers note what the reports leave out, with a search that could find it. This "
                         "is how many of those searches are run; what they find joins the sources. Blank "
-                        "turns them off.")}]}
+                        "turns them off.")}
+             {:key :critique-briefing :type :boolean :default true
+              :doc (str "Once the briefing is written, a critic reads it against the sources and the material "
+                        "facts, and lists the claims that don't hold up: plans an actor has no means to carry "
+                        "out, interested claims taken at face value, facts the sources don't carry and "
+                        "reasoning that doesn't follow. When it finds any, the analyst rewrites the briefing "
+                        "with them fixed. One model call, two when there is something to fix.")}]}
    {:title "Digests"
     :fields [{:key :digests :type :keywords :options [:week :month] :default [:week :month]
               :doc (str "The digests written once a week (Monday to Sunday) or a month is over, ranking "
@@ -149,7 +155,13 @@
                         "them, {{searches}} and {{rounds}} what "
                         "it may spend. Its answers are read as JSON, {\"queries\": [...]} to search and "
                         "{\"precedents\": [...]} to pick, so keep the default's shapes in it. "
-                        "Blank is the default.")}]}])
+                        "Blank is the default.")}
+             {:key :critic-prompt :type :text :rows 12 :template? true
+              :doc (str "What the critic is told when it checks the briefing, a Selmer template: {{date}} is "
+                        "the day, {{briefing}} the analyst's draft, {{sources}} the numbered sources and "
+                        "{{analysis}} the desk's dossiers and map. Its answer is read as JSON, "
+                        "{\"issues\": [{\"quote\", \"kind\", \"problem\", \"fix\"}]}, so keep the "
+                        "default's shape in it. Blank is the default.")}]}])
 
 (def source-name-field
   {:key :name :type :string
@@ -181,6 +193,9 @@
    {:key :desk :type :keyword
     :doc (str "Sorts the day's reports into stories, writes the dossiers and maps the trends and links "
               "between them; the analyst when blank.")}
+   {:key :critic :type :keyword
+    :doc (str "Checks the written briefing for claims that don't hold up; the analyst when blank. A "
+              "different model from the analyst's sees past its blind spots.")}
    {:key :default :type :keyword :doc "Any role that names no provider of its own."}])
 
 (def scalar-keys

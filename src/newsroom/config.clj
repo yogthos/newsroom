@@ -108,7 +108,8 @@
   default is."
   {:prompt "prompt.md"
    :digest-prompt "digest.md"
-   :precedent-prompt "precedents.md"})
+   :precedent-prompt "precedents.md"
+   :critic-prompt "critic.md"})
 
 (defn default-prompts
   "Each prompt's default text, by setting."
@@ -170,6 +171,12 @@
   when blank."
   [config]
   (template config :precedent-prompt))
+
+(defn critic-template
+  "The critic's prompt: the config's :critic-prompt, the default when
+  blank."
+  [config]
+  (template config :critic-prompt))
 
 (defn db-file [config]
   (or (:db config) (path "newsroom.sqlite3")))

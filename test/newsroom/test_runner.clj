@@ -3,6 +3,7 @@
   (:require [clojure.test :as t]
             [newsroom.analysis-test]
             [newsroom.config-test]
+            [newsroom.critique-test]
             [newsroom.embed-test]
             [newsroom.feed-test]
             [newsroom.llm-stream-test]
@@ -24,6 +25,7 @@
   '[newsroom.news-spec
     newsroom.analysis-test
     newsroom.config-test
+    newsroom.critique-test
     newsroom.embed-test
     newsroom.feed-test
     newsroom.llm-stream-test

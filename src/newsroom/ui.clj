@@ -138,7 +138,8 @@
   (into [tag [:span.spinner {:aria-hidden "true"}]] body))
 
 (defn- run-panel [{:keys [state day error items cited provider model sources events digest] :as st} today]
-  (let [busy? (contains? #{:starting :gathering :sorting :preparing :analysing :researching} state)]
+  (let [busy? (contains? #{:starting :gathering :sorting :preparing :analysing :researching
+                           :reviewing :revising} state)]
     [:section.run
      [:h2 "Desk"]
      (cond-> (if digest
@@ -151,13 +152,17 @@
                :researching [:p "Looking for precedents to " items " stories for " (sources/long-date day) "…"]
                :analysing [:p "Analysing " items " items with " provider
                            (when model [:span.muted " (" model ")"]) "…"]
+               :reviewing [:p "Checking the briefing for claims that don't hold up with " provider
+                           (when model [:span.muted " (" model ")"]) "…"]
+               :revising [:p "Revising the briefing with the critic's problems fixed with " provider
+                          (when model [:span.muted " (" model ")"]) "…"]
                :done [:p "Filed " [:a {:href (str "/day/" day)} (sources/long-date day)]
                       ": " items " sources, " cited " cited."]
                :failed [:p.bad "The run for " (sources/long-date day) " failed: " error]
                :cancelled [:p.muted "The run for " (sources/long-date day) " was cancelled."]
                [:p.muted "Idle."]))
        busy? with-spinner)
-     (when (and (= :analysing state) (:writing st))
+     (when (and (#{:analysing :revising} state) (:writing st))
        (writing (:writing st)))
      (when (and busy? (seq sources))
        [:ul.sources-progress

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A critic checks each briefing.** Once the analyst has written the day's
+  briefing, a critic reads it against the sources and against the material
+  facts, and lists the claims that don't hold up: a plan an actor has no
+  means to carry out, an interested claim taken at face value, a
+  fact the sources don't carry, or reasoning that doesn't follow. When it
+  finds any, the analyst rewrites the briefing with them fixed. A critic or
+  a revision that fails leaves the draft as it was. `:critique-briefing`
+  turns it off, a `:critic` role gives it its own model, and its prompt is
+  `:critic-prompt`.
+
 ## v0.8.1 — 5 October 2026
 
 ### Added

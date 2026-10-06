@@ -75,6 +75,15 @@
  :connect-stories true
  :gap-searches 6
 
+ ;; once the briefing is written, a critic reads it against the sources
+ ;; and the material facts and lists the claims that don't hold up: plans
+ ;; an actor has no means to carry out, interested claims taken at face
+ ;; value, facts the sources don't carry, reasoning that doesn't follow.
+ ;; When it finds any, the analyst rewrites the briefing with them fixed.
+ ;; A :critic role in :roles can give the job its own model; its prompt is
+ ;; :critic-prompt. false turns the check off
+ :critique-briefing true
+
  ;; digests written from the stored days: a week's after the week ends
  ;; (Monday to Sunday), a month's after the month does, each ranking the
  ;; storylines of the period and saying which are emerging, persistent or
@@ -166,6 +175,7 @@
 
  ;; the :analyst role writes the briefing and the digests, keeps the
  ;; story notes unless a :notes role is given, and does the desk's work
- ;; unless a :desk role is given; with no :roles, the first
+ ;; unless a :desk role is given, and checks the briefing unless a :critic
+ ;; role is given; with no :roles, the first
  ;; built-in whose key is in the environment serves, else a local endpoint
  :roles {:analyst :deepseek}}

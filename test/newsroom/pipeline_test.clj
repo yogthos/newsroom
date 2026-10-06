@@ -850,3 +850,81 @@
         texts (map :text (:events @pipeline/status))]
     (is (= 2 (count (:sources (store/day (:store c) "2026-09-30")))))
     (is (some #(str/includes? % "Sorting the reports into stories failed: the desk's model is down") texts))))
+
+(defn- critiqued
+  "A run's ctx whose critic answers `critic`, a string or a fn of its
+  prompt, and whose analyst answers a revision request with `revision`.
+  Every request is kept in `calls`."
+  [calls critic revision]
+  (-> (ctx [{:type ::fixture :name "A" :ns [1 2]}]
+           (fn [_ req]
+             (swap! calls conj req)
+             (let [p (-> req :messages first :content)]
+               (cond
+                 (str/includes? p "You are the critic")
+                 {:content (if (fn? critic) (critic p) critic) :model "fake"}
+                 (= 3 (count (:messages req))) {:content revision :model "fake"}
+                 :else {:content "# Today\n\n> A day.\n\n## Overview\n\nKyiv will launch its own Starlink [1]."
+                        :model "fake"}))))
+      (update :config merge {:critique-briefing true})))
+
+(def ^:private starlink-issue
+  (str "{\"issues\": [{\"quote\": \"Kyiv will launch its own Starlink\", \"kind\": \"implausible\","
+       " \"problem\": \"Ukraine has no launch capability or satellite industry.\","
+       " \"fix\": \"Say what the announcement is for.\"}]}"))
+
+(deftest a-critic-checks-the-briefing-and-the-analyst-fixes-it
+  (let [calls (atom [])
+        revised "# Today\n\n> A day.\n\n## Overview\n\nKyiv announced a satellite plan it has no means to build [1]."
+        c (critiqued calls starlink-issue revised)
+        summary (m/? (pipeline/run-task c "2026-09-30"))
+        day (store/day (:store c) "2026-09-30")
+        texts (map :text (:events @pipeline/status))
+        critic (some #(when (str/includes? (-> % :messages first :content) "You are the critic") %) @calls)
+        revision (some #(when (= 3 (count (:messages %))) %) @calls)]
+    (testing "the critic reads the draft and the sources"
+      (is (str/includes? (-> critic :messages first :content) "Kyiv will launch its own Starlink [1]."))
+      (is (str/includes? (-> critic :messages first :content) "[1] Story 1 (Fixture)")))
+    (testing "the analyst revises in the conversation that wrote the draft"
+      (is (= ["user" "assistant" "user"] (map :role (:messages revision))))
+      (is (str/starts-with? (-> revision :messages first :content) "Brief 30 September"))
+      (is (str/includes? (-> revision :messages second :content) "its own Starlink"))
+      (is (str/includes? (-> revision :messages last :content)
+                         "\"Kyiv will launch its own Starlink\"\n   (implausible) Ukraine has no launch capability")))
+    (testing "the revision is filed in place of the draft"
+      (is (str/includes? (:markdown day) "a satellite plan it has no means to build [[1]](https://e.com/1)"))
+      (is (not (str/includes? (:markdown day) "its own Starlink")))
+      (is (= [1] (map :n (:cited day))))
+      (is (= 1 (:cited summary))))
+    (testing "the log says what the critic found"
+      (is (some #(= "The critic found 1 problem" %) texts))
+      (is (some #(str/starts-with? % "Critic, implausible: Ukraine has no launch capability") texts))
+      (is (some #(= "Revised the briefing" %) texts)))))
+
+(deftest a-sound-briefing-is-filed-as-written
+  (let [calls (atom [])
+        c (critiqued calls "{\"issues\": []}" "not asked for")
+        _ (m/? (pipeline/run-task c "2026-09-30"))]
+    (is (str/includes? (:markdown (store/day (:store c) "2026-09-30")) "its own Starlink"))
+    (is (not-any? #(= 3 (count (:messages %))) @calls) "nothing to fix, no revision")
+    (is (some #(= "The critic found nothing that doesn't hold up" (:text %)) (:events @pipeline/status)))))
+
+(deftest a-critic-or-revision-that-fails-leaves-the-draft
+  (doseq [[why critic revision log] [["the critic fails" (fn [_] (throw (ex-info "critic down" {}))) "unused"
+                                      "The critic's check failed: critic down"]
+                                     ["the critic answers with no list" "Looks fine." "unused"
+                                      "The critic's answer held no list of problems, so the briefing stands"]
+                                     ["the revision is only a note" starlink-issue "I fixed the Starlink claim."
+                                      "The revision wasn't a whole briefing, so the draft stands"]]]
+    (testing why
+      (let [c (critiqued (atom []) critic revision)
+            _ (m/? (pipeline/run-task c "2026-09-30"))]
+        (is (str/includes? (:markdown (store/day (:store c) "2026-09-30")) "its own Starlink"))
+        (is (some #(= log (:text %)) (:events @pipeline/status)))))))
+
+(deftest the-check-is-off-unless-the-config-turns-it-on
+  (let [calls (atom [])
+        c (update (critiqued calls starlink-issue "unused") :config dissoc :critique-briefing)
+        _ (m/? (pipeline/run-task c "2026-09-30"))]
+    (is (= 1 (count @calls)))
+    (is (str/includes? (:markdown (store/day (:store c) "2026-09-30")) "its own Starlink"))))

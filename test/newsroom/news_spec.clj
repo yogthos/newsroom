@@ -55,6 +55,7 @@
 (ann citations      [String -> (Vec Nat)])
 (ann link-citations [String (List Source) -> String])
 (ann briefing       [String (List Source) -> String])
+(ann source-block   [(List Source) -> String])
 (ann collapse-similar [(List Item) (Opt Float) -> (List Item)])
 (ann told           [(List Item) -> (List Item)])
 (ann outlets        [Item -> Nat])

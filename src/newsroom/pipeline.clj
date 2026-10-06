@@ -13,6 +13,10 @@
   (see newsroom.precedents), to be cited like any other and remembered
   with the day.
 
+  Once the analyst has written, a critic checks the briefing against the
+  sources and the material facts, and when it finds claims that don't hold
+  up, the analyst rewrites it with them fixed (see newsroom.critique).
+
   The weekly and monthly digests are runs too: they read the stored days of
   a period instead of gathering, rank its storylines (newsroom.trends) and
   have the analyst write them up. The schedule writes each one once its
@@ -27,6 +31,7 @@
             [jolt.time]
             [newsroom.analysis :as analysis]
             [newsroom.config :as config]
+            [newsroom.critique :as critique]
             [newsroom.embed :as embed]
             [newsroom.feed :as feed]
             [newsroom.llm.client :as llm]
@@ -265,15 +270,17 @@
        briefing))
 
 (defn- write-up
-  "Task: the analyst's answer to `prompt`, streamed to the status as it is
-  written: {:answer :reply}. Fails when the answer is empty."
+  "Task: the analyst's answer to `prompt`, or to the conversation when it
+  is a vector of messages, streamed to the status as it is written:
+  {:answer :reply}. Fails when the answer is empty."
   [{:keys [run-id] :as ctx} llm-config prompt what]
   (m/sp
     (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
                              ") to write " what)})
     (let [chat (or (:chat ctx) llm/chat)
           watcher (progress-watcher run-id)
-          reply (m/? (m/via m/blk (chat llm-config {:messages [{:role "user" :content prompt}]
+          messages (if (string? prompt) [{:role "user" :content prompt}] prompt)
+          reply (m/? (m/via m/blk (chat llm-config {:messages messages
                                                     :on-delta (:on-delta watcher)})))
           _ ((:flush! watcher))
           answer (str/trim (str (:content reply)))]
@@ -632,6 +639,75 @@
                   found (m/? (softly run-id "Searching for the gaps" (gap-task ctx main dossiers seen)))]
               {:stories main :dossiers dossiers :map the-map :found (vec found)})))))))
 
+;; --- the critic --------------------------------------------------------------------
+;; Once the analyst has written the briefing, a critic reads it against the
+;; sources and the material facts and lists the claims that don't hold up,
+;; and the analyst rewrites it with them fixed (see newsroom.critique). A
+;; critic that fails, or a revision that fails, leaves the draft as it was.
+
+(defn- critic-llm
+  "The model that checks the briefing: the :critic role's when the config
+  gives it one, else the analyst's."
+  [config]
+  (providers/role-llm config (if (get-in config [:roles :critic]) :critic :analyst)))
+
+(def ^:private issue-chars
+  "How much of a problem the critic found the run's log shows."
+  220)
+
+(defn- critique-task
+  "Task: the briefing `draft` once the critic has checked it, {:answer
+  :reply :issues}: the analyst's revision, written in the conversation
+  that wrote the draft from `prompt`, when the critic found problems, else
+  the draft with `reply`. The draft stands when :critique-briefing is off,
+  or when the critic or the revision fails or gives nothing usable; only a
+  cancel propagates."
+  [{:keys [config run-id] :as ctx} day numbered analysed llm-config prompt {:keys [answer reply]}]
+  (m/sp
+    (let [draft {:answer answer :reply reply :issues []}]
+      (if-not (:critique-briefing config)
+        draft
+        (let [critic (critic-llm config)
+              _ (update-status! run-id assoc :state :reviewing :writing nil
+                                :provider (name (:alias critic)) :model (:model critic))
+              _ (log! run-id {:text (str "Asking " (name (:alias critic)) " (" (:model critic)
+                                         ") to check the briefing for claims that don't hold up")})
+              found (m/? (softly run-id "The critic's check"
+                                 (ask ctx critic (critique/render-prompt (config/critic-template config)
+                                                                         (dated day) answer numbered analysed))))
+              issues (some-> found critique/parse-issues)]
+          (cond
+            (nil? found) draft
+            (nil? issues)
+            (do (log! run-id {:text "The critic's answer held no list of problems, so the briefing stands"
+                              :level :error})
+                draft)
+            (empty? issues)
+            (do (log! run-id {:text "The critic found nothing that doesn't hold up" :level :ok})
+                draft)
+            :else
+            (let [_ (log! run-id {:text (str "The critic found " (count issues)
+                                             (if (= 1 (count issues)) " problem" " problems"))})
+                  _ (doseq [{:keys [kind problem]} issues]
+                      (log! run-id {:text (str "Critic, " kind ": " (critique/clip problem issue-chars))}))
+                  _ (update-status! run-id assoc :state :revising
+                                    :provider (name (:alias llm-config)) :model (:model llm-config))
+                  revised (m/? (softly run-id "The revision"
+                                       (write-up ctx llm-config
+                                                 [{:role "user" :content prompt}
+                                                  {:role "assistant" :content answer}
+                                                  {:role "user" :content (critique/revision-request issues)}]
+                                                 "the briefing again with the critic's problems fixed")))]
+              (cond
+                (nil? revised) (assoc draft :issues issues)
+                (not (critique/usable-revision? answer (:answer revised)))
+                (do (log! run-id {:text "The revision wasn't a whole briefing, so the draft stands"
+                                  :level :error})
+                    (assoc draft :issues issues))
+                :else
+                (do (log! run-id {:text "Revised the briefing" :level :ok})
+                    (assoc revised :issues issues))))))))))
+
 (defn- notes-llm
   "The model that keeps the notes: the :notes role's when the config gives
   it one, else the analyst's."
@@ -785,7 +861,8 @@
                                        {:analysis analysed :graph? (some? graph)})
             _ (update-status! run-id assoc :state :analysing :items (count numbered)
                               :provider (name (:alias llm-config)) :model (:model llm-config))
-            {:keys [answer reply]} (m/? (write-up ctx llm-config prompt "the briefing"))
+            {:keys [answer reply]} (m/? (critique-task ctx day numbered analysed llm-config prompt
+                                                       (m/? (write-up ctx llm-config prompt "the briefing"))))
             answer (analysis/with-graph answer graph)
             doc (news/briefing answer numbered)
             known (set (map :n numbered))

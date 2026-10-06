@@ -273,7 +273,10 @@
                    [[] #{}]
                    today))))
 
-(defn- source-block [sources]
+(defn source-block
+  "The numbered `sources` as the model reads them: the day's, a story told
+  in several reports under its header, then the precedents."
+  [sources]
   (let [today (remove :precedent sources)
         precedents (filter :precedent sources)]
     (str/join "\n\n" (concat (today-block today)

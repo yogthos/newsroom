@@ -196,7 +196,7 @@
   (let [st (store/open "sqlite::memory:")]
     (try
       (store/save-settings! st {:max-items 50 :prompt "Mine: {{sources}}"})
-      (is (= #{:digest-prompt :precedent-prompt} (set (settings/seed-prompts! st))))
+      (is (= #{:digest-prompt :precedent-prompt :critic-prompt} (set (settings/seed-prompts! st))))
       (let [stored (settings/stored st)]
         (is (= "Mine: {{sources}}" (:prompt stored)) "a prompt of the user's own is left alone")
         (is (= (config/default-text "digest.md") (:digest-prompt stored)))
@@ -386,6 +386,9 @@
       (is (str/includes? mine "data-cfg-reset=\"prompt\""))
       (is (str/includes? mine "data-cfg-reset=\"digest-prompt\""))
       (is (str/includes? mine "data-cfg-reset=\"precedent-prompt\""))
+      (is (str/includes? mine "data-cfg-reset=\"critic-prompt\""))
+      (is (str/includes? mine "name=\"critique-briefing\""))
+      (is (str/includes? mine "name=\"roles.critic\""))
       (is (str/includes? mine (str (h/html [:textarea {:hidden true :disabled true "data-cfg-default-for" "prompt"}
                                              default])))
           "the default rides along with no name, so the form doesn't send it"))
