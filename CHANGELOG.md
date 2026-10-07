@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Search.** The sidebar has a search box that looks through the
+  briefings, the digests, every source gathered for a day, and the
+  storylines' notes and facts. Words match by their stem and as a prefix,
+  a quoted phrase matches in order, and a misspelt word also matches the
+  words a letter or two off from it, with the page saying which. Results
+  are ranked by bm25 or listed newest first, and can be narrowed to one
+  kind. The index is sqlite's FTS5, kept up to date as days, digests and
+  notes are saved and pruned, and built on the first start for an
+  existing database.
+
+### Changed
+
+- **Briefings live only in the database.** Briefings and digests are no
+  longer also written out to `briefings/`. On the first start the files
+  there are moved into the database, any it doesn't already have
+  included, and the folder is kept as `briefings.bak`. A day's markdown
+  is still at `/day/YYYY-MM-DD.md`.
+
 ## v0.8.3 — 5 October 2026
 
 ### Changed

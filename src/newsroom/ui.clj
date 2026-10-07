@@ -14,6 +14,7 @@
             [newsroom.markdown :as md]
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
+            [newsroom.search :as search]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.trends :as trends]))
@@ -219,13 +220,16 @@
 
 (defn- sidebar
   "What goes inside the sidebar. `current` is the page's {:day}, {:kind
-  :period}, {:story} or {:stories true}."
+  :period}, {:story}, {:stories true} or {:search}."
   [archive digests stories current health]
   (list
    [:header.masthead
     [:a {:href "/"} [:h1 "The Newsroom"]]
     [:p.tagline "Daily briefing & analysis"]]
    [:p.config-link [:a {:href "/config" :class (when (:config current) "current")} "Config"]]
+   [:form.search-box {:action "/search" :method "get" :role "search"}
+    [:input {:type "search" :name "q" :value (get-in current [:search :q])
+             :placeholder "Search the briefings" :aria-label "Search the briefings"}]]
    [:label.jump
     [:span "Go to date"]
     [:input {:type "date" :value (:day current)
@@ -371,11 +375,89 @@
      [:p "It may never have been cited by a briefing, or its notes were dropped with its days. "
       [:a {:href "/stories"} "Every storyline"]]]))
 
+;; --- search ------------------------------------------------------------------------
+
+(def ^:private kind-names
+  {:day ["Briefing" "Briefings"] :digest ["Digest" "Digests"] :source ["Source" "Sources"]
+   :story ["Storyline" "Storylines"] :fact ["Fact" "Facts"]})
+
+(def ^:private per-page 30)
+
+(defn- search-href [{:keys [q kind sort page]}]
+  (str "/search?q=" (java.net.URLEncoder/encode (str q) "UTF-8")
+       (when kind (str "&kind=" (name kind)))
+       (when (= :newest sort) "&sort=newest")
+       (when (and page (> page 1)) (str "&page=" page))))
+
+(defn- found-when
+  "When a result is from: its day, or a digest's period."
+  [{:keys [kind ref day]}]
+  (if (= :digest kind)
+    (let [[k period] (str/split ref #"/" 2)
+          label (pipeline/period-label (keyword k) period)]
+      (str (str/upper-case (subs label 0 1)) (subs label 1)))
+    (when day (sources/long-date day))))
+
+(defn- result [{:keys [kind title href url cited? snippet] :as r}]
+  [:li
+   [:p.result-meta
+    [:span.kind (first (kind-names kind))]
+    (when-let [w (found-when r)] (list " · " w))
+    (when (and (= :source kind) cited?) " · cited")]
+   [:h3 [:a {:href href} title]]
+   (when (seq snippet)
+     [:p.snippet (for [[text mark?] snippet] (if mark? [:mark text] text))])
+   (when url
+     [:p.result-link [:a {:href url :rel "noopener" :target "_blank"} url]])])
+
+(defn- search-article [st {:keys [q kind sort page] :as query}]
+  (let [page (max 1 (or page 1))
+        {:keys [results counts corrections]}
+        (search/search st q {:kind kind :sort sort :limit (inc per-page) :offset (* per-page (dec page))})
+        more? (> (count results) per-page)
+        total (reduce + 0 (vals counts))]
+    [:article.briefing.search
+     [:p.dateline "Search"]
+     [:form.search-form {:action "/search" :method "get" :role "search"}
+      [:input {:type "search" :name "q" :value q :placeholder "Words, or a \"quoted phrase\""
+               :aria-label "Search"}]
+      (when kind [:input {:type "hidden" :name "kind" :value (name kind)}])
+      [:select {:name "sort" :aria-label "Order" "data-on:change" "evt.target.form.submit()"}
+       [:option {:value "best" :selected (not= :newest sort)} "Best match"]
+       [:option {:value "newest" :selected (= :newest sort)} "Newest first"]]
+      [:button {:type "submit"} "Search"]]
+     (cond
+       (str/blank? q)
+       [:p.muted "Search every briefing and digest, the sources gathered for each day, and the "
+        "storylines' notes and facts. Every word must match, a misspelt one by its near spellings; "
+        "put words in quotes to match them as a phrase."]
+
+       :else
+       (list
+        (when (seq corrections)
+          [:p.corrections "Including near spellings: "
+           (interpose "; " (for [[w near] corrections]
+                             (list [:em w] " → " (str/join ", " near))))])
+        [:nav.kinds
+         [:a {:href (search-href (assoc query :kind nil :page nil)) :class (when-not kind "current")}
+          "All " [:span.count total]]
+         (for [k search/kinds :when (or (pos? (get counts k 0)) (= k kind))]
+           [:a {:href (search-href (assoc query :kind k :page nil)) :class (when (= k kind) "current")}
+            (second (kind-names k)) " " [:span.count (get counts k 0)]])]
+        (if (empty? results)
+          [:p "Nothing matches “" q "”."]
+          [:ol.results (map result (take per-page results))])
+        (when (or more? (> page 1))
+          [:div.stepper
+           (if (> page 1) [:a {:href (search-href (assoc query :page (dec page)))} "← Better matches"] [:span])
+           (if more? [:a {:href (search-href (assoc query :page (inc page)))} "More →"] [:span])])))]))
+
 (defn fragment
   "The content of one live part of a page, by the selector its stream
   patches: \"#sidebar\" or \"#article\". `current` is the page's {:day},
-  {:kind :period} for a digest's, {:story} for a storyline's, or {:stories
-  true} for the list of them.
+  {:kind :period} for a digest's, {:story} for a storyline's, {:stories
+  true} for the list of them, or {:search {:q :kind :sort :page}} for a
+  search's results.
 
   The two stream apart because each re-renders only when a ratom it read
   changes. The sidebar reads the run's status, which changes several times a
@@ -391,6 +473,7 @@
       (:day current) (article st (:day current))
       (:story current) (story-article st (:story current))
       (:stories current) (stories-article st)
+      (:search current) (search-article st (:search current))
       :else (digest-article st (:kind current) (:period current)))))
 
 (defn page
@@ -406,6 +489,9 @@
                 (:story current) (or (:title (get (store/notes st [(:story current)]) (:story current)))
                                      "Storyline")
                 (:stories current) "Storylines"
+                (:search current) (if (str/blank? (get-in current [:search :q]))
+                                    "Search"
+                                    (str "“" (get-in current [:search :q]) "” · Search"))
                 :else (digest-title (:kind current) (:period current)))]
     (str "<!DOCTYPE html>"
          (h/html

@@ -64,8 +64,6 @@
              :summary "The central bank kept its benchmark rate unchanged and pointed to inflation."
              :published (str day "T08:00:00Z")}]))
 
-(def dir (str (System/getProperty "java.io.tmpdir") "/newsroom-test-" (System/currentTimeMillis)))
-
 (defn- ctx [sources chat]
   {:config {:sources sources :source-timeout-ms 500 :lookback-days 1
             :max-items-per-source 2 :max-items 10
@@ -75,7 +73,6 @@
             :providers {} :roles {:analyst :local}}
    :store (store/open "sqlite::memory:")
    :template "Brief {{date}}.\n\n{{sources}}"
-   :markdown-dir dir
    :chat chat})
 
 (deftest a-run-gathers-analyses-and-stores-the-day
@@ -109,7 +106,6 @@
       (is (= [1 2 3] (map :n (:cited day))))
       (is (= "fake" (:model day)))
       (is (= "local" (:provider day))))
-    (is (= (:markdown day) (slurp (io/file dir "2026-09-30.md"))))
     (testing "the run tells the page what it is doing"
       (let [events (:events @pipeline/status)
             texts (map :text events)
@@ -218,15 +214,11 @@
 
 (deftest a-run-drops-the-days-past-the-limit
   (let [c (-> (ctx [{:type ::fixture :name "A" :ns [1]}] (fn [_ _] {:content "x [1]"}))
-              (assoc-in [:config :keep-days] 2))
-        old-file (io/file dir "2026-09-27.md")]
+              (assoc-in [:config :keep-days] 2))]
     (doseq [d ["2026-09-27" "2026-09-28" "2026-09-29"]]
       (store/save-day! (:store c) {:day d :sources [] :cited [] :markdown d :model "m" :provider "p"}))
-    (.mkdirs (io/file dir))
-    (spit old-file "old")
     (m/? (pipeline/run-task c "2026-09-30"))
     (is (= ["2026-09-30" "2026-09-29"] (store/days (:store c))))
-    (is (not (.exists old-file)) "the markdown goes with the day")
     (is (some #(str/includes? (:text %) "Dropped 2 old days past the limit of 2")
               (:events @pipeline/status)))))
 
@@ -337,8 +329,7 @@
       (is (not (str/includes? prompt "One-off story")) "a one-outlet one-off isn't a storyline")
       (is (= "Rates held all week." (:tldr d)))
       (is (= 4 (count (:sources d))))
-      (is (str/includes? (:markdown d) "## Sources"))
-      (is (.exists (io/file dir "2026-W40.md"))))
+      (is (str/includes? (:markdown d) "## Sources")))
     (testing "the next week's digest builds on it"
       (store/save-day! st {:day "2026-10-05" :sources [(stored-source 1 "Federal Reserve holds rates steady" "2026-09-28/1")
                                                        (assoc (stored-source 2 "Fed again" "2026-09-28/1") :source "Other")]
@@ -928,3 +919,34 @@
         _ (m/? (pipeline/run-task c "2026-09-30"))]
     (is (= 1 (count @calls)))
     (is (str/includes? (:markdown (store/day (:store c) "2026-09-30")) "its own Starlink"))))
+
+;; --- the old markdown files --------------------------------------------------------
+
+(deftest the-markdown-files-are-moved-into-the-database
+  (let [st (store/open "sqlite::memory:")
+        dir (io/file (str (System/getProperty "java.io.tmpdir") "/newsroom-md-" (System/currentTimeMillis)))
+        bak (io/file (str (.getPath dir) ".bak"))]
+    (try
+      (.mkdirs dir)
+      (store/save-day! st {:day "2026-09-30" :sources [] :cited [] :markdown "# Stored" :model "m" :provider "p"})
+      (spit (io/file dir "2026-09-30.md") "# The file's copy")
+      (spit (io/file dir "2026-09-01.md") "# An old day\n\n> Walruses sighted.\n\n## Nature\n\nWalruses.")
+      (spit (io/file dir "2026-W36.md") "# The week\n\nA week of walruses.")
+      (spit (io/file dir "2026-08.md") "# The month\n\nA month.")
+      (spit (io/file dir "notes.md") "not a briefing")
+      (is (= ["2026-08" "2026-09-01" "2026-W36"] (sort (pipeline/import-markdown! st (.getPath dir)))))
+      (is (= "# Stored" (:markdown (store/day st "2026-09-30"))) "the database's copy wins")
+      (let [d (store/day st "2026-09-01")]
+        (is (= "# An old day\n\n> Walruses sighted.\n\n## Nature\n\nWalruses." (:markdown d)))
+        (is (= "Walruses sighted." (:tldr d))))
+      (is (= "# The week\n\nA week of walruses." (:markdown (store/digest st :week "2026-W36"))))
+      (is (= "# The month\n\nA month." (:markdown (store/digest st :month "2026-08"))))
+      (is (not (.exists dir)) "the folder is moved aside")
+      (is (.exists (io/file bak "notes.md")) "with everything in it")
+      (testing "once moved, there is nothing more to do"
+        (is (= [] (pipeline/import-markdown! st (.getPath dir)))))
+      (finally
+        (store/close st)
+        (doseq [d [dir bak] :when (.exists d)]
+          (doseq [f (.listFiles d)] (.delete f))
+          (.delete d))))))

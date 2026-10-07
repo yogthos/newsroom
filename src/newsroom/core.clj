@@ -9,6 +9,10 @@
     GET  /month/YYYY-MM     a month's; either with .md as markdown
     GET  /stories           every storyline the briefings keep notes on
     GET  /story/DAY/N       a storyline's notes and coverage
+    GET  /search?q=...      search the briefings, digests, sources and
+                            storylines; &kind= narrows to one kind,
+                            &sort=newest puts the latest first, &page=
+                            pages through
     GET  /config            the settings, and a form to change them
     POST /config            save the settings and run with them from now on
     GET  /config/export     the settings as EDN, in config.edn's form
@@ -33,6 +37,7 @@
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
             [newsroom.plugin :as plugin]
+            [newsroom.search :as search]
             [newsroom.settings :as settings]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
@@ -206,6 +211,17 @@
     (live req {:story (str (:day params) "/" (:n params))})
     (not-found)))
 
+(defn- search-query
+  "A search's query from the request's params; a kind or sort it doesn't
+  know is ignored."
+  [{:keys [params]}]
+  (let [kind (some-> (get params "kind") keyword)
+        page (some->> (get params "page") (re-matches #"\d{1,6}") parse-long)]
+    {:q (str/trim (str (get params "q")))
+     :kind (some #{kind} search/kinds)
+     :sort (when (= "newest" (get params "sort")) :newest)
+     :page page}))
+
 (def routes
   "Every path the server answers, as ruuter routes; see the namespace doc."
   [{:path "/" :method :get
@@ -215,6 +231,7 @@
    {:path "/month/:period" :method :get :response (digest-page :month)}
    {:path "/stories" :method :get :response #(live % {:stories true})}
    {:path "/story/:day/:n" :method :get :response story-page}
+   {:path "/search" :method :get :response #(live % {:search (search-query %)})}
    {:path "/run" :method :post :response start-run}
    {:path "/digest" :method :post :response start-digest}
    {:path "/cancel" :method :post :response (fn [_] (pipeline/cancel-run!) (ds/patch-signals {}))}
@@ -257,15 +274,16 @@
    :strategy :fibers})
 
 (defn start!
-  "Read secrets.edn, open the store, bring in any settings still in files
-  and the default prompts it doesn't have, load plugins, start the schedule
-  and the server."
+  "Read secrets.edn, open the store, bring in any settings and briefings
+  still in files and the default prompts it doesn't have, load plugins,
+  start the schedule and the server."
   []
   (config/ensure-home!)
   (config/load-secrets!)
   (let [file (config/read-file)
         st (store/open (config/db-file file))
         imported (settings/import! st file)
+        moved (pipeline/import-markdown! st)
         _ (settings/seed-prompts! st)
         cfg (config/effective file (settings/stored st))
         plugins (plugin/load-all! (config/path "plugins") cfg)
@@ -280,6 +298,9 @@
     (when (seq imported)
       (println "moved into the database:" (str/join " " (map name imported))
                "(the files they came from are kept as .bak; edit them at /config now)"))
+    (when (seq moved)
+      (println "moved" (count moved) "briefings and digests from briefings/ into the database"
+               "(the folder is kept as briefings.bak)"))
     (doseq [{:keys [plugin ok]} plugins :when ok]
       (println "loaded plugin" plugin))
     (when (seq pruned)

@@ -13,6 +13,12 @@
   days' standfirsts and the notes kept on each storyline, which the digests
   are written from.
 
+  Everything a reader may look for is indexed for search as it is saved:
+  the briefings and digests, the sources gathered for each day, and the
+  storylines' notes and facts, a row each in search_docs, which two FTS5
+  indexes read, one by stem for matching and ranking, one by the words as
+  written for guessing at misspellings; see newsroom.search.
+
   The settings, everything about newsroom that can change while it runs,
   are kept here too, a row a key with the value as EDN; see
   newsroom.settings.
@@ -108,6 +114,37 @@
       key text primary key,
       value text not null)"])
 
+(def ^:private search-schema
+  ;; ref is what a document is replaced and deleted by: the day for a
+  ;; briefing and its sources, kind/period for a digest, the story for a
+  ;; note and its facts
+  ["create table if not exists search_docs (
+      id integer primary key,
+      kind text not null,
+      ref text not null,
+      day text,
+      href text not null,
+      url text,
+      cited integer not null default 0,
+      title text,
+      body text)"
+   "create index if not exists search_docs_ref on search_docs (kind, ref)"
+   "create virtual table if not exists search_fts using fts5(
+      title, body, content='search_docs', content_rowid='id',
+      tokenize='porter unicode61 remove_diacritics 2')"
+   "create virtual table if not exists search_words using fts5(
+      title, body, content='search_docs', content_rowid='id',
+      tokenize='unicode61 remove_diacritics 2', detail=none)"
+   "create virtual table if not exists search_vocab using fts5vocab(search_words, 'row')"
+   "create trigger if not exists search_docs_ai after insert on search_docs begin
+      insert into search_fts (rowid, title, body) values (new.id, new.title, new.body);
+      insert into search_words (rowid, title, body) values (new.id, new.title, new.body);
+    end"
+   "create trigger if not exists search_docs_ad after delete on search_docs begin
+      insert into search_fts (search_fts, rowid, title, body) values ('delete', old.id, old.title, old.body);
+      insert into search_words (search_words, rowid, title, body) values ('delete', old.id, old.title, old.body);
+    end"])
+
 (defn- add-column!
   "An ALTER TABLE for a column an older database may not have, silently
   skipped when it does."
@@ -141,6 +178,85 @@
                                               :also (when (:also r)
                                                       (mapv #(if (string? %) {:source %} %) (edn/read-string (:also r))))}))))))
 
+;; --- the search index ------------------------------------------------------------
+
+(defn- headline
+  "A briefing's or digest's title, its first # heading, or nil."
+  [markdown]
+  (some #(some-> (re-matches #"#\s+(.+)" %) second str/trim) (str/split-lines (str markdown))))
+
+(defn- plain
+  "A briefing's or digest's text as it is searched: without its title, its
+  diagrams, its citations or its Sources list, which are searched as the
+  sources themselves, and with the markdown's marks gone."
+  [markdown]
+  (-> (str markdown)
+      (str/split #"(?m)^## Sources\s*$" 2)
+      first
+      (str/replace #"(?m)^#\s.*$" "")
+      (str/replace #"(?s)```.*?(?:```|$)" " ")
+      (str/replace #"\[\[\d+\]\]\([^)\s]*\)" "")
+      (str/replace #"\[\d+(?:,\s*\d+)*\]" "")
+      (str/replace #"!?\[([^\]]*)\]\([^)]*\)" (fn [[_ text]] text))
+      (str/replace #"(?m)^\s{0,3}(?:#{1,6}|>|[-*+]|\d+\.)\s+" "")
+      (str/replace #"[*_`]" "")
+      (str/replace #"[ \t]+" " ")
+      (str/replace #"\n\s*\n+" "\n\n")
+      str/trim))
+
+(defn- unindex!
+  "Take the documents of `kinds` kept under `ref` out of the index."
+  [conn kinds ref]
+  (jdbc/execute! conn (into [(str "delete from search_docs where ref = ? and kind in ("
+                                  (str/join ", " (repeat (count kinds) "?")) ")")
+                             ref]
+                            kinds)))
+
+(defn- index! [conn docs]
+  (doseq [{:keys [kind ref day href url cited? title body]} docs]
+    (jdbc/execute! conn ["insert into search_docs (kind, ref, day, href, url, cited, title, body)
+                          values (?, ?, ?, ?, ?, ?, ?, ?)"
+                         kind ref day href url (if cited? 1 0) title body])))
+
+(defn- day-docs
+  "A day's briefing and each source gathered for it, as documents."
+  [day markdown sources cited]
+  (cons {:kind "day" :ref day :day day :href (str "/day/" day)
+         :title (or (headline markdown) day) :body (plain markdown)}
+        (for [{:keys [n title url summary note gap]} sources]
+          {:kind "source" :ref day :day day :href (str "/day/" day "#source-" n) :url url
+           :cited? (contains? cited n) :title title
+           :body (str/join "\n\n" (remove str/blank? [summary note gap]))})))
+
+(defn- digest-docs [kind period markdown]
+  [{:kind "digest" :ref (str kind "/" period) :href (str "/" kind "/" period)
+    :title (or (headline markdown) period) :body (plain markdown)}])
+
+(defn- note-docs
+  "A storyline's note and each of its facts, as documents."
+  [story {:keys [title summary facts last-day]}]
+  (cons {:kind "story" :ref story :day last-day :href (str "/story/" story) :title title :body summary}
+        (for [{:keys [day text url source headline]} facts]
+          {:kind "fact" :ref story :day day :href (str "/story/" story) :url url :title title
+           :body (str/join "\n\n" (remove str/blank? [text (str/join ", " (remove str/blank? [headline source]))]))})))
+
+(defn- backfill-search!
+  "Index everything kept before the search was, once."
+  [conn]
+  (when (and (nil? (jdbc/fetch-one conn "select 1 as x from search_docs limit 1"))
+             (or (jdbc/fetch-one conn "select 1 as x from briefings limit 1")
+                 (jdbc/fetch-one conn "select 1 as x from digests limit 1")
+                 (jdbc/fetch-one conn "select 1 as x from story_notes limit 1")))
+    (jdbc/atomic conn
+      (doseq [{:keys [day markdown]} (jdbc/fetch conn "select day, markdown from briefings")]
+        (let [rows (jdbc/fetch conn ["select n, title, url, summary, note, gap, cited from sources where day = ?" day])]
+          (index! conn (day-docs day markdown rows (set (map :n (filter #(= 1 (:cited %)) rows)))))))
+      (doseq [{:keys [kind period markdown]} (jdbc/fetch conn "select kind, period, markdown from digests")]
+        (index! conn (digest-docs kind period markdown)))
+      (doseq [r (jdbc/fetch conn "select story, title, summary, facts, last_day from story_notes")]
+        (index! conn (note-docs (:story r) {:title (:title r) :summary (:summary r) :last-day (:last_day r)
+                                            :facts (edn/read-string (:facts r))}))))))
+
 (defn open
   "A store on the sqlite database at `uri` (a path, or sqlite::memory:)."
   [uri]
@@ -157,9 +273,11 @@
     (jdbc/execute! conn "create index if not exists day_trends_thread on day_trends (thread)")
     (jdbc/execute! conn "create index if not exists coverage_story on coverage (story)")
     (backfill-coverage! conn)
+    (doseq [stmt search-schema] (jdbc/execute! conn stmt))
+    (backfill-search! conn)
     (jdbc/execute! conn "insert or ignore into standfirsts (day, tldr)
                          select day, tldr from briefings where tldr is not null")
-    {:conn conn :lock (Object.)}))
+    {:conn conn :lock (Object.) :vocab (atom nil)}))
 
 (defn close [{:keys [conn]}] (.close conn))
 
@@ -168,6 +286,11 @@
      (let [~conn (:conn ~store)] ~@body)))
 
 (defn- now [] (str (java.time.Instant/now)))
+
+(defn- stale!
+  "Forget the vocabulary read for searching, once the index has changed."
+  [store]
+  (reset! (:vocab store) nil))
 
 (defn save-day!
   "Store a day's briefing and its sources, replacing whatever the day had."
@@ -193,7 +316,10 @@
                                (when (seq also) (pr-str also))
                                (embed/encode v) story weight (if precedent? 1 0)
                                note (when (seq informs) (pr-str (vec informs))) gap
-                               (if (contains? cited n) 1 0)]))))
+                               (if (contains? cited n) 1 0)]))
+        (unindex! conn ["day" "source"] day)
+        (index! conn (day-docs day markdown sources cited))))
+    (stale! store)
     nil))
 
 (defn- read-also
@@ -355,7 +481,10 @@
         (jdbc/execute! conn ["insert or replace into story_notes
                                 (story, title, summary, status, facts, first_day, last_day, updated_at)
                               values (?, ?, ?, ?, ?, ?, ?, ?)"
-                             story title summary status (pr-str (vec facts)) first-day last-day (now)]))))
+                             story title summary status (pr-str (vec facts)) first-day last-day (now)])
+        (unindex! conn ["story" "fact"] story)
+        (index! conn (note-docs story {:title title :summary summary :facts facts :last-day last-day})))))
+  (stale! store)
   nil)
 
 (defn- row->note [r]
@@ -420,6 +549,7 @@
                    (when (seq gone)
                      (jdbc/atomic conn
                        (doseq [d gone]
+                         (unindex! conn ["day" "source"] d)
                          (jdbc/execute! conn ["delete from sources where day = ?" d])
                          (jdbc/execute! conn ["delete from briefings where day = ?" d]))
                        (jdbc/execute! conn ["delete from coverage where day not in
@@ -428,9 +558,12 @@
                        ;; what outlives the days goes with the coverage
                        (jdbc/execute! conn "delete from standfirsts where day < (select min(day) from coverage)")
                        (jdbc/execute! conn "delete from day_trends where day < (select min(day) from coverage)")
+                       (jdbc/execute! conn "delete from search_docs where kind in ('story', 'fact') and ref in
+                                              (select story from story_notes where last_day < (select min(day) from coverage))")
                        (jdbc/execute! conn "delete from story_notes where last_day < (select min(day) from coverage)")))
                    gone))]
       (when (seq gone)
+        (stale! store)
         (with-db [conn store] (jdbc/execute! conn "vacuum")))
       gone)))
 
@@ -478,7 +611,10 @@
         (doseq [{:keys [n day title url source]} sources]
           (jdbc/execute! conn ["insert into digest_sources (kind, period, n, day, title, url, source, cited)
                                 values (?, ?, ?, ?, ?, ?, ?, ?)"
-                               k period n day title url source (if (contains? cited n) 1 0)]))))
+                               k period n day title url source (if (contains? cited n) 1 0)]))
+        (unindex! conn ["digest"] (str k "/" period))
+        (index! conn (digest-docs k period markdown))))
+    (stale! store)
     nil))
 
 (defn digest
@@ -525,3 +661,50 @@
       (doseq [[k v] settings]
         (jdbc/execute! conn ["insert into settings (key, value) values (?, ?)" (name k) (pr-str v)]))))
   nil)
+
+;; --- search ------------------------------------------------------------------------
+
+(defn vocabulary
+  "Every word the index has as written, {word documents}, which misspelled
+  words are matched against; read once until the index changes."
+  [store]
+  (with-db [conn store]
+    (or @(:vocab store)
+        (reset! (:vocab store)
+                (into {} (map (fn [r] [(:term r) (long (:doc r))]))
+                      (jdbc/fetch conn "select term, doc from search_vocab"))))))
+
+(defn search
+  "The documents matching the FTS5 expression `expr`, best first, or the
+  latest first with :sort :newest: {:kind :ref :day :href :url :cited?
+  :title :snippet}, the snippet a part of the text with each match between
+  \u0002 and \u0003. `opts`: :kind, :limit, :offset. A title matches
+  four times as strongly as the text, and a source a briefing cited a
+  little more than one it didn't."
+  [store expr {:keys [kind limit offset sort] :or {limit 30 offset 0}}]
+  (with-db [conn store]
+    (mapv (fn [r] {:kind (keyword (:kind r)) :ref (:ref r) :day (:day r) :href (:href r) :url (:url r)
+                   :cited? (= 1 (:cited r)) :title (:title r) :snippet (:snippet r)})
+          (jdbc/fetch conn (cond-> [(str "select d.kind, d.ref, d.day, d.href, d.url, d.cited, d.title,
+                                                 snippet(search_fts, 1, char(2), char(3), '…', 24) as snippet
+                                          from search_fts join search_docs d on d.id = search_fts.rowid
+                                          where search_fts match ?"
+                                         (when kind " and d.kind = ?")
+                                         " order by "
+                                         (when (= :newest sort) "d.day desc, ")
+                                         "bm25(search_fts, 4.0, 1.0) * (case when d.cited = 1 then 1.25 else 1.0 end)
+                                          limit ? offset ?")
+                                    expr]
+                             kind (conj (name kind))
+                             true (conj limit offset))))))
+
+(defn search-counts
+  "How many documents of each kind match `expr`, {kind count}."
+  [store expr]
+  (with-db [conn store]
+    (into {}
+          (map (fn [r] [(keyword (:kind r)) (long (:n r))]))
+          (jdbc/fetch conn ["select d.kind, count(*) as n
+                             from search_fts join search_docs d on d.id = search_fts.rowid
+                             where search_fts match ? group by d.kind"
+                            expr]))))

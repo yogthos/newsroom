@@ -252,3 +252,42 @@
           (is (= 404 (:status (get-it "/run"))) "a run is started by a POST")
           (is (= 400 (:status (core/app {:uri "/run" :request-method :post :query-string "day=soon"})))))
         (finally (reset! core/system nil))))))
+
+(deftest a-search-page
+  (with-store
+    (fn [st]
+      (store/save-day! st {:day "2026-10-01"
+                           :sources [{:n 1 :title "Tariffs <b>rise</b>" :url "https://e.com/t" :source "Wire"
+                                      :summary "Duties on steel & aluminium doubled." :published nil}]
+                           :cited [1] :markdown "# Steel day\n\nThe tariffs [[1]](https://e.com/t) bit."
+                           :model "m" :provider "p"})
+      (let [page (ui/page st {:search {:q "tarifs"}})]
+        (testing "the sidebar has the search box, holding the query"
+          (is (str/includes? page "action=\"/search\""))
+          (is (str/includes? page "value=\"tarifs\"")))
+        (testing "a misspelling says what it was taken for"
+          (is (str/includes? page "tarifs</em> → tariffs")))
+        (testing "each match links where it was found, its matches marked and its text escaped"
+          (is (str/includes? page "href=\"/day/2026-10-01\">Steel day</a>"))
+          (is (str/includes? page "href=\"/day/2026-10-01#source-1\">Tariffs &lt;b&gt;rise&lt;/b&gt;</a>"))
+          (is (str/includes? page "<mark>tariffs</mark>"))
+          (is (str/includes? page "1 October 2026")))
+        (testing "the kinds of result are counted, and each can be picked"
+          (is (str/includes? page "href=\"/search?q=tarifs&amp;kind=source\""))
+          (is (str/includes? page "Sources <span class=\"count\">1</span>"))))
+      (testing "a kind narrows the list"
+        (let [page (ui/page st {:search {:q "steel" :kind :day}})]
+          (is (str/includes? page "Steel day"))
+          (is (not (str/includes? page "#source-1\"")))))
+      (testing "nothing found says so"
+        (is (str/includes? (ui/page st {:search {:q "zzyzx"}}) "Nothing matches")))
+      (testing "no query asks for one"
+        (is (str/includes? (ui/page st {:search {:q ""}}) "Search every briefing"))))))
+
+(deftest the-search-route-reads-the-query
+  (with-store
+    (fn [st]
+      (reset! core/system {:store st :config {}})
+      (let [{:keys [status body]} (core/app {:request-method :get :uri "/search" :query-string "q=big&kind=day"})]
+        (is (= 200 status))
+        (is (str/includes? body "Big day"))))))

@@ -204,26 +204,46 @@
 
 ;; --- the run -----------------------------------------------------------------------
 
-(defn- write-markdown!
-  "The briefing as `name`.md, the day for a day's and the period for a
-  digest's, which can't collide."
-  [dir name doc]
-  (let [f (io/file dir (str name ".md"))]
-    (.mkdirs (.getParentFile f))
-    (spit f doc)))
+(defn import-markdown!
+  "Bring the briefings and digests older newsrooms wrote out as markdown
+  files in `dir`, briefings/ by default, into the store, where they are
+  kept and searched now: each file named for a day, a week or a month the
+  store doesn't have, which keeps what it has. The folder is then moved
+  aside, kept as .bak. Returns the names of the files brought in."
+  ([store] (import-markdown! store (config/path "briefings")))
+  ([store dir]
+   (let [dir (io/file dir)]
+     (if-not (.isDirectory dir)
+       []
+       (let [imported
+             (vec (for [f (sort-by #(.getName %) (.listFiles dir))
+                        :let [[_ name] (re-matches #"(.+)\.md" (.getName f))
+                              kind (cond (nil? name) nil
+                                         (news/valid-day? name) :day
+                                         (re-matches #"\d{4}-W\d{2}" name) :week
+                                         (re-matches #"\d{4}-\d{2}" name) :month)
+                              doc (when (and kind (or (= :day kind) (trends/period-range kind name)))
+                                    (slurp f))]
+                        :when (and doc
+                                   (if (= :day kind)
+                                     (nil? (store/day store name))
+                                     (nil? (store/digest store kind name))))]
+                    (do (if (= :day kind)
+                          (store/save-day! store {:day name :sources [] :cited [] :markdown doc :tldr (news/tldr doc)})
+                          (store/save-digest! store {:kind kind :period name :sources [] :cited [] :markdown doc
+                                                     :tldr (news/tldr doc)}))
+                        name)))
+             bak (io/file (str (.getPath dir) ".bak"))]
+         (when-not (.exists bak) (.renameTo dir bak))
+         imported)))))
 
 (def default-keep-days 100)
 
 (defn prune-days!
   "Drop the days past :keep-days (100 by default, -1 for no limit) from the
-  store, and their markdown files. Returns the days dropped."
-  [{:keys [config store] :as ctx}]
-  (let [gone (store/prune! store (:keep-days config default-keep-days))
-        dir (or (:markdown-dir ctx) (config/path "briefings"))]
-    (doseq [d gone]
-      (let [f (io/file dir (str d ".md"))]
-        (when (.exists f) (.delete f))))
-    gone))
+  store. Returns the days dropped."
+  [{:keys [config store]}]
+  (store/prune! store (:keep-days config default-keep-days)))
 
 (defn- previous-day
   "The latest briefing stored before `day`, or nil."
@@ -745,10 +765,9 @@
   summary; fails when nothing was gathered or the model call fails.
 
   `ctx` is {:config :store}, and optionally :chat (the model call, llm/chat
-  by default), :template (the prompt, prompt.md by default),
-  :markdown-dir (where the day's .md is written, briefings/ by default) and
-  :run-id (the status the run reports to; start-run! sets it, and a run
-  without one takes over the status)."
+  by default), :template (the prompt, prompt.md by default) and :run-id
+  (the status the run reports to; start-run! sets it, and a run without
+  one takes over the status)."
   [{:keys [config store] :as ctx} day]
   (let [own? (nil? (:run-id ctx))
         run-id (or (:run-id ctx) (Object.))
@@ -878,7 +897,6 @@
         (let [by-key (into {} (map (juxt :key identity)) stories)]
           (store/save-trends! store day (map (fn [t] (update t :stories #(vec (distinct (keep (comp :story by-key) %)))))
                                              (:trends the-map))))
-        (write-markdown! (or (:markdown-dir ctx) (config/path "briefings")) day doc)
         (log! run-id {:text (str "Filed the briefing: " (count cited) " of " (count numbered)
                                  " sources cited") :level :ok})
         (when max-facts
@@ -1074,7 +1092,6 @@
                                    :tldr (news/tldr doc)
                                    :model (or (:model reply) (:model llm-config))
                                    :provider (name (:alias llm-config))})
-        (write-markdown! (or (:markdown-dir ctx) (config/path "briefings")) period doc)
         (log! run-id {:text (str "Filed the digest for " label ": " (count cited) " of "
                                  (count numbered) " sources cited") :level :ok})
         (swap! stored inc)
