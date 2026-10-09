@@ -9,6 +9,8 @@
     GET  /month/YYYY-MM     a month's; either with .md as markdown
     GET  /stories           every storyline the briefings keep notes on
     GET  /story/DAY/N       a storyline's notes and coverage
+    GET  /record            how the projections held, and the sources'
+                            standings within each subject
     GET  /search?q=...      search the briefings, digests, sources and
                             storylines; &kind= narrows to one kind,
                             &sort=newest puts the latest first, &page=
@@ -230,6 +232,7 @@
    {:path "/week/:period" :method :get :response (digest-page :week)}
    {:path "/month/:period" :method :get :response (digest-page :month)}
    {:path "/stories" :method :get :response #(live % {:stories true})}
+   {:path "/record" :method :get :response #(live % {:record true})}
    {:path "/story/:day/:n" :method :get :response story-page}
    {:path "/search" :method :get :response #(live % {:search (search-query %)})}
    {:path "/run" :method :post :response start-run}

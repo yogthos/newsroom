@@ -117,6 +117,19 @@
     (is (= [{:gap "The vote" :query "FOMC vote September 2026" :key "G1"}]
            (analysis/gap-queries [story] {"G1" d} 5)))))
 
+(deftest a-dossier-keeps-what-the-outlets-expect
+  (let [answer (str "{\"dossiers\": [{\"story\": \"G1\", \"summary\": \"It held.\","
+                    " \"expectations\": ["
+                    "  {\"claim\": \"The Fed cuts in December.\", \"by\": \"Outlet 2's economists\","
+                    "   \"subject\": \"Economy\", \"due\": \"2026-12-31\", \"cites\": [2, 1]},"
+                    "  {\"claim\": \"Cited nowhere.\", \"subject\": \"economy\", \"cites\": [9]},"
+                    "  {\"claim\": \"\", \"cites\": [1]}]}]}")
+        d (get (analysis/parse-dossiers answer [story]) "G1")]
+    (is (= [{:claim "The Fed cuts in December." :by "Outlet 2's economists" :subject "economy"
+             :due "2026-12-31" :cites [2 1] :source "Outlet 2" :outlet "o2.com" :url "https://o2.com/2"}]
+           (:expectations d))
+        "credited to the outlet of the first report that carries it, and dropped when none of the story's does")))
+
 (deftest gap-searches-go-round-the-stories
   (let [ds {"G1" {:gaps [{:gap "a" :query "qa"} {:gap "b" :query "qb"}]}
             "G2" {:gaps [{:gap "c" :query nil} {:gap "d" :query "qd"}]}}]
@@ -168,6 +181,9 @@
     (is (= answer (analysis/with-graph answer nil)))
     (is (= "x\n```mermaid\nA\n```" (analysis/with-graph "x\n```mermaid\nA\n```" "flowchart LR\n"))
         "a graph the analyst drew is kept"))
+  (is (= "# Day\n\n## What changed\n\nA\n\n## The analysis\n\n```mermaid\ng```\n\nB\n\n## The trends\n\nC"
+         (analysis/with-graph "# Day\n\n## What changed\n\nA\n\n## The analysis\n\nB\n\n## The trends\n\nC" "g"))
+      "the graph opens the analysis")
   (is (= "## One\n\nA\n\n```mermaid\ng```\n\n## Two\n\nB"
          (analysis/with-graph "## One\n\nA\n\n## Two\n\nB" "g"))
       "without a section on connections it goes before the last")
@@ -187,6 +203,18 @@
     (is (str/includes? block "Disputed:\n- Next: Markets: Cut [2]"))
     (is (str/includes? block "so don't draw one")))
   (is (nil? (analysis/analysis-block stories {} nil [] false))))
+
+(deftest the-analyst-sees-each-outlets-record-on-what-it-expects
+  (let [ds (assoc-in dossiers ["G1" :expectations]
+                     [{:claim "The Fed cuts in December." :by "Wire's economists" :subject "economy"
+                       :cites [2] :source "Wire" :outlet "wire.org"}
+                      {:claim "Inflation returns." :subject "economy" :cites [1] :source "New" :outlet "new.org"}])
+        block (analysis/analysis-block stories ds nil [] false
+                                       {["wire.org" "economy"] {:judged 5 :held 1 :partly 1 :failed 3 :closeness 0.3}
+                                        ["wire.org" "technology"] {:judged 9 :held 9 :partly 0 :failed 0 :closeness 1.0}})]
+    (is (str/includes? block (str "Expected:\n- Wire (Wire's economists): The Fed cuts in December. [2]"
+                                  " Its record on economy: 1 of 5 held, 1 partly, closeness 0.3.")))
+    (is (str/includes? block "- New: Inflation returns. [1] No record on economy yet."))))
 
 (deftest the-researcher-is-told-the-trends
   (is (= "The trends the desk found running through the day:\n\n- Energy squeeze (strengthening), in stories [3, 1, 2]: Oil up."

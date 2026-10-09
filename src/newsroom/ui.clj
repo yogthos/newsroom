@@ -14,6 +14,7 @@
             [newsroom.markdown :as md]
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
+            [newsroom.retrospective :as retrospective]
             [newsroom.search :as search]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
@@ -127,6 +128,8 @@
       :starting [:p "Reading the briefings for " label "…"]
       :analysing [:p "Writing the digest for " label " from " items " storylines with " provider
                   (when model [:span.muted " (" model ")"]) "…"]
+      :checking [:p "Checking how " items " projections turned out by the end of " label " with " provider
+                 (when model [:span.muted " (" model ")"]) "…"]
       :done [:p "Filed the digest for " [:a {:href (digest-href kind period)} label]
              ": " items " sources, " cited " cited."]
       :failed [:p.bad "The digest for " label " failed: " error]
@@ -140,7 +143,7 @@
 
 (defn- run-panel [{:keys [state day error items cited provider model sources events digest] :as st} today]
   (let [busy? (contains? #{:starting :gathering :sorting :preparing :analysing :researching
-                           :reviewing :revising} state)]
+                           :reviewing :revising :checking} state)]
     [:section.run
      [:h2 "Desk"]
      (cond-> (if digest
@@ -220,13 +223,14 @@
 
 (defn- sidebar
   "What goes inside the sidebar. `current` is the page's {:day}, {:kind
-  :period}, {:story}, {:stories true} or {:search}."
+  :period}, {:story}, {:stories true}, {:record true} or {:search}."
   [archive digests stories current health]
   (list
    [:header.masthead
     [:a {:href "/"} [:h1 "The Newsroom"]]
     [:p.tagline "Daily briefing & analysis"]]
-   [:p.config-link [:a {:href "/config" :class (when (:config current) "current")} "Config"]]
+   [:p.config-link [:a {:href "/config" :class (when (:config current) "current")} "Config"]
+    " · " [:a {:href "/record" :class (when (:record current) "current")} "Track record"]]
    [:form.search-box {:action "/search" :method "get" :role "search"}
     [:input {:type "search" :name "q" :value (get-in current [:search :q])
              :placeholder "Search the briefings" :aria-label "Search the briefings"}]]
@@ -241,6 +245,98 @@
    (digest-list :month "Monthly" digests current)
    (digest-list :week "Weekly" digests current)
    (history archive current)))
+
+;; --- the track record -------------------------------------------------------------
+
+(def ^:private verdict-names
+  {"held" "Held" "partly" "Partly" "failed" "Failed" "open" "Still open" "unresolved" "Unresolved"})
+
+(defn- projection-item
+  "A judged projection: what was claimed, by whom and when, the verdict,
+  and why it held or missed."
+  [{:keys [claim source by made-on due status closeness reason story url subject]}]
+  [:li {:class (str "verdict " status)}
+   [:p.result-meta
+    [:span.kind (verdict-names status status)]
+    (when closeness (str " · closeness " closeness))
+    " · " subject]
+   [:p.claim claim]
+   [:p.muted
+    (if source (list (if url [:a {:href url :rel "noopener" :target "_blank"} source] source)
+                     (when by (str ", " by)))
+        retrospective/own-name)
+    ", " (sources/long-date made-on) ", due " (sources/long-date due)
+    (when story (list " · " [:a {:href (story-href story)} "storyline"]))]
+   (when-not (str/blank? reason) [:p reason])])
+
+(defn- lessons-list [lessons]
+  [:ul.lessons
+   (for [{:keys [subject lesson]} lessons]
+     [:li [:span.kind subject] " " lesson])])
+
+(defn- retrospective-section
+  "A digest's retrospective, when it had one: how the projections that
+  fell due held, and the lessons kept from them."
+  [st kind period]
+  (when-let [{:keys [summary lessons]} (store/retrospective st kind period)]
+    (let [checked (store/projections-checked st kind period)]
+      [:section.retrospective
+       [:h2 "How the projections held"]
+       (when-not (str/blank? summary) [:p summary])
+       (when (seq lessons)
+         (list [:h3 "Lessons kept"] (lessons-list lessons)))
+       (when (seq checked)
+         [:details.gathered
+          [:summary "The projections judged (" (count checked) ")"]
+          [:ol.judged (map projection-item checked)]])])))
+
+(defn- standings-table [recs]
+  [:table.standings
+   [:thead [:tr [:th "Source"] [:th "Judged"] [:th "Held"] [:th "Partly"] [:th "Failed"]
+            [:th {:title "How near the outcomes came, from 0 to 1"} "Closeness"]
+            [:th {:title "The closeness, held toward the middle until the record is long"} "Score"]]]
+   [:tbody
+    (for [{:keys [outlet name judged held partly failed closeness score]} recs]
+      [:tr {:class (when (nil? outlet) "own")}
+       [:td name] [:td judged] [:td held] [:td partly] [:td failed] [:td closeness] [:td score]])]])
+
+(def ^:private judged-shown
+  "How many of the latest judged projections the track record lists."
+  40)
+
+(defn- record-article [st]
+  (let [judged (store/judged-projections st)
+        latest (store/latest-retrospective st)
+        standings (retrospective/standings judged)]
+    [:article.briefing.track-record
+     [:p.dateline "Track record"]
+     [:h1 "How the projections have held"]
+     [:p.standfirst "The briefings and digests make projections, and the outlets put forward their own "
+      "expectations. Once a week or a month is over, the ones that have fallen due are checked against what "
+      "happened, and every source is ranked within each subject by how close its calls came."]
+     (if (and (empty? judged) (nil? latest))
+       [:p.muted "Nothing has been judged yet. Projections are recorded with each briefing and checked by the "
+        "retrospective after each weekly and monthly digest, once they fall due."]
+       (list
+        (when (seq (:lessons latest))
+          (list [:h2 "Lessons"]
+                [:p.muted "Kept by the retrospective of "
+                 [:a {:href (digest-href (:kind latest) (:period latest))}
+                  (pipeline/period-label (:kind latest) (:period latest))]
+                 ", and given to the analyst with every briefing."]
+                (lessons-list (:lessons latest))))
+        (when (seq standings)
+          (list [:h2 "By subject"]
+                [:p.muted "A source's record on one subject says nothing about another. The score is the "
+                 "closeness held toward the middle until the record is long, so one lucky call doesn't top "
+                 "the table."]
+                (for [subject retrospective/subjects
+                      :let [recs (get standings subject)]
+                      :when (seq recs)]
+                  (list [:h3 subject] (standings-table recs)))))
+        (when (seq judged)
+          (list [:h2 "Judged"]
+                [:ol.judged (map projection-item (take judged-shown judged))]))))]))
 
 ;; --- the day -----------------------------------------------------------------------
 
@@ -291,6 +387,7 @@
       "Written by " provider (when model (str " / " model))
       (when created-at (str " at " (subs created-at 0 (min 16 (count created-at)))))
       " · " [:a {:href (str (digest-href kind period) ".md")} "markdown"]]
+     (retrospective-section st kind period)
      [:details.gathered
       [:summary "Every source the digest was given (" (count sources) ")"]
       [:ol
@@ -456,8 +553,8 @@
   "The content of one live part of a page, by the selector its stream
   patches: \"#sidebar\" or \"#article\". `current` is the page's {:day},
   {:kind :period} for a digest's, {:story} for a storyline's, {:stories
-  true} for the list of them, or {:search {:q :kind :sort :page}} for a
-  search's results.
+  true} for the list of them, {:record true} for the track record, or
+  {:search {:q :kind :sort :page}} for a search's results.
 
   The two stream apart because each re-renders only when a ratom it read
   changes. The sidebar reads the run's status, which changes several times a
@@ -473,6 +570,7 @@
       (:day current) (article st (:day current))
       (:story current) (story-article st (:story current))
       (:stories current) (stories-article st)
+      (:record current) (record-article st)
       (:search current) (search-article st (:search current))
       :else (digest-article st (:kind current) (:period current)))))
 
@@ -489,6 +587,7 @@
                 (:story current) (or (:title (get (store/notes st [(:story current)]) (:story current)))
                                      "Storyline")
                 (:stories current) "Storylines"
+                (:record current) "Track record"
                 (:search current) (if (str/blank? (get-in current [:search :q]))
                                     "Search"
                                     (str "“" (get-in current [:search :q]) "” · Search"))

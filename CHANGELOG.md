@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A track record.** The projections each briefing and digest makes are
+  recorded, and so are the expectations outlets put forward in the reports
+  the dossiers read, credited to the outlet. After each weekly and monthly
+  digest, a retrospective judges the ones that have fallen due against
+  what happened since: held, partly or failed, how close they came and
+  why. It keeps a list of lessons from the verdicts, which the next
+  briefings and digests are given with newsroom's own record. Every outlet
+  is ranked within each subject by how close its calls came, since an
+  outlet can read one subject well and another badly, and the analyst sees
+  an outlet's record on a subject next to what it expects. The rankings,
+  lessons and verdicts are at `/record`. `:retrospective` turns it off, and
+  a `:retrospective` role can give it its own model.
+
+### Changed
+
+- **A briefing built around its analysis.** The daily briefing has three
+  parts in place of six: what changed since the last one and how it moves
+  the forecasts, the analysis of why things are moving and where they lead,
+  and the trends that bear it out. The domain sections retold the same
+  stories the connections and outlook went over again. Each briefing is
+  also given the forecasts still open, and says which way the day moved
+  the ones it bears on.
+
+### Fixed
+
+- **Prompts stuck on an old default.** The prompts are copied into the
+  database on first start, so an install kept whatever default it began
+  with, and later improvements to the defaults never reached it. A stored
+  prompt that is still an earlier default, unedited, is now brought up to
+  the current one at start. An edited one is left alone.
+
 ## v0.8.5 — 8 October 2026
 
 ### Fixed

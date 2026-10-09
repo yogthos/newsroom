@@ -111,6 +111,18 @@
    :precedent-prompt "precedents.md"
    :critic-prompt "critic.md"})
 
+(defn sha-256
+  "The sha-256 of `s`, in hex."
+  [s]
+  (apply str (map #(format "%02x" (bit-and % 0xff))
+                  (.digest (java.security.MessageDigest/getInstance "SHA-256") (.getBytes s "UTF-8")))))
+
+(defn shipped-prompts
+  "The sha-256 of every version of each prompt's default that has shipped,
+  by setting."
+  []
+  (edn/read-string (default-text "shipped-prompts.edn")))
+
 (defn default-prompts
   "Each prompt's default text, by setting."
   []

@@ -127,6 +127,29 @@ main { padding: 48px clamp(20px, 6vw, 80px) 80px; }
 .coverage .bar span { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
 .coverage .count { color: var(--muted); }
 @media (max-width: 600px) { .coverage li { grid-template-columns: 1fr; gap: 2px; } }
+/* the track record */
+.standings { width: 100%; border-collapse: collapse; font: 13px/1.4 var(--sans); margin: .4rem 0 1.4rem;
+             font-variant-numeric: tabular-nums; }
+.standings th, .standings td { padding: 5px 8px; border-bottom: 1px solid var(--rule); text-align: right; }
+.standings th:first-child, .standings td:first-child { text-align: left; }
+.standings th { font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.standings tr.own td { font-weight: 700; color: var(--accent); }
+.track-record h3 { text-transform: capitalize; }
+.lessons { list-style: none; padding: 0; }
+.lessons li { border-top: 1px solid var(--rule); padding: .5rem 0; }
+.lessons .kind, .judged .kind { font: 600 11px var(--sans); text-transform: uppercase; letter-spacing: .08em;
+                                color: var(--accent); margin-right: .4rem; }
+.judged { list-style: none; padding: 0; }
+.judged li { border-left: 3px solid var(--rule); padding: .2rem 0 .2rem .8rem; margin: .8rem 0; }
+.judged p { margin: .15rem 0; }
+.judged .claim { font-weight: 600; }
+.judged .muted { font-size: 13px; }
+.judged .held { border-left-color: var(--ok); } .judged .failed { border-left-color: var(--bad); }
+.judged .partly { border-left-color: var(--accent); }
+.judged .held .kind { color: var(--ok); } .judged .failed .kind { color: var(--bad); }
+.retrospective { border-top: 2px solid var(--ink); margin-top: 2rem; padding-top: .6rem; }
+.retrospective h2 { font: 700 .82rem/1.3 var(--sans); text-transform: uppercase; letter-spacing: .14em; color: var(--accent); }
+@media (max-width: 600px) { .standings th:nth-child(4), .standings td:nth-child(4) { display: none; } }
 /* the config page */
 .config-link { margin: -12px 0 14px; font-size: 13px; }
 .config-link a.current { font-weight: 700; }

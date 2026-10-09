@@ -362,22 +362,26 @@
 (defn render-digest-prompt
   "The digest's prompt: the Selmer `template` with {{period}}, {{days}},
   {{stories}}, {{previous}}, about the last digest, {{briefings}}, the
-  briefings the period's digest is built on, and {{trends}}, the trends
-  the desk followed through the period, filled in. A template with no
-  place for the stories gets them after it, so the model always sees what
-  it may cite, and one with no place for `previous`, `briefings` or
-  `trends` gets them just before them."
+  briefings the period's digest is built on, {{trends}}, the trends the
+  desk followed through the period, and {{record}}, how earlier
+  projections turned out, filled in. A template with no place for the
+  stories gets them after it, so the model always sees what it may cite,
+  and one with no place for `previous`, `briefings`, `trends` or `record`
+  gets them just before them."
   ([template period days stories previous] (render-digest-prompt template period days stories previous nil nil))
   ([template period days stories previous trends] (render-digest-prompt template period days stories previous trends nil))
   ([template period days stories previous trends briefings]
+   (render-digest-prompt template period days stories previous trends briefings nil))
+  ([template period days stories previous trends briefings record]
    (template/fill (news/place-vars template (cond-> []
                                               previous (conj "previous")
                                               briefings (conj "briefings")
                                               trends (conj "trends")
+                                              record (conj "record")
                                               true (conj "stories"))
                                    "stories")
                   {:period period :days days :stories stories :previous previous :trends trends
-                   :briefings briefings})))
+                   :briefings briefings :record record})))
 
 ;; --- the desk's trends -------------------------------------------------------------
 

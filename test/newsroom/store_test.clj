@@ -224,3 +224,83 @@
           "a result found for a story isn't counted as an outlet carrying it")
       (is (= "The vote" (:gap (second (store/sources-between db "2026-09-30" "2026-09-30")))))
       (finally (store/close db)))))
+
+;; --- the retrospective -------------------------------------------------------------
+
+(def ^:private projections
+  [{:made-on "2026-09-28" :claim "The Fed cuts by October." :subject "economy" :due "2026-10-01"
+    :story "fed"}
+   {:made-on "2026-09-28" :claim "Chip exports fall." :subject "technology" :due "2026-11-30"
+    :story "chips" :source "Tech" :outlet "tech.org" :url "https://tech.org/1" :by "Tech's analysts"}])
+
+(deftest projections-are-kept-until-they-fall-due
+  (let [db (fresh)]
+    (try
+      (store/save-projections! db "day" "2026-09-28" projections)
+      (store/save-projections! db "week" "2026-W39" [{:made-on "2026-09-27" :claim "Oil climbs." :subject "energy"
+                                                      :due "2026-10-03"}])
+      (testing "what falls due by a period's end, oldest first"
+        (let [due (store/projections-due db "2026-10-04" :week "2026-W40")]
+          (is (= ["Oil climbs." "The Fed cuts by October."] (map :claim due)))
+          (is (every? :id due))
+          (is (= {:made-on "2026-09-28" :claim "The Fed cuts by October." :subject "economy" :due "2026-10-01"
+                  :story "fed" :status "open" :origin "day" :ref "2026-09-28"}
+                 (select-keys (second due) [:made-on :claim :subject :due :story :status :origin :ref :source])))))
+      (testing "saving a day's projections again replaces them"
+        (store/save-projections! db "day" "2026-09-28" [(second projections)])
+        (is (= ["Oil climbs."] (map :claim (store/projections-due db "2026-10-04" :week "2026-W40")))))
+      (testing "a verdict settles one, and the retrospective that gave it sees it again on a rerun"
+        (let [[oil] (store/projections-due db "2026-10-04" :week "2026-W40")]
+          (store/save-verdicts! db [{:id (:id oil) :status "held" :closeness 0.8 :reason "It climbed."
+                                     :due (:due oil) :checked-kind "week" :checked-period "2026-W40"}])
+          (is (= [{:claim "Oil climbs." :status "held" :closeness 0.8 :reason "It climbed."
+                   :checked-kind "week" :checked-period "2026-W40"}]
+                 (map #(select-keys % [:claim :status :closeness :reason :checked-kind :checked-period])
+                      (store/projections-due db "2026-10-04" :week "2026-W40"))))
+          (is (empty? (store/projections-due db "2026-10-04" :month "2026-09")) "but no other does")
+          (is (= ["Oil climbs."] (map :claim (store/projections-checked db :week "2026-W40"))))
+          (is (= ["Oil climbs."] (map :claim (store/judged-projections db))))))
+      (testing "the outlet's are kept with who made them"
+        (is (= {:source "Tech" :outlet "tech.org" :url "https://tech.org/1" :by "Tech's analysts"}
+               (select-keys (first (store/projections-due db "2026-12-01" :month "2026-11"))
+                            [:source :outlet :url :by]))))
+      (testing "they outlive the days"
+        (store/save-day! db {:day "2026-09-28" :sources [] :cited [] :markdown "m" :model "m" :provider "p"})
+        (store/save-day! db {:day "2026-09-29" :sources [] :cited [] :markdown "m" :model "m" :provider "p"})
+        (store/prune! db 1)
+        (is (= 1 (count (store/judged-projections db))))
+        (is (= 1 (count (store/projections-due db "2026-12-01" :month "2026-11")))))
+      (finally (store/close db)))))
+
+(deftest the-forecasts-still-open-are-newsrooms-own-made-before-today
+  (let [db (fresh)]
+    (try
+      (store/save-projections! db "day" "2026-09-28" projections)
+      (store/save-projections! db "day" "2026-09-30" [{:made-on "2026-09-30" :claim "Today's own." :subject "energy"
+                                                       :due "2026-10-30"}])
+      (store/save-projections! db "week" "2026-W39" [{:made-on "2026-09-27" :claim "Oil climbs." :subject "energy"
+                                                      :due "2026-10-03"}])
+      (let [[oil] (store/projections-due db "2026-10-04" :week "2026-W40")]
+        (store/save-verdicts! db [{:id (:id oil) :status "held" :closeness 0.8 :reason "It climbed."
+                                   :due (:due oil) :checked-kind "week" :checked-period "2026-W40"}]))
+      (is (= ["The Fed cuts by October."] (map :claim (store/open-projections db "2026-09-30")))
+          "not the outlets', not the settled, not today's")
+      (finally (store/close db)))))
+
+(deftest a-retrospective-round-trips
+  (let [db (fresh)]
+    (try
+      (is (nil? (store/latest-retrospective db)))
+      (store/save-retrospective! db {:kind :week :period "2026-W40" :summary "Two of three held."
+                                     :lessons [{:subject "economy" :lesson "Cuts come late."}]
+                                     :model "m" :provider "p"})
+      (store/save-retrospective! db {:kind :month :period "2026-09" :summary "A month."
+                                     :lessons [{:subject "energy" :lesson "Oil lags."}] :model "m" :provider "p"})
+      (is (= {:kind :week :period "2026-W40" :summary "Two of three held."
+              :lessons [{:subject "economy" :lesson "Cuts come late."}] :model "m" :provider "p"}
+             (dissoc (store/retrospective db :week "2026-W40") :created-at)))
+      (is (= "2026-09" (:period (store/latest-retrospective db))) "the latest written")
+      (store/save-retrospective! db {:kind :week :period "2026-W40" :summary "Rewritten." :lessons [] :model "m" :provider "p"})
+      (is (= "Rewritten." (:summary (store/retrospective db :week "2026-W40"))) "writing it again replaces it")
+      (is (= "2026-W40" (:period (store/latest-retrospective db))))
+      (finally (store/close db)))))

@@ -15,7 +15,7 @@
   the same story comes back with a fragment or tracking parameters on it."
   (:require [clojure.string :as str]
             [newsroom.news :refer [canonical-url dedupe-items unseen-items overview body cite render-prompt render-desk-prompt has-var? place-vars
-                                   citations link-citations briefing collapse-similar told outlets tldr
+                                   citations link-citations briefing collapse-similar told outlets origin tldr
                                    valid-day? adjacent-days]]
             [newsroom.template :as template]
             [writ.spec :refer [spec ann refine graph flow law calls assume]]))
@@ -31,6 +31,11 @@
 ;; what a source adapter hands over: an RSS entry, a search hit
 (refine Item [i {:title String, :url String, :source String, :summary String,
                  :published (Opt String)}]
+  true)
+
+;; what an outlet is known by: an item, or one of the copies collapsed into
+;; it, which may carry no more than where it ran
+(refine Copy [c {:url (Opt String), :source (Opt String), :summary (Opt String), :origin (Opt String)}]
   true)
 
 ;; an item with the number the analysis cites it by
@@ -59,6 +64,7 @@
 (ann collapse-similar [(List Item) (Opt Float) -> (List Item)])
 (ann told           [(List Item) -> (List Item)])
 (ann outlets        [Item -> Nat])
+(ann origin         [Copy -> (Opt String)])
 (ann tldr           [String -> (Opt String)])
 (ann valid-day?     [String -> Bool])
 (ann adjacent-days  [(List String) String -> (Tuple (Opt String) (Opt String))])
@@ -477,6 +483,13 @@
 (law a-wire-story-counts-once-however-many-reprint-it
   (= 1 (outlets (assoc (story 1 "a" 0) :url "https://one.org/a" :summary "LONDON (Reuters) - Oil rose."
                        :also [{:source "Two" :url "https://two.org/b" :origin "Reuters"}]))))
+
+(law a-publishers-feeds-share-an-origin
+  (and (= "bbc.co.uk" (origin (assoc (story 1 "a" 0) :url "https://news.bbc.co.uk/world/1")))
+       (= "bbc.co.uk" (origin (assoc (story 2 "b" 0) :url "https://www.bbc.co.uk/business/2")))))
+
+(law a-wire-reprint-is-the-agencys
+  (= "AP" (origin (assoc (story 1 "a" 0) :url "https://paper.org/a" :summary "WASHINGTON (AP) — Talks stalled."))))
 
 (law one-publishers-similar-stories-stay-apart
   (= 2 (count (collapse-similar [(assoc (story 1 "a" 0) :source "World" :vector [1 0])

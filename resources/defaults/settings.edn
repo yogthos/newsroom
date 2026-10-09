@@ -91,6 +91,16 @@
  :digests [:week :month]
  :digest-stories 15
 
+ ;; the projections each briefing and digest makes are recorded, and so
+ ;; are the expectations the outlets put forward in the reports the
+ ;; dossiers read. After each digest, the ones fallen due are checked
+ ;; against what happened, with how close they came and why, and lessons
+ ;; are kept. The briefings and digests are told the lessons, and every
+ ;; outlet is ranked within each subject by its calls, at /record. A
+ ;; :retrospective role in :roles can give the job its own model. false
+ ;; turns it off
+ :retrospective true
+
  ;; how long one source may take, retries and all, before the run goes on
  ;; without it; how many times a request that failed for a passing reason
  ;; (a rate limit, an overloaded server, a dropped connection) is tried
@@ -175,7 +185,8 @@
 
  ;; the :analyst role writes the briefing and the digests, keeps the
  ;; story notes unless a :notes role is given, and does the desk's work
- ;; unless a :desk role is given, and checks the briefing unless a :critic
+ ;; unless a :desk role is given, checks the briefing unless a :critic
+ ;; role is given, and keeps the track record unless a :retrospective
  ;; role is given; with no :roles, the first
  ;; built-in whose key is in the environment serves, else a local endpoint
  :roles {:analyst :deepseek}}

@@ -22,6 +22,12 @@
   have the analyst write them up. The schedule writes each one once its
   period is over.
 
+  The projections a briefing or digest makes, and the expectations the
+  outlets put forward in the dossiers, are recorded once it is filed. Each
+  digest is followed by a retrospective that judges the ones fallen due
+  and keeps the lessons, and the briefings and digests are told how the
+  projections have gone (see newsroom.retrospective).
+
   Progress is published to `status`, a glimmer ratom, so every open page
   shows it live."
   (:require [clojure.java.io :as io]
@@ -39,6 +45,7 @@
             [newsroom.news :as news]
             [newsroom.notes :as notes]
             [newsroom.precedents :as precedents]
+            [newsroom.retrospective :as retrospective]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.trends :as trends]))
@@ -760,6 +767,162 @@
               (log! run-id {:text (str "The notes weren't updated: " (or (ex-message e) (str e)))
                             :level :error}))))))))
 
+(defn period-label
+  "A digest's period the way a reader says it: the week of 28 September
+  2026, or September 2026."
+  [kind period]
+  (let [[from _] (trends/period-range kind period)]
+    (case kind
+      :week (str "the week of " (sources/long-date from))
+      :month (second (str/split (sources/long-date from) #" " 2)))))
+
+;; --- the retrospective ------------------------------------------------------------
+;; The projections a briefing or digest makes, and those the outlets put
+;; forward, are recorded once it is filed. After each digest, the ones fallen
+;; due are judged against what happened and the lessons are rewritten (see
+;; newsroom.retrospective). A step that fails is logged and the rest goes on.
+
+(defn- retro-llm
+  "The model that records and judges the projections: the :retrospective
+  role's when the config gives it one, else the analyst's."
+  [config]
+  (providers/role-llm config (if (get-in config [:roles :retrospective]) :retrospective :analyst)))
+
+(defn- labelled
+  "A retrospective with its period's :label."
+  [{:keys [kind period] :as r}]
+  (when r (assoc r :label (period-label kind period))))
+
+(defn- track-record
+  "What the track record holds for a prompt written on `day`: {:block
+  :records}, the block telling the analyst how the projections went, with
+  the records of `outlets` (all when nil) and the forecasts made before
+  `day` still open, those on `storylines` first, and every outlet's record
+  by subject. nil when the retrospective is off."
+  [{:keys [config store]} day outlets storylines]
+  (when (:retrospective config)
+    (let [standings (retrospective/standings (store/judged-projections store))
+          open (retrospective/forecasts-shown (store/open-projections store day) storylines)]
+      {:block (retrospective/record-block (labelled (store/latest-retrospective store)) standings outlets open)
+       :records (retrospective/record-of standings)})))
+
+(defn- counted [n one many] (str n " " (if (= 1 n) one many)))
+
+(defn- record-projections
+  "Task: the projections `markdown` makes, read by the model as of
+  `made-on`, with the `outlets'` expectations, stored as what `origin`
+  `ref` projected. The citations of `markdown` name `sources`, which tie a
+  projection to its storyline. A failed call is logged, and what the
+  outlets expect is stored all the same."
+  [{:keys [config store run-id] :as ctx} origin ref what made-on markdown sources outlets]
+  (m/sp
+    (let [llm-config (retro-llm config)
+          answer (m/? (softly run-id "Recording the projections"
+                              (ask ctx llm-config (retrospective/extraction-prompt what made-on markdown))))
+          own (when answer (retrospective/parse-projections answer made-on sources))]
+      (when (and answer (nil? own))
+        (log! run-id {:text "The answer listing the projections held no list of them" :level :error}))
+      (store/save-projections! store origin ref (concat own outlets))
+      (log! run-id {:text (str "Recorded " (counted (count own) "projection" "projections")
+                               (when (seq outlets)
+                                 (str " and " (counted (count outlets) "expectation" "expectations")
+                                      " the outlets put forward")))
+                    :level :ok}))))
+
+(def ^:private judge-batch
+  "How many projections one call judges."
+  15)
+
+(def ^:private judge-wave
+  "How many judging calls go at once."
+  4)
+
+(def ^:private max-judged
+  "The most projections one retrospective judges, the oldest first; the
+  rest wait for the next. Well over what a week of briefings records, so
+  the weekly retrospective keeps up."
+  300)
+
+(def ^:private evidence-chars
+  "About how much of the digest the judge reads as what happened."
+  6000)
+
+(def ^:private standfirsts-shown
+  "The most of the days' standfirsts the judge reads."
+  45)
+
+(defn- verdict-counts [rows]
+  (let [n (frequencies (map :status rows))]
+    (str/join ", " (for [s ["held" "partly" "failed" "open" "unresolved"] :when (pos? (get n s 0))]
+                     (str (get n s) " " (if (= s "open") "still open" s))))))
+
+(defn- retrospective-task
+  "Task: the retrospective of `kind` and `period`, which ends on `to`:
+  the projections fallen due by then judged against the storylines' facts
+  since they were made, the digest just written, `markdown`, and the days'
+  standfirsts, and the lessons rewritten from the verdicts. Stored unless
+  nothing could be judged; a failure is logged, since the digest is filed
+  already."
+  [{:keys [config store run-id] :as ctx} kind period to markdown]
+  (m/sp
+    (let [label (period-label kind period)
+          due (vec (take max-judged (store/projections-due store to kind period)))]
+      (if (empty? due)
+        (log! run-id {:text (str "No projections fell due by the end of " label)})
+        (let [llm-config (retro-llm config)
+              _ (update-status! run-id assoc :state :checking :items (count due) :writing nil
+                                :provider (name (:alias llm-config)) :model (:model llm-config))
+              _ (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
+                                         ") to check how " (counted (count due) "projection" "projections")
+                                         " turned out")})
+              numbered (retrospective/number-projections due)
+              notes (store/notes store (keep :story due))
+              general (str (news/body markdown evidence-chars 2)
+                           (let [from (reduce #(if (neg? (compare %2 %1)) %2 %1) (map :made-on due))
+                                 days (take-last standfirsts-shown (store/standfirsts-between store from to))]
+                             (when (seq days)
+                               (str "\n\n### The days' standfirsts\n\n"
+                                    (trends/days-block days sources/long-date)))))
+              batches (vec (partition-all judge-batch numbered))
+              judge (fn [b]
+                      (softly run-id "Judging the projections"
+                              (ask ctx llm-config (retrospective/judge-prompt (sources/long-date to) b notes
+                                                                             general sources/long-date))))
+              ;; a few calls at a time, so a long backlog doesn't hit the
+              ;; provider's rate limit all at once
+              answers (loop [waves (partition-all judge-wave batches) out []]
+                        (if-let [wave (first waves)]
+                          (recur (rest waves) (into out (m/? (apply m/join vector (map judge wave)))))
+                          out))
+              verdicts (apply merge {} (map (fn [b a]
+                                              (when a (retrospective/parse-verdicts a (set (map :pid b)))))
+                                            batches answers))
+              judged (retrospective/apply-verdicts numbered verdicts {:kind kind :period period :to to})]
+          (if (empty? judged)
+            (log! run-id {:text (str "None of the " (count due) " projections due could be judged")
+                          :level :error})
+            (let [_ (store/save-verdicts! store judged)
+                  _ (log! run-id {:text (str "Judged " (count judged) " projections: " (verdict-counts judged))
+                                  :level :ok})
+                  previous (store/latest-retrospective store)
+                  settled (filterv :closeness judged)
+                  answer (when (seq settled)
+                           (m/? (softly run-id "Drawing the lessons"
+                                        (ask ctx llm-config (retrospective/lessons-prompt
+                                                             label settled (:lessons previous))))))
+                  drawn (some-> answer retrospective/parse-lessons)]
+              (when (and answer (nil? drawn))
+                (log! run-id {:text "The lessons' answer held none, so the last ones are kept" :level :error}))
+              (store/save-retrospective! store {:kind kind :period period
+                                                :summary (:summary drawn)
+                                                :lessons (if drawn (:lessons drawn) (:lessons previous))
+                                                :model (:model llm-config)
+                                                :provider (name (:alias llm-config))})
+              (when drawn
+                (log! run-id {:text (str "Kept " (counted (count (:lessons drawn)) "lesson" "lessons")
+                                         " from how the projections went")
+                              :level :ok})))))))))
+
 (defn run-task
   "Task: gather, analyse and store `day`. Completes with the stored day's
   summary; fails when nothing was gathered or the model call fails.
@@ -857,8 +1020,11 @@
             numbered (news/cite (into day-sources history))
             graph (when (:map desk)
                     (analysis/graph (:stories desk) dossiers (:links the-map)))
+            record (track-record ctx day (set (keep news/origin (remove :precedent numbered)))
+                                (set (keep :story numbered)))
             analysed (when desk
-                       (analysis/analysis-block (:stories desk) dossiers the-map found (some? graph)))
+                       (analysis/analysis-block (:stories desk) dossiers the-map found (some? graph)
+                                                (:records record)))
             llm-config (providers/role-llm config :analyst)
             established (some-> (:markdown earlier) (news/body previous-chars 2))
             _ (when established
@@ -868,6 +1034,8 @@
             running (notes/background kept numbered sources/long-date)
             _ (when running
                 (log! run-id {:text "Giving the model the notes on the stories still running"}))
+            _ (when (:block record)
+                (log! run-id {:text "Telling the model how the earlier projections turned out"}))
             prompt (news/render-desk-prompt (or (:template ctx) (config/prompt-template config))
                                        (dated day)
                                        numbered
@@ -877,11 +1045,13 @@
                                                 (remove nil?)
                                                 seq
                                                 (str/join "\n\n"))
-                                       {:analysis analysed :graph? (some? graph)})
+                                       {:analysis analysed :graph? (some? graph) :record (:block record)})
             _ (update-status! run-id assoc :state :analysing :items (count numbered)
                               :provider (name (:alias llm-config)) :model (:model llm-config))
             {:keys [answer reply]} (m/? (critique-task ctx day numbered analysed llm-config prompt
                                                        (m/? (write-up ctx llm-config prompt "the briefing"))))
+            ;; the projections are read from the briefing as written, without the graph
+            written answer
             answer (analysis/with-graph answer graph)
             doc (news/briefing answer numbered)
             known (set (map :n numbered))
@@ -902,6 +1072,9 @@
         (when max-facts
           (m/? (update-notes ctx day numbered cited (keys kept) max-facts
                              (analysis/dossier-notes (:stories desk) dossiers))))
+        (when (:retrospective config)
+          (m/? (record-projections ctx "day" day (str "the briefing for " (sources/long-date day)) day written
+                                   numbered (retrospective/outlet-projections (:stories desk) dossiers day))))
         (when-let [gone (seq (prune-days! ctx))]
           (log! run-id {:text (str "Dropped " (count gone) " old "
                                    (if (= 1 (count gone)) "day" "days")
@@ -910,15 +1083,6 @@
         {:day day :digest nil :items (count numbered) :cited (count cited)}))))
 
 ;; --- digests -----------------------------------------------------------------------
-
-(defn period-label
-  "A digest's period the way a reader says it: the week of 28 September
-  2026, or September 2026."
-  [kind period]
-  (let [[from _] (trends/period-range kind period)]
-    (case kind
-      :week (str "the week of " (sources/long-date from))
-      :month (second (str/split (sources/long-date from) #" " 2)))))
 
 (def ^:private sources-per-storyline
   "How many of a storyline's stored sources a digest is given to cite, when
@@ -1066,6 +1230,9 @@
             _ (when (seq threads)
                 (log! run-id {:text (str "Following " (count threads) " trends the desk found through the period")}))
             built-on (briefings-context store kind from to)
+            record (track-record ctx to nil (set (keep :story lines)))
+            _ (when (:block record)
+                (log! run-id {:text "Telling the model how the earlier projections turned out"}))
             _ (when built-on
                 (log! run-id {:text (str "Building on the " (if (= kind :month) "weekly digests" "daily briefings")
                                          " of " label)}))
@@ -1076,7 +1243,8 @@
                     (trends/digest-block lines sources/long-date)
                     (some->> established (previous-digest-context kind last-period))
                     (trends/trends-block threads sources/long-date)
-                    built-on)
+                    built-on
+                    (:block record))
             llm-config (providers/role-llm config :analyst)
             _ (update-status! run-id assoc :state :analysing :items (count lines)
                               :provider (name (:alias llm-config)) :model (:model llm-config))
@@ -1094,6 +1262,12 @@
                                    :provider (name (:alias llm-config))})
         (log! run-id {:text (str "Filed the digest for " label ": " (count cited) " of "
                                  (count numbered) " sources cited") :level :ok})
+        (when (:retrospective config)
+          (m/? (record-projections ctx (name kind) period (str "the digest for " label) to answer
+                                   ;; a digest's citations tie a projection to the storyline they're under
+                                   (vec (mapcat (fn [l] (map #(assoc % :story (:story l)) (:cites l))) lines))
+                                   nil))
+          (m/? (retrospective-task ctx kind period to doc)))
         (swap! stored inc)
         {:digest job :items (count numbered) :cited (count cited)}))))
 

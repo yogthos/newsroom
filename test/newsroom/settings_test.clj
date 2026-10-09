@@ -206,6 +206,24 @@
         (is (= [] (settings/seed-prompts! st))))
       (finally (store/close st)))))
 
+(deftest a-prompt-left-as-an-earlier-default-is-brought-up-to-date
+  (let [st (store/open "sqlite::memory:")]
+    (try
+      (with-redefs [config/shipped-prompts (fn [] {:prompt #{(config/sha-256 "Old default: {{sources}}")}})]
+        (store/save-settings! st {:prompt "Old default: {{sources}}" :critic-prompt "Old default: {{sources}}"
+                                  :digest-prompt "Mine"})
+        (is (= #{:prompt :precedent-prompt} (set (settings/seed-prompts! st))))
+        (let [stored (settings/stored st)]
+          (is (= (config/default-text "prompt.md") (:prompt stored)))
+          (is (= "Old default: {{sources}}" (:critic-prompt stored)) "only another prompt's old default")
+          (is (= "Mine" (:digest-prompt stored)))))
+      (finally (store/close st)))))
+
+(deftest every-default-prompt-is-listed-as-shipped
+  (doseq [[k f] config/prompts]
+    (is (contains? (get (config/shipped-prompts) k) (config/sha-256 (config/default-text f)))
+        (str f " changed: add its sha-256 to resources/defaults/shipped-prompts.edn"))))
+
 (deftest saving-the-form-runs-with-it-from-then-on
   (plugin/load-all! "plugins" {})
   (let [st (store/open "sqlite::memory:")

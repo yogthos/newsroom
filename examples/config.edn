@@ -112,6 +112,18 @@
  :digests [:week :month]
  :digest-stories 15
 
+ ;; The track record. Each briefing's and digest's projections are
+ ;; recorded, and so are the expectations the outlets put forward in the
+ ;; reports the dossiers read, credited to the outlet. After each digest
+ ;; the ones fallen due are checked against what happened: held, partly or
+ ;; failed, how close they came and why. Lessons are kept from the
+ ;; verdicts, and every outlet is ranked within each subject, so one that
+ ;; reads technology well can still be ranked low on geopolitics. The
+ ;; briefings and digests are told the lessons and the records, and
+ ;; /record shows them. A :retrospective role can give the job its own
+ ;; model. false turns it off.
+ :retrospective true
+
  ;; How long one source may take before the run goes on without it.
  :source-timeout-ms 30000
 
@@ -234,4 +246,5 @@
          ;; :notes :glm
          ;; :research :glm
          ;; :desk :glm
+         ;; :retrospective :glm
          }}

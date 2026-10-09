@@ -920,6 +920,173 @@
     (is (= 1 (count @calls)))
     (is (str/includes? (:markdown (store/day (:store c) "2026-09-30")) "its own Starlink"))))
 
+;; --- the retrospective ------------------------------------------------------------
+
+(defn- retro-answer
+  "What the fake model answers each of the retrospective's prompts with, or
+  nil for a prompt that isn't one of them."
+  [p]
+  (cond
+    (str/starts-with? p "You list the projections")
+    (str "{\"projections\": [{\"claim\": \"The Fed cuts by December.\", \"subject\": \"economy\","
+         " \"by\": \"2026-12-15\", \"cites\": [1]}]}")
+    (str/starts-with? p "You check how projections turned out")
+    (str "{\"verdicts\": [" (str/join ", " (for [[_ id] (re-seq #"(?m)^### (P\d+)" p)]
+                                            (str "{\"id\": \"" id "\", \"verdict\": \"failed\", \"closeness\": 0.2,"
+                                                 " \"reason\": \"The Fed held all week.\"}")))
+         "]}")
+    (str/starts-with? p "You keep the track record")
+    (str "{\"summary\": \"The cut didn't come.\","
+         " \"lessons\": [{\"subject\": \"economy\", \"lesson\": \"The Fed moves later than markets price.\"}]}")))
+
+(deftest a-run-records-the-projections-it-makes-and-the-outlets-expect
+  (let [prompts (atom {})
+        answer (fn [p]
+                 (or (retro-answer p)
+                     (cond
+                       (str/includes? p "You sort the reports")
+                       "{\"stories\": [{\"title\": \"The Fed\", \"reports\": [1, 2]}]}"
+                       (str/includes? p "prepares the dossiers")
+                       (str "{\"dossiers\": [{\"story\": \"G1\", \"summary\": \"It held.\","
+                            " \"facts\": [{\"fact\": \"Held.\", \"cites\": [1]}],"
+                            " \"expectations\": [{\"claim\": \"A cut comes in December.\", \"subject\": \"economy\","
+                            " \"due\": \"2026-12-31\", \"by\": \"its economists\", \"cites\": [2]}]}]}")
+                       :else "# Today\n\n## Outlook\n\nThe Fed cuts by December [1].")))
+        c (-> (ctx [{:type ::fixture :name "A" :ns [1 2]}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (swap! prompts assoc (subs p 0 (min 24 (count p))) p)
+                       {:content (answer p) :model "fake"})))
+              (update :config merge {:group-stories true :dossier-stories 5 :read-articles 0
+                                     :retrospective true}))
+        _ (m/? (pipeline/run-task c "2026-09-30"))
+        st (:store c)
+        recorded (store/projections-due st "2027-06-01" :month "2027-05")]
+    (is (str/includes? (get @prompts "You list the projections") "The Fed cuts by December [1].")
+        "the projections are read from the briefing as written, its citations and all")
+    (is (= #{["The Fed cuts by December." nil "2026-12-15"]
+             ["A cut comes in December." "Fixture" "2026-12-31"]}
+           (set (map (juxt :claim :source :due) recorded)))
+        "newsroom's own projection and the one the outlet put forward")
+    (is (every? #(= "2026-09-30/1" (:story %)) recorded) "each tied to its story's storyline")
+    (is (= "e.com" (:outlet (first (filter :source recorded)))))
+    (is (some #(= "Recorded 1 projection and 1 expectation the outlets put forward" (:text %))
+              (:events @pipeline/status)))))
+
+(deftest the-briefing-is-told-the-forecasts-still-open
+  (let [prompts (atom [])
+        c (-> (ctx [{:type ::fixture :name "A" :ns [1 2]}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (swap! prompts conj p)
+                       {:content (or (retro-answer p) "# Today\n\n## What changed\n\nRates [1].") :model "fake"})))
+              (assoc-in [:config :retrospective] true))]
+    (store/save-projections! (:store c) "day" "2026-09-28"
+                             [{:made-on "2026-09-28" :claim "The Fed cuts by December." :subject "economy"
+                               :due "2026-12-15"}
+                              {:made-on "2026-09-28" :claim "Chips fall." :subject "technology" :due "2026-12-15"
+                               :source "Tech" :outlet "tech.org"}])
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (let [briefing (first (filter #(str/includes? % "## The track record") @prompts))]
+      (is (str/includes? briefing "- (economy, made 2026-09-28, due 2026-12-15) The Fed cuts by December."))
+      (is (not (str/includes? briefing "Chips fall.")) "an outlet's expectation is not newsroom's forecast"))))
+
+(deftest a-failed-extraction-leaves-the-briefing-filed
+  (let [c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]
+                   (fn [_ req] (if (str/starts-with? (-> req :messages first :content) "You list")
+                                 (throw (ex-info "rate limited" {}))
+                                 {:content "x [1]" :model "fake"})))
+              (assoc-in [:config :retrospective] true))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (some? (store/day (:store c) "2026-09-30")))
+    (is (some #(= "Recording the projections failed: rate limited" (:text %)) (:events @pipeline/status)))))
+
+(deftest a-digest-checks-the-projections-that-fell-due
+  (let [prompts (atom [])
+        chat (fn [_ req]
+               (let [p (-> req :messages first :content)]
+                 (swap! prompts conj p)
+                 {:content (or (retro-answer p) "# The week\n\n> Rates held.\n\n## Outlook\n\nCuts by December [1].")
+                  :model "fake"}))
+        c (-> (digest-ctx chat) (assoc-in [:config :retrospective] true))
+        st (:store c)]
+    (store-week! st)
+    (store/save-notes! st {"2026-09-28/1" {:title "The Fed's pause" :summary "Held all week."
+                                           :first-day "2026-09-28" :last-day "2026-10-01"
+                                           :facts [{:day "2026-09-29" :text "The Fed held again." :url "https://e.com/1"
+                                                    :source "Wire" :headline "Fed holds"}]}})
+    (store/save-projections! st "day" "2026-09-28"
+                             [{:made-on "2026-09-28" :claim "The Fed cuts this week." :subject "economy"
+                               :due "2026-10-02" :story "2026-09-28/1"}
+                              {:made-on "2026-09-28" :claim "Not due yet." :subject "economy" :due "2026-11-30"}])
+    (store/save-projections! st "day" "2026-09-29"
+                             [{:made-on "2026-09-29" :claim "Wire expects a cut." :subject "economy"
+                               :due "2026-10-01" :source "Wire" :outlet "old.example.com"}])
+    (m/? (pipeline/digest-task c :week "2026-W40"))
+    (let [judge (some #(when (str/starts-with? % "You check") %) @prompts)
+          lessons (some #(when (str/starts-with? % "You keep the track record") %) @prompts)]
+      (testing "the judge gets what fell due, with what happened since and the digest"
+        (is (str/includes? judge "The Fed cuts this week."))
+        (is (str/includes? judge "Wire expects a cut."))
+        (is (not (str/includes? judge "Not due yet.")))
+        (is (str/includes? judge "- 29 September 2026: The Fed held again."))
+        (is (str/includes? judge "Rates held.")))
+      (testing "the verdicts are kept, and the lessons drawn from them"
+        (is (= #{"failed"} (set (map :status (store/projections-checked st :week "2026-W40")))))
+        (is (= 2 (count (store/judged-projections st))))
+        (is (str/includes? lessons "The Fed held all week."))
+        (is (= {:summary "The cut didn't come."
+                :lessons [{:subject "economy" :lesson "The Fed moves later than markets price."}]}
+               (select-keys (store/retrospective st :week "2026-W40") [:summary :lessons]))))
+      (testing "the digest's own projections are recorded from its period's end, tied to the storylines it cites"
+        (is (= [["The Fed cuts by December." "2026-09-28/1"]]
+               (map (juxt :claim :story)
+                    (filter #(= "week" (:origin %)) (store/projections-due st "2027-06-01" :month "2027-05")))))
+        (is (= "2026-10-04" (:made-on (first (filter #(= "week" (:origin %))
+                                                     (store/projections-due st "2027-06-01" :month "2027-05"))))))))
+    (testing "the next briefing hears how the projections went"
+      (reset! prompts [])
+      (let [c (assoc c :config (merge (:config (ctx [{:type ::fixture :name "A" :ns [1]}] chat))
+                                      {:retrospective true}))]
+        (m/? (pipeline/run-task c "2026-10-05"))
+        (let [brief (first @prompts)]
+          (is (str/includes? brief "## The track record"))
+          (is (str/includes? brief "- (economy) The Fed moves later than markets price."))
+          (is (str/includes? brief "- economy: 1 judged, 0 held, 0 partly, 1 failed, closeness 0.2")))))))
+
+(deftest a-long-backlog-is-judged-in-batches
+  (let [prompts (atom [])
+        c (-> (digest-ctx (fn [_ req]
+                            (let [p (-> req :messages first :content)]
+                              (swap! prompts conj p)
+                              {:content (or (retro-answer p) "# W\n\n## O\n\nx [1]") :model "fake"})))
+              (assoc-in [:config :retrospective] true))
+        st (:store c)]
+    (store-week! st)
+    (store/save-projections! st "day" "2026-09-28"
+                             (for [i (range 40)]
+                               {:made-on "2026-09-28" :claim (str "Claim " i) :subject "economy" :due "2026-10-01"}))
+    (m/? (pipeline/digest-task c :week "2026-W40"))
+    (is (= 3 (count (filter #(str/starts-with? % "You check") @prompts))) "fifteen a call")
+    (is (= 40 (count (store/projections-checked st :week "2026-W40"))) "and every one is judged")))
+
+(deftest a-retrospective-that-fails-leaves-the-digest-filed
+  (let [c (-> (digest-ctx (fn [_ req]
+                            (let [p (-> req :messages first :content)]
+                              (if (str/starts-with? p "You check")
+                                (throw (ex-info "judge down" {}))
+                                {:content (or (retro-answer p) "# W\n\n## O\n\nx [1]") :model "fake"}))))
+              (assoc-in [:config :retrospective] true))
+        st (:store c)]
+    (store-week! st)
+    (store/save-projections! st "day" "2026-09-28" [{:made-on "2026-09-28" :claim "Due." :subject "economy"
+                                                     :due "2026-10-01"}])
+    (m/? (pipeline/digest-task c :week "2026-W40"))
+    (is (some? (store/digest st :week "2026-W40")))
+    (is (= ["open"] (map :status (store/projections-due st "2026-10-04" :week "2026-W40"))) "still to be judged")
+    (is (nil? (store/retrospective st :week "2026-W40")))
+    (is (some #(str/includes? (:text %) "judge down") (:events @pipeline/status)))))
+
 ;; --- the old markdown files --------------------------------------------------------
 
 (deftest the-markdown-files-are-moved-into-the-database

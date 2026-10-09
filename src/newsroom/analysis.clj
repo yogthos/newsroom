@@ -28,7 +28,9 @@
   fails leaves the briefing to be written from what there is."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
-            [newsroom.notes :as notes]))
+            [newsroom.news :as news]
+            [newsroom.notes :as notes]
+            [newsroom.retrospective :as retrospective]))
 
 ;; --- answers ---------------------------------------------------------------------
 
@@ -283,6 +285,10 @@
        "Reports:\n\n"
        (str/join "\n\n" (map report-block (dossier-sources {:sources sources})))))
 
+(def ^:private max-expectations
+  "The most of the outlets' expectations a dossier keeps."
+  2)
+
 (defn dossier-prompt
   "The prompt that has the desk write a dossier on each of `stories`, with
   the `notes` on their storylines as background."
@@ -312,14 +318,24 @@
        "- forces: the broader forces and trends the story is an instance of, such as debt piling up while "
        "rates stay high, trade splitting into blocs, or a technology shifting the balance of production, "
        "a short phrase each.\n"
-       "- significance: a sentence or two on why it matters beyond its borders, or that it doesn't.\n\n"
+       "- significance: a sentence or two on why it matters beyond its borders, or that it doesn't.\n"
+       "- expectations: at most " max-expectations " forecasts the reports themselves put forward on how "
+       "the story will go, in their own voice or through the analysts and experts they choose to present, "
+       "each a claim that can later be found true or false, with its subject, one of "
+       (str/join ", " retrospective/subjects) ", the day, YYYY-MM-DD, by which it should be known, who "
+       "makes it, and the report that carries it. The outlet is judged by these, so take only its own "
+       "calls and those of the analysts and experts it presents: an actor's statement of what it will "
+       "do is a position, a party to the story forecasting how it goes is pressing its interests, and a "
+       "timetable or a routine next step is no forecast.\n\n"
        "Answer with JSON only, in this shape:\n"
        "{\"dossiers\": [{\"story\": \"G1\", \"summary\": \"...\", \"status\": \"escalating\", "
        "\"domain\": \"economics\", \"label\": \"...\", \"facts\": [{\"fact\": \"...\", \"cites\": [3, 5]}], "
        "\"actors\": [{\"name\": \"...\", \"position\": \"...\", \"interests\": \"...\"}], "
        "\"disputes\": [{\"issue\": \"...\", \"claims\": [{\"claim\": \"...\", \"by\": \"...\", \"cites\": [4]}]}], "
        "\"framing\": [{\"outlet\": \"...\", \"angle\": \"...\"}], "
-       "\"gaps\": [{\"gap\": \"...\", \"query\": \"...\"}], \"forces\": [\"...\"], \"significance\": \"...\"}]}\n\n"
+       "\"gaps\": [{\"gap\": \"...\", \"query\": \"...\"}], \"forces\": [\"...\"], \"significance\": \"...\", "
+       "\"expectations\": [{\"claim\": \"...\", \"subject\": \"economy\", \"due\": \"YYYY-MM-DD\", "
+       "\"by\": \"...\", \"cites\": [3]}]}]}\n\n"
        "Stories:\n\n"
        (str/join "\n\n" (map #(dossier-story-block % notes long-date) stories))))
 
@@ -335,12 +351,29 @@
       (and s (re-find #"tech|science|ai\b" s)) "technology"
       :else "politics")))
 
+(defn- expectation
+  "An outlet's expectation from the answer's `e`, credited to the outlet of
+  the first of `sources` it cites, or nil when it cites none of them."
+  [e by-n cites]
+  (let [claim (text (get e "claim") 400)
+        cs (cites (get e "cites"))
+        s (some by-n cs)]
+    (when (and claim s)
+      {:claim claim
+       :by (text (get e "by") 100)
+       :subject (retrospective/subject-of (get e "subject"))
+       :due (text (get e "due") 20)
+       :cites cs
+       :source (:source s)
+       :outlet (news/origin s)
+       :url (:url s)})))
+
 (defn- read-dossier
-  "A dossier from the answer's `d`, its citations kept to `ns`, the numbers
-  of its story's sources. A fact that cites none of them is dropped."
-  [d ns]
-  (let [ns (set ns)
-        cites #(filterv ns (numbers %))]
+  "A dossier from the answer's `d`, its citations kept to `sources`, its
+  story's. A fact that cites none of them is dropped."
+  [d sources]
+  (let [by-n (into {} (map (juxt :n identity)) sources)
+        cites #(filterv by-n (numbers %))]
     {:summary (text (get d "summary") 800)
      :status (status-of (get d "status"))
      :domain (domain-of (get d "domain"))
@@ -372,7 +405,8 @@
                       :when gap]
                   {:gap gap :query (text (get g "query") 200)}))
      :forces (texts (get d "forces") 6 120)
-     :significance (text (get d "significance") 500)}))
+     :significance (text (get d "significance") 500)
+     :expectations (vec (take max-expectations (keep #(expectation % by-n cites) (maps (get d "expectations")))))}))
 
 (defn parse-dossiers
   "The dossiers of the desk's `answer` on `stories`, {key dossier}. A
@@ -383,7 +417,7 @@
           (keep (fn [d]
                   (let [k (str/trim (str (get d "story")))]
                     (when-let [story (by-key k)]
-                      (let [dossier (read-dossier d (map :n (:sources story)))]
+                      (let [dossier (read-dossier d (:sources story))]
                         (when (or (:summary dossier) (seq (:facts dossier)))
                           [k dossier]))))))
           (maps (get (json-object answer) "dossiers")))))
@@ -553,8 +587,9 @@
                                "|\"" (words (label-text mechanism 200) 6) "\"| " (id-of to) "\n")))))))
 
 (defn with-graph
-  "The briefing `answer` with the `graph` drawn at the start of its section
-  on how things connect, else before its last section, else at its end.
+  "The briefing `answer` with the `graph` drawn at the start of its
+  analysis, or of its section on how things connect, else before its last
+  section, else at its end.
   An answer that drew a graph of its own keeps it, and no graph leaves the
   answer as it is."
   [answer graph]
@@ -563,7 +598,7 @@
     (let [block (str "```mermaid\n" graph "```")
           lines (str/split-lines answer)
           headings (keep-indexed (fn [i l] (when (re-find #"^##\s" l) i)) lines)
-          connect (first (keep-indexed (fn [i l] (when (re-find #"(?i)^##\s.*connect" l) i)) lines))
+          connect (first (keep-indexed (fn [i l] (when (re-find #"(?i)^##\s.*(analysis|connect)" l) i)) lines))
           splice (fn [at middle] (str/join "\n" (concat (take at lines) middle (drop at lines))))]
       (cond
         connect (splice (inc connect) ["" block])
@@ -572,9 +607,18 @@
 
 ;; --- what the analyst is given -----------------------------------------------------
 
+(defn- track-record
+  "An outlet's record on a subject, as the analyst reads it next to what
+  the outlet expects."
+  [subject {:keys [judged held partly closeness]}]
+  (if judged
+    (str "Its record on " subject ": " held " of " judged " held"
+         (when (pos? partly) (str ", " partly " partly")) ", closeness " closeness ".")
+    (str "No record on " subject " yet.")))
+
 (defn- dossier-text [{:keys [key title] :as story} {:keys [label status summary facts actors disputes
-                                                          framing gaps forces significance]}
-                     found]
+                                                          framing gaps forces significance expectations]}
+                     found records]
   (str "### " (or label title) ": " title "\n"
        "Sources " (cite-list (source-numbers story)) (when status (str ". Status: " status)) "\n"
        (when summary (str "\n" summary "\n"))
@@ -604,6 +648,12 @@
                                     (when (seq fills)
                                       (str " Searched for, and found " (cite-list (map :n fills)))))))
               "\n"))
+       (when (seq expectations)
+         (str "\nExpected:\n"
+              (str/join "\n" (for [{:keys [claim by cites subject source outlet]} expectations]
+                               (str "- " source (when by (str " (" by ")")) ": " claim " " (cite-list cites)
+                                    " " (track-record subject (get records [outlet subject])))))
+              "\n"))
        (when (seq forces) (str "\nForces: " (str/join "; " forces) "\n"))
        (when significance (str "\nWhy it matters: " significance "\n"))))
 
@@ -611,38 +661,41 @@
   "What the analyst is told of the desk's work: the trends and links of
   the map, with the stories by their source numbers, then the dossiers.
   `found` are the sources the gap searches found, each with its :key and
-  :gap. nil when there are no dossiers."
-  [stories dossiers {:keys [trends links]} found graph?]
-  (when (seq dossiers)
-    (let [by-key (into {} (map (juxt :key identity)) stories)
-          name-of (fn [k] (let [s (by-key k) d (get dossiers k)]
-                            (str (or (:label d) (:title s)) " " (cite-list (source-numbers s)))))
-          found-by (group-by :key found)]
-      (str "## The desk's analysis\n\n"
-           "Before you write, the desk sorted the day's reports into stories, read the main stories' reports "
-           "and wrote a dossier on each from them alone, then mapped the trends running through them and how "
-           "they drive one another. The dossiers' facts cite the numbered sources below, and so should you. "
-           "Take what happened from the dossiers, weigh the disputed accounts and say which way the evidence "
-           "leans, and build how things connect on the map, checking each link against the facts."
-           (when graph? " The graph of the links is drawn for you, so don't draw one.")
-           "\n\n"
-           (when (seq trends)
-             (str "### Trends\n\n"
-                  (str/join "\n" (for [{:keys [name direction stories summary]} trends]
-                                   (str "- **" name "**" (when direction (str " (" direction ")"))
-                                        ", in " (str/join ", " (map name-of stories))
-                                        (when summary (str ": " summary)))))
-                  "\n\n"))
-           (when (seq links)
-             (str "### How the stories connect\n\n"
-                  (str/join "\n" (for [{:keys [from to mechanism explanation confidence]} links]
-                                   (str "- " (name-of from) " → " (name-of to) ": " mechanism
-                                        (when explanation (str ". " explanation))
-                                        " (" confidence " confidence)")))
-                  "\n\n"))
-           "### Dossiers\n\n"
-           (str/join "\n" (for [s stories :let [d (get dossiers (:key s))] :when d]
-                            (dossier-text s d (found-by (:key s)))))))))
+  :gap, and `records` each outlet's record on a subject, {[outlet subject]
+  record}, shown with what it expects. nil when there are no dossiers."
+  ([stories dossiers the-map found graph?] (analysis-block stories dossiers the-map found graph? {}))
+  ([stories dossiers {:keys [trends links]} found graph? records]
+   (when (seq dossiers)
+     (let [by-key (into {} (map (juxt :key identity)) stories)
+           name-of (fn [k] (let [s (by-key k) d (get dossiers k)]
+                             (str (or (:label d) (:title s)) " " (cite-list (source-numbers s)))))
+           found-by (group-by :key found)]
+       (str "## The desk's analysis\n\n"
+            "Before you write, the desk sorted the day's reports into stories, read the main stories' reports "
+            "and wrote a dossier on each from them alone, then mapped the trends running through them and how "
+            "they drive one another. The dossiers' facts cite the numbered sources below, and so should you. "
+            "Take what happened from the dossiers, weigh the disputed accounts and say which way the evidence "
+            "leans, and build how things connect on the map, checking each link against the facts. Where "
+            "an outlet expects something, weigh it by the outlet's record on that subject."
+            (when graph? " The graph of the links is drawn for you, so don't draw one.")
+            "\n\n"
+            (when (seq trends)
+              (str "### Trends\n\n"
+                   (str/join "\n" (for [{:keys [name direction stories summary]} trends]
+                                    (str "- **" name "**" (when direction (str " (" direction ")"))
+                                         ", in " (str/join ", " (map name-of stories))
+                                         (when summary (str ": " summary)))))
+                   "\n\n"))
+            (when (seq links)
+              (str "### How the stories connect\n\n"
+                   (str/join "\n" (for [{:keys [from to mechanism explanation confidence]} links]
+                                    (str "- " (name-of from) " → " (name-of to) ": " mechanism
+                                         (when explanation (str ". " explanation))
+                                         " (" confidence " confidence)")))
+                   "\n\n"))
+            "### Dossiers\n\n"
+            (str/join "\n" (for [s stories :let [d (get dossiers (:key s))] :when d]
+                             (dossier-text s d (found-by (:key s)) records))))))))
 
 (defn trends-block
   "The day's trends as the researcher looking for precedents is told

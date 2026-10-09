@@ -6,7 +6,10 @@
   which later days and the digests read back.
 
   A digest is a week's or a month's briefing, kept by its kind and period
-  with the sources it cites. Digests are not pruned with the days. Each
+  with the sources it cites. Digests are not pruned with the days, and
+  neither are the projections the briefings, the digests and the outlets
+  made, nor the retrospectives that judged them: they are the record the
+  next projections are calibrated by. Each
   source's coverage, its storyline, outlets and whether it was cited, is
   kept `coverage-days` longer than the days themselves, so a month's digest
   can always be compared with the four months before it, and so are the
@@ -112,7 +115,40 @@
       primary key (kind, period, n))"
    "create table if not exists settings (
       key text primary key,
-      value text not null)"])
+      value text not null)"
+   ;; a projection is newsroom's own when it has no source, else the
+   ;; expectation an outlet put forward; origin and ref are where it was
+   ;; read from, a day's briefing or a week's or month's digest
+   "create table if not exists projections (
+      id integer primary key,
+      origin text not null,
+      ref text not null,
+      made_on text not null,
+      claim text not null,
+      subject text not null,
+      story text,
+      source text,
+      outlet text,
+      url text,
+      by_whom text,
+      due text not null,
+      status text not null default 'open',
+      closeness real,
+      reason text,
+      checked_kind text,
+      checked_period text,
+      checked_at text)"
+   "create index if not exists projections_due on projections (status, due)"
+   "create index if not exists projections_ref on projections (origin, ref)"
+   "create table if not exists retrospectives (
+      kind text not null,
+      period text not null,
+      summary text,
+      lessons text not null,
+      model text,
+      provider text,
+      created_at text not null,
+      primary key (kind, period))"])
 
 (def ^:private search-schema
   ;; ref is what a document is replaced and deleted by: the day for a
@@ -641,6 +677,120 @@
   (with-db [conn store]
     (mapv (fn [r] {:kind (keyword (:kind r)) :period (:period r) :tldr (:tldr r)})
           (jdbc/fetch conn "select kind, period, tldr from digests order by period desc, kind"))))
+
+;; --- projections and retrospectives -----------------------------------------------
+
+(defn save-projections!
+  "Store the projections read from `origin` (\"day\", \"week\" or
+  \"month\") `ref`, its day or period, in place of the ones it had."
+  [store origin ref projections]
+  (with-db [conn store]
+    (jdbc/atomic conn
+      (jdbc/execute! conn ["delete from projections where origin = ? and ref = ?" origin ref])
+      (doseq [{:keys [made-on claim subject story source outlet url by due]} projections]
+        (jdbc/execute! conn ["insert into projections (origin, ref, made_on, claim, subject, story, source,
+                                                       outlet, url, by_whom, due)
+                              values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                             origin ref made-on claim subject story source outlet url by due]))))
+  nil)
+
+(defn- row->projection [r]
+  (cond-> {:id (long (:id r)) :origin (:origin r) :ref (:ref r) :made-on (:made_on r) :claim (:claim r)
+           :subject (:subject r) :due (:due r) :status (:status r)}
+    (:story r) (assoc :story (:story r))
+    (:source r) (assoc :source (:source r))
+    (:outlet r) (assoc :outlet (:outlet r))
+    (:url r) (assoc :url (:url r))
+    (:by_whom r) (assoc :by (:by_whom r))
+    (:closeness r) (assoc :closeness (double (:closeness r)))
+    (:reason r) (assoc :reason (:reason r))
+    (:checked_kind r) (assoc :checked-kind (:checked_kind r))
+    (:checked_period r) (assoc :checked-period (:checked_period r))))
+
+(defn projections-due
+  "The projections the retrospective of `kind` and `period`, which ends on
+  `to`, judges, oldest first: the open ones due by then, and the ones it
+  judged already, so a retrospective written again judges them again."
+  [store to kind period]
+  (with-db [conn store]
+    (mapv row->projection
+          (jdbc/fetch conn ["select * from projections
+                             where (status = 'open' and due <= ?) or (checked_kind = ? and checked_period = ?)
+                             order by made_on, id"
+                            to (name kind) period]))))
+
+(defn open-projections
+  "Newsroom's own projections made before `day` that no retrospective has
+  settled yet, the soonest due first."
+  [store day]
+  (with-db [conn store]
+    (mapv row->projection
+          (jdbc/fetch conn ["select * from projections
+                             where status = 'open' and source is null and outlet is null and made_on < ?
+                             order by due, made_on desc, id"
+                            day]))))
+
+(defn save-verdicts!
+  "Store what a retrospective found of each of `projections`, by :id: its
+  status, closeness, reason and due day, and which retrospective it was."
+  [store projections]
+  (with-db [conn store]
+    (jdbc/atomic conn
+      (doseq [{:keys [id status closeness reason due checked-kind checked-period]} projections]
+        (jdbc/execute! conn ["update projections set status = ?, closeness = ?, reason = ?, due = ?,
+                                checked_kind = ?, checked_period = ?, checked_at = ?
+                              where id = ?"
+                             status closeness reason due checked-kind checked-period (now) id]))))
+  nil)
+
+(defn projections-checked
+  "The projections the retrospective of `kind` and `period` judged, in the
+  order they were made."
+  [store kind period]
+  (with-db [conn store]
+    (mapv row->projection
+          (jdbc/fetch conn ["select * from projections where checked_kind = ? and checked_period = ?
+                             order by made_on, id"
+                            (name kind) period]))))
+
+(defn judged-projections
+  "Every projection a retrospective settled, held, partly or failed, the
+  latest judged first: what the standings are made from."
+  [store]
+  (with-db [conn store]
+    (mapv row->projection
+          (jdbc/fetch conn "select * from projections where status in ('held', 'partly', 'failed')
+                            order by checked_at desc, id desc"))))
+
+(defn save-retrospective!
+  "Store a retrospective, {:kind :period :summary :lessons :model
+  :provider}, replacing the period's last."
+  [store {:keys [kind period summary lessons model provider]}]
+  (with-db [conn store]
+    (jdbc/execute! conn ["insert or replace into retrospectives (kind, period, summary, lessons, model, provider, created_at)
+                          values (?, ?, ?, ?, ?, ?, ?)"
+                         (name kind) period summary (pr-str (vec lessons)) model provider (now)]))
+  nil)
+
+(defn- row->retrospective [r]
+  {:kind (keyword (:kind r)) :period (:period r) :summary (:summary r)
+   :lessons (edn/read-string (:lessons r)) :model (:model r) :provider (:provider r)
+   :created-at (:created_at r)})
+
+(defn retrospective
+  "The retrospective of `kind` and `period`, or nil."
+  [store kind period]
+  (with-db [conn store]
+    (some-> (jdbc/fetch-one conn ["select * from retrospectives where kind = ? and period = ?" (name kind) period])
+            row->retrospective)))
+
+(defn latest-retrospective
+  "The retrospective written last, whose lessons are the ones kept, or
+  nil."
+  [store]
+  (with-db [conn store]
+    (some-> (jdbc/fetch-one conn "select * from retrospectives order by created_at desc, rowid desc limit 1")
+            row->retrospective)))
 
 ;; --- settings ----------------------------------------------------------------------
 

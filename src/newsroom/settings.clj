@@ -127,7 +127,14 @@
               :doc (str "The digests written once a week (Monday to Sunday) or a month is over, ranking "
                         "its storylines and saying which are emerging, persistent or fading.")}
              {:key :digest-stories :type :int :min 1 :default 15
-              :doc "How many storylines a digest is given."}]}
+              :doc "How many storylines a digest is given."}
+             {:key :retrospective :type :boolean :default true
+              :doc (str "Each briefing's and digest's projections are recorded, and so are the expectations the "
+                        "outlets put forward in the reports the dossiers are written from. After each digest, the "
+                        "ones that have fallen due are checked against what happened, with how close they came "
+                        "and why, and lessons are kept from them. The briefings and digests are told the lessons, "
+                        "and every outlet is ranked within each subject by how its calls went, shown on the track "
+                        "record page. A model call a briefing, and a few a digest.")}]}
    {:title "Archive"
     :fields [{:key :keep-days :type :int :min -1 :default 100
               :doc (str "How many days of briefings to keep; older ones go with their sources and markdown "
@@ -139,15 +146,17 @@
     :fields [{:key :prompt :type :text :rows 18 :template? true
               :doc (str "What the model is told to write the briefing, a Selmer template: {{date}} is the day, "
                         "{{sources}} the numbered sources, {{previous}} the last briefing, {{analysis}} the "
-                        "desk's dossiers and map, {{graph}} true when the graph is drawn for the analyst, and "
+                        "desk's dossiers and map, {{record}} how earlier projections turned out, {{graph}} true "
+                        "when the graph is drawn for the analyst, and "
                         "{% if previous %}...{% endif %} shows text only when there is one. Without a place for "
-                        "them, the sources are appended and the last briefing and the analysis go just before them. "
+                        "them, the sources are appended and the last briefing, the record and the analysis go just "
+                        "before them. "
                         "Blank is the default.")}
              {:key :digest-prompt :type :text :rows 12 :template? true
               :doc (str "The weekly and monthly digests' prompt, a Selmer template: {{period}}, {{days}}, "
                         "{{stories}}, {{previous}}, the last digest's overview, {{briefings}}, the week's daily "
-                        "briefings or the month's weekly digests, and {{trends}}, the trends the desk "
-                        "followed through the period, are filled in. "
+                        "briefings or the month's weekly digests, {{trends}}, the trends the desk followed "
+                        "through the period, and {{record}}, how earlier projections turned out, are filled in. "
                         "Blank is the default.")}
              {:key :precedent-prompt :type :text :rows 12 :template? true
               :doc (str "What the researcher is told when it looks for precedents, a Selmer template: {{date}} "
@@ -196,6 +205,9 @@
    {:key :critic :type :keyword
     :doc (str "Checks the written briefing for claims that don't hold up; the analyst when blank. A "
               "different model from the analyst's sees past its blind spots.")}
+   {:key :retrospective :type :keyword
+    :doc (str "Records the projections, checks how they turned out and keeps the lessons; the analyst "
+              "when blank.")}
    {:key :default :type :keyword :doc "Any role that names no provider of its own."}])
 
 (def scalar-keys
@@ -687,10 +699,17 @@
 (defn seed-prompts!
   "Store the default of each prompt the database has none of, so a new
   database, or one from before a prompt was added, holds every prompt to
-  edit. One the user has saved is left alone. Returns the keys stored."
+  edit, and bring one still as an earlier default shipped it up to the
+  current default. One the user has edited is left alone. Returns the keys
+  stored."
   [store]
   (let [stored (store/settings store)
-        missing (into {} (remove (fn [[k _]] (contains? stored k))) (config/default-prompts))]
+        shipped (config/shipped-prompts)
+        stale? (fn [k v] (and (string? (get stored k))
+                              (not= v (get stored k))
+                              (contains? (get shipped k) (config/sha-256 (get stored k)))))
+        missing (into {} (filter (fn [[k v]] (or (not (contains? stored k)) (stale? k v))))
+                      (config/default-prompts))]
     (when (seq missing)
       (store/save-settings! store (merge stored missing)))
     (vec (keys missing))))

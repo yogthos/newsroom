@@ -108,10 +108,12 @@
   "A wire dateline opening a story, as in WASHINGTON (AP) — or (Reuters) -."
   #"^[^(]{0,60}\((AP|Associated Press|Reuters|AFP|Agence France-Presse|Xinhua|dpa|PTI|ANI|IANS|UPI|Kyodo|Yonhap|TASS|EFE|ANSA|Bloomberg)\)\s*[-–—:]")
 
-(defn- origin
+(defn origin
   "Where an item's story came from, which is what counts as one outlet: the
   wire agency its dateline names, since a reprint is the agency's story
-  wherever it runs, else its publisher, else its source."
+  wherever it runs, else its publisher, else its source. An outlet's
+  record in the retrospective is kept under it too, so its several feeds
+  share one."
   [{:keys [url summary source origin]}]
   (or origin
       (some->> (re-find dateline (str summary)) second (get agencies))
@@ -381,16 +383,18 @@
 (defn render-desk-prompt
   "The briefing's prompt as render-prompt fills it, with the desk's work
   before the briefing too, `desk`: {{analysis}}, its dossiers and map,
-  placed just before the sources when the template has no place for it,
-  and {{graph}}, true when the graph is drawn for the analyst."
-  [template day sources previous {:keys [analysis graph?]}]
+  and {{record}}, how earlier projections turned out, each placed just
+  before the sources when the template has no place for it, and
+  {{graph}}, true when the graph is drawn for the analyst."
+  [template day sources previous {:keys [analysis graph? record]}]
   (template/fill (place-vars template (cond-> []
                                         previous (conj "previous")
+                                        record (conj "record")
                                         analysis (conj "analysis")
                                         true (conj "sources"))
                              "sources")
                  {:date day :sources (source-block sources) :previous previous
-                  :analysis analysis :graph (boolean graph?)}))
+                  :analysis analysis :graph (boolean graph?) :record record}))
 
 (defn render-prompt
   "The briefing's prompt: the Selmer `template` with {{date}}, {{sources}}

@@ -100,6 +100,62 @@
       (is (= 400 (:status (core/app {:uri "/digest" :query-string "kind=year&period=2026"
                                      :request-method :post})))))))
 
+(defn- with-record!
+  "Projections judged by the week's retrospective: Wire calls technology
+  right and geopolitics wrong, and newsroom made one call of its own."
+  [st]
+  (store/save-projections! st "day" "2026-09-28"
+                           (concat
+                            (for [i (range 3)]
+                              {:made-on "2026-09-28" :claim (str "Chips call " i) :subject "technology"
+                               :due "2026-10-01" :source "Wire" :outlet "wire.org"})
+                            [{:made-on "2026-09-28" :claim "Sanctions <bite> soon" :subject "geopolitics"
+                              :due "2026-10-01" :source "Wire" :outlet "wire.org" :url "https://wire.org/s"}
+                             {:made-on "2026-09-28" :claim "The Fed cuts" :subject "economy" :due "2026-10-01"
+                              :story "2026-09-28/1"}]))
+  (store/save-verdicts! st (for [p (store/projections-due st "2026-10-04" :week "2026-W40")
+                                 :let [ok? (= "technology" (:subject p))]]
+                             (assoc p :status (if ok? "held" "failed") :closeness (if ok? 1.0 0.0)
+                                    :reason (if ok? "It came true." "The opposite happened.")
+                                    :checked-kind "week" :checked-period "2026-W40")))
+  (store/save-retrospective! st {:kind :week :period "2026-W40" :summary "Tech calls held; the rest missed."
+                                 :lessons [{:subject "geopolitics" :lesson "Sanctions bite slower than announced."}]
+                                 :model "m" :provider "p"}))
+
+(deftest the-track-record-page
+  (with-store
+    (fn [st]
+      (testing "before anything is judged"
+        (is (str/includes? (ui/page st {:record true}) "Nothing has been judged yet")))
+      (with-record! st)
+      (let [page (ui/page st {:record true})]
+        (is (str/includes? page "<title>Track record · The Newsroom</title>"))
+        (is (str/includes? page "Sanctions bite slower than announced."))
+        (testing "each subject ranks its sources on its own"
+          (is (str/includes? page "<h3>technology</h3>"))
+          (is (str/includes? page "<h3>geopolitics</h3>"))
+          (is (< (str/index-of page "<h3>geopolitics</h3>") (str/index-of page "<h3>technology</h3>")))
+          (let [tech (subs page (str/index-of page "<h3>technology</h3>"))]
+            (is (re-find #"Wire</td><td>3</td><td>3</td><td>0</td><td>0</td><td>1.0</td>" tech))))
+        (testing "newsroom's own record is among them"
+          (is (re-find #"Newsroom</td><td>1</td><td>0</td><td>0</td><td>1</td><td>0.0</td>" page)))
+        (testing "the judged projections, with why they held or missed"
+          (is (str/includes? page "Sanctions &lt;bite&gt; soon"))
+          (is (str/includes? page "The opposite happened."))
+          (is (str/includes? page "href=\"/story/2026-09-28/1\"")))
+        (is (str/includes? page "href=\"/record\"") "the sidebar links to it"))
+      (testing "a digest's page shows its retrospective"
+        (store/save-digest! st {:kind :week :period "2026-W40" :sources [] :cited []
+                                :markdown "# The week" :model "m" :provider "p"})
+        (let [page (ui/page st {:kind :week :period "2026-W40"})]
+          (is (str/includes? page "How the projections held"))
+          (is (str/includes? page "Tech calls held; the rest missed."))
+          (is (str/includes? page "Chips call 0"))))
+      (reset! core/system {:store st :config {}})
+      (try
+        (is (= 200 (:status (core/app {:uri "/record" :request-method :get}))))
+        (finally (reset! core/system nil))))))
+
 (deftest storyline-pages
   (let [st (store/open "sqlite::memory:")
         source (fn [n outlets] {:n n :title (str "Fed story " n) :url (str "https://e.com/" n) :source "Wire"
@@ -186,6 +242,11 @@
             (is (< (str/index-of page "The model is writing") (str/index-of page "Reading BBC World"))
                 "newest first")
             (is (str/includes? page "class=\"spinner\"") "a spinner while the desk is at work"))
+          (reset! pipeline/status {:state :checking :digest {:kind :week :period "2026-W40"} :items 7
+                                   :provider "deepseek" :sources {}})
+          (let [page (ui/page st "2026-09-30")]
+            (is (str/includes? page "Checking how 7 projections turned out by the end of the week of 28 September 2026"))
+            (is (str/includes? page "class=\"spinner\"")))
           (reset! pipeline/status {:state :done :day "2026-09-30" :items 42 :cited 30})
           (is (not (str/includes? (ui/page st "2026-09-30") "class=\"spinner\"")) "and none once it is done")
           (finally (reset! pipeline/status before)))))))
