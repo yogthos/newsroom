@@ -45,6 +45,7 @@
             [newsroom.news :as news]
             [newsroom.notes :as notes]
             [newsroom.precedents :as precedents]
+            [newsroom.progress :as progress]
             [newsroom.retrospective :as retrospective]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
@@ -97,51 +98,14 @@
 
 ;; --- watching the model write ------------------------------------------------------
 
-(defn- word-count [text] (count (re-seq #"[A-Za-z][A-Za-z'’-]*" text)))
-
-(defn- last-heading [text]
-  (some-> (last (re-seq #"(?m)^#{2,3}\s+(.+)$" text)) second str/trim))
-
-(defn- tail [text n]
-  (let [t (str/trim text)]
-    (if (<= (count t) n)
-      t
-      (let [cut (subs t (- (count t) n))
-            space (str/index-of cut " ")]
-        (str "…" (if space (subs cut (inc space)) cut))))))
-
-(def ^:private flush-ms 300)
-
 (defn- progress-watcher
-  "An :on-delta for the model call: it collects the stream, logs when the
-  model starts thinking and starts writing, and puts what has been written
-  so far on the status at most every flush-ms, plus once at the end
-  (`flush!`)."
+  "An :on-delta for the model call: it logs when the model starts thinking
+  and starts writing, and puts how far it has got on the status as it
+  streams, plus once at the end (`flush!`)."
   [run-id]
-  (let [buf (StringBuilder.)
-        thought (atom 0)
-        said (atom #{})
-        flushed (atom 0)
-        say-once! (fn [k msg] (when-not (@said k) (swap! said conj k) (log! run-id {:text msg})))
-        flush! (fn []
-                 (reset! flushed (now))
-                 (let [t (str buf)]
-                   (update-status! run-id assoc :writing
-                                   {:words (word-count t)
-                                    :reasoning-words @thought
-                                    :section (last-heading t)
-                                    :tail (tail t 280)})))]
-    {:on-delta (fn [{:keys [text reasoning]}]
-                 (locking buf
-                   (when reasoning
-                     (say-once! :thinking "The model is thinking")
-                     (swap! thought + (word-count reasoning)))
-                   (when text
-                     (say-once! :writing "The model is writing the briefing")
-                     (.append buf text))
-                   (when (> (- (now) @flushed) flush-ms)
-                     (flush!))))
-     :flush! (fn [] (locking buf (flush!)))}))
+  (progress/watcher {:on-progress #(update-status! run-id assoc :writing %)
+                     :on-thinking #(log! run-id {:text "The model is thinking"})
+                     :on-writing #(log! run-id {:text "The model is writing the briefing"})}))
 
 ;; --- gathering ---------------------------------------------------------------------
 

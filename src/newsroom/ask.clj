@@ -16,6 +16,7 @@
             [newsroom.markdown :as md]
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
+            [newsroom.progress :as progress]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.trends :as trends]))
@@ -330,15 +331,13 @@
                       (chat-messages today gathered messages sources/long-date))
             _ (say! "status" (str (if report? "Writing the report" "Thinking") " with "
                                   (name (:alias llm-config)) " (" (:model llm-config) ")"))
-            thinking (atom false)
+            watcher (progress/watcher {:on-progress #(say! "status" (progress/summary %))})
             reply ((or (:chat ctx) llm/chat)
                    llm-config
                    {:messages request
-                    :on-delta (fn [{:keys [text reasoning]}]
-                                (cond
-                                  (seq text) (say! "delta" text)
-                                  (and (seq reasoning) (not @thinking))
-                                  (do (reset! thinking true) (say! "status" "Reasoning it through"))))})
+                    :on-delta (fn [{:keys [text] :as delta}]
+                                (when (seq text) (say! "delta" text))
+                                ((:on-delta watcher) delta))})
             answer (str (:content reply))
             markdown (linked answer (:sources gathered) report?)]
         (say! "done" {:markdown markdown :html (md/html markdown)}))

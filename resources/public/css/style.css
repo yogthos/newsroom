@@ -48,7 +48,7 @@ a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset:
 .sources-progress li { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
 .sources-progress li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .writing { margin: 8px 0; padding: 8px 10px; background: var(--paper); border: 1px solid var(--rule); border-radius: 4px; }
-.writing p { margin: 0; }
+.writing p { margin: 0; font-weight: 600; }
 .writing blockquote { margin: 6px 0 0; font: italic 13px/1.45 var(--serif); color: var(--muted);
                       max-height: 7.5em; overflow: hidden; }
 .wire { list-style: none; margin: 10px 0 0; padding: 0; font-size: 12px; max-height: 320px; overflow-y: auto; }

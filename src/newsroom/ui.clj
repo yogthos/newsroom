@@ -14,6 +14,7 @@
             [newsroom.markdown :as md]
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
+            [newsroom.progress :as progress]
             [newsroom.retrospective :as retrospective]
             [newsroom.search :as search]
             [newsroom.sources :as sources]
@@ -110,13 +111,9 @@
         [:time (clock at)]
         (if url [:a {:href url :target "_blank" :rel "noopener"} text] [:span text])])]))
 
-(defn- writing [{:keys [words reasoning-words section tail]}]
+(defn- writing [{:keys [tail] :as w}]
   [:div.writing
-   (if (pos? (or words 0))
-     [:p [:strong words " words"] " written"
-      (when section [:span " · " [:em section]])]
-     [:p [:strong "Thinking"] (when (pos? (or reasoning-words 0))
-                                (str " · " reasoning-words " words of reasoning"))])
+   [:p (progress/summary w)]
    (when-not (str/blank? tail) [:blockquote tail])])
 
 (defn- digest-panel

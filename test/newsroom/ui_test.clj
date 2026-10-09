@@ -240,7 +240,7 @@
                    :writing {:words 1234 :reasoning-words 300 :section "How it works"
                              :tail "…and so the <price> of grain rises"}})
           (let [page (ui/page st "2026-09-30")]
-            (is (str/includes? page "1234 words"))
+            (is (str/includes? page "1,234 words written · How it works"))
             (is (str/includes? page "How it works"))
             (is (str/includes? page "…and so the &lt;price&gt; of grain rises"))
             (is (str/includes? page "href=\"https://feeds.bbci.co.uk/news/world/rss.xml\""))
