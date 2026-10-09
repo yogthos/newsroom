@@ -40,6 +40,11 @@
           (is (str/includes? page "What it teaches: </strong>It took a decade to settle.")))
         (is (str/includes? page "deepseek / deepseek-v4-flash"))
         (is (re-find #"src=\"/js/diagrams.js\?v=[0-9a-f]+\"" page) "the page can draw diagrams")
+        (testing "the reader can collect passages as topics and put them to the analyst"
+          (is (re-find #"src=\"/js/topics.js\?v=[0-9a-f]+\"" page))
+          (is (re-find #"<aside [^>]*class=\"topics\" hidden=\"hidden\" id=\"topics\"" page))
+          (is (str/includes? page "data-topics=\"report\""))
+          (is (str/includes? page "data-topics=\"toggle\"")))
         (testing "an asset's address changes with its content, so a cached one isn't kept"
           (is (re-find #"href=\"/css/style.css\?v=[0-9a-f]+\"" page))
           (is (= 200 (:status (core/app {:uri "/css/style.css" :query-string "v=abc" :request-method :get})))))))))
@@ -211,6 +216,7 @@
       (testing "the page's scripts and stylesheet come from resources"
         (doseq [[uri type text] [["/js/datastar.js" "application/javascript" "Datastar"]
                                  ["/js/diagrams.js" "application/javascript" "mermaid"]
+                                 ["/js/topics.js" "application/javascript" "/ask"]
                                  ["/css/style.css" "text/css; charset=utf-8" "--paper"]]]
           (let [resp (core/app {:uri uri :request-method :get})]
             (is (= 200 (:status resp)) uri)
@@ -308,10 +314,19 @@
           (is (= 404 (:status (get-it "/day/2026-01-01.md"))) "no briefing to give")
           (is (= 200 (:status (get-it "/day/2026-01-01"))) "a day without one still has a page")
           (is (= "application/javascript" (get-in (get-it "/js/config.js") [:headers "Content-Type"])))
+          (is (not (str/includes? (:body (get-it "/config")) "topics.js")) "the config page has no topics")
           (is (= 404 (:status (get-it "/js/nope.js"))))
           (is (= 404 (:status (get-it "/nowhere"))))
           (is (= 404 (:status (get-it "/run"))) "a run is started by a POST")
-          (is (= 400 (:status (core/app {:uri "/run" :request-method :post :query-string "day=soon"})))))
+          (is (= 400 (:status (core/app {:uri "/run" :request-method :post :query-string "day=soon"}))))
+          (is (= 400 (:status (core/app {:uri "/ask" :request-method :post
+                                         :body (java.io.ByteArrayInputStream. (.getBytes "not json" "UTF-8"))})))
+              "the reader's topics come as a JSON object")
+          (is (= "text/event-stream"
+                 (get-in (core/app {:uri "/ask" :request-method :post
+                                    :body (java.io.ByteArrayInputStream. (.getBytes "{\"topics\": []}" "UTF-8"))})
+                         [:headers "Content-Type"]))
+              "the answer streams"))
         (finally (reset! core/system nil))))))
 
 (deftest a-search-page

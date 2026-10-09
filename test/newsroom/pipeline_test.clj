@@ -792,10 +792,13 @@
                         " \"domain\": \"economics\", \"facts\": [{\"fact\": \"Both reports agree.\", \"cites\": [1, 2]}]},"
                         " {\"story\": \"G2\", \"summary\": \"Then this.\", \"label\": \"Another\", \"domain\": \"politics\","
                         " \"facts\": [{\"fact\": \"It followed.\", \"cites\": [3]}]}]}")
-                   (str/includes? p "You map the day's news")
-                   (str "{\"trends\": [{\"name\": \"A squeeze\", \"direction\": \"strengthening\","
+                   (str/includes? p "You map how the day's news")
+                   (str "{\"forces\": [{\"id\": \"F1\", \"name\": \"Blocs harden\", \"direction\": \"strengthening\"}],"
+                        " \"trends\": [{\"id\": \"T1\", \"name\": \"A squeeze\", \"direction\": \"strengthening\","
                         " \"stories\": [\"G1\", \"G2\"], \"summary\": \"Both.\"}],"
-                        " \"links\": [{\"from\": \"G1\", \"to\": \"G2\", \"mechanism\": \"drives\", \"confidence\": \"high\"}]}")
+                        " \"links\": [{\"from\": \"G1\", \"to\": \"T1\", \"mechanism\": \"drives\", \"confidence\": \"medium\"},"
+                        " {\"from\": \"T1\", \"to\": \"F1\", \"mechanism\": \"splits trade\", \"confidence\": \"medium\"}],"
+                        " \"risks\": [{\"risk\": \"Prices jump\", \"likelihood\": \"possible\"}]}")
                    (str/includes? p "You keep the running notes")
                    (str "{\"storylines\": [{\"id\": \"2026-09-30/1\", \"title\": \"One event\", \"summary\": \"S.\","
                         " \"status\": \"escalating\", \"facts\": [{\"day\": \"2026-09-30\", \"fact\": \"Both agree.\", \"cite\": 1}]}]}")
@@ -820,12 +823,17 @@
       (is (str/includes? brief "Facts:\n- Both reports agree. [1, 2]"))
       (is (str/includes? brief "Story: One event\nStatus: escalating"))
       (is (not (str/includes? brief "About 1")) "a report the dossier covers comes without its summary"))
+    (testing "the analyst is told the forces and the risks"
+      (is (str/includes? brief "- **Blocs harden** (strengthening)"))
+      (is (str/includes? brief "- Prices jump (possible).")))
     (testing "the graph is drawn from the map"
-      (is (str/includes? (:markdown day) "## How it all connects\n\n```mermaid\nflowchart LR\n"))
-      (is (str/includes? (:markdown day) "g1 -->|\"drives\"| g2")))
-    (testing "the trends are kept for the days after, and the note keeps the story's status"
-      (is (= [["2026-09-30/T1" "A squeeze" ["2026-09-30/1" "2026-09-30/3"]]]
-             (map (juxt :thread :name :stories) (store/trends-between (:store c) "2026-09-30" "2026-09-30"))))
+      (is (str/includes? (:markdown day) "## How it all connects\n\n```mermaid\nflowchart BT\n"))
+      (is (str/includes? (:markdown day) "g1 --> t1"))
+      (is (str/includes? (:markdown day) "t1 -->|\"splits trade\"| f1")))
+    (testing "the forces and trends are kept for the days after, and the note keeps the story's status"
+      (is (= [["2026-09-30/F1" "force" "Blocs harden" ["2026-09-30/1" "2026-09-30/3"]]
+              ["2026-09-30/T1" "trend" "A squeeze" ["2026-09-30/1" "2026-09-30/3"]]]
+             (map (juxt :thread :level :name :stories) (store/trends-between (:store c) "2026-09-30" "2026-09-30"))))
       (is (str/includes? (get @prompts "running notes") "The desk's facts from today's reports:\n- Both reports agree. [1, 2]"))
       (is (= "escalating" (:status (get (store/notes (:store c) ["2026-09-30/1"]) "2026-09-30/1")))))))
 

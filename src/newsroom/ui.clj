@@ -574,6 +574,35 @@
       (:search current) (search-article st (:search current))
       :else (digest-article st (:kind current) (:period current)))))
 
+(defn- topics-pane
+  "The reader's topics, a pane on the right that topics.js fills from what
+  the reader picked: the passages, a report on them, and a conversation
+  about them. It sits outside the live parts of the page, so a re-render
+  doesn't touch it."
+  []
+  (list
+   [:button.topics-toggle {:type "button" :data-topics "toggle" :aria-controls "topics" :aria-expanded "false"}
+    "Topics " [:span.count {:data-topics-count ""} "0"]]
+   [:aside#topics.topics {:hidden true :aria-label "Your topics"}
+    [:header
+     [:h2 "Your topics"]
+     [:button.quiet {:type "button" :data-topics "wide" :title "Widen the pane"} "⤢"]
+     [:button.quiet {:type "button" :data-topics "close" :title "Close"} "✕"]]
+    [:p.muted.topics-hint "Point at a paragraph of a briefing and press + to add it here. Then ask for a "
+     "report on your topics, or ask the analyst about them."]
+    [:ol.topics-list]
+    [:div.topics-actions
+     [:input {:type "text" :name "focus" :data-topics-focus "" :placeholder "What the report should focus on, if anything"
+              :aria-label "What the report should focus on"}]
+     [:button {:type "button" :data-topics "report"} "Write a report"]
+     [:button.quiet {:type "button" :data-topics "clear"} "Clear topics"]]
+    [:div.topics-chat {:aria-live "polite"}]
+    [:form.topics-ask {:data-topics "ask"}
+     [:textarea {:name "question" :rows 3 :placeholder "Ask about your topics" :aria-label "Ask about your topics"}]
+     [:div.topics-ask-actions
+      [:button.quiet {:type "button" :data-topics "forget"} "New conversation"]
+      [:button {:type "submit"} "Ask"]]]]))
+
 (defn page
   "The whole document for a day, or for any other `current` fragment takes,
   or for the config page, {:config {:tree :errors ...}} (see
@@ -609,4 +638,8 @@
               [:main#article (config-page/article cfg)]
               [:main#article (dissoc (ds/init-opts {:selector "#article"}) :data-signals)
                (fragment st current "#article")])]
-            [:script {:type "module" :src (asset (if (:config current) "/js/config.js" "/js/diagrams.js"))}]]]))))
+            (when-not (:config current) (topics-pane))
+            (if (:config current)
+              [:script {:type "module" :src (asset "/js/config.js")}]
+              (list [:script {:type "module" :src (asset "/js/diagrams.js")}]
+                    [:script {:type "module" :src (asset "/js/topics.js")}]))]]))))

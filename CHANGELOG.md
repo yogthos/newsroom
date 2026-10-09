@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Your topics.** A + beside any paragraph of a briefing, a digest or a
+  storyline adds it to a pane on the right. The analyst writes a full
+  report on the topics collected there, from the sources the passages
+  cite, the rest of their storylines' reports and notes, and the main
+  articles read in full, and you can ask it about them afterwards. The
+  answers stream in and cite their sources.
+
+### Changed
+
+- **What changed, risks to watch and the outlook.** The top of a briefing
+  gives the bird's-eye view a reader can act on: how the day moved the
+  forces in play, then the risks to watch, each with how likely it is,
+  what it would hit and which way, and the signpost that would show it
+  starting, then the base case and what would confirm or overturn it. The
+  analysis gives the reasoning behind them without listing them again.
+- **A map of forces, not of stories.** The desk's map, and the graph drawn
+  from it, no longer link stories that share a topic. It builds up from
+  the day's stories through the trends they push on to the structural
+  forces those feed, every link naming the mechanism, whether it
+  strengthens or weakens its target, how soon and how surely, and it
+  follows the chains to the consequences the news hasn't reported yet.
+  The forces are kept and followed from day to day like the trends.
+
 ## v0.9.0 — 9 October 2026
 
 ### Added

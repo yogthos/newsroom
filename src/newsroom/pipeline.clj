@@ -503,6 +503,8 @@
   [config]
   (providers/role-llm config (if (get-in config [:roles :desk]) :desk :analyst)))
 
+(defn- counted [n one many] (str n " " (if (= 1 n) one many)))
+
 (defn- dated [day] (str (sources/long-date day) " (" day ")"))
 
 (defn- group-task
@@ -594,21 +596,24 @@
   [{:keys [config store run-id] :as ctx} day stories dossiers]
   (m/sp
     (let [llm-config (desk-llm config)
-          recent (->> (store/trends-between store (minus-days day (:trend-days config 7)) (minus-days day 1))
-                      trends/trend-threads
-                      (take 15)
-                      vec)
+          threads (trends/trend-threads (store/trends-between store (minus-days day (:trend-days config 7))
+                                                              (minus-days day 1)))
+          ;; the forces are few and change slowly, so all of them come along
+          recent (into (vec (take 6 (filter #(= "force" (:level %)) threads)))
+                       (take 15 (remove #(= "force" (:level %)) threads)))
           _ (log! run-id {:text "Mapping the trends running through the day and how the stories connect"})
           answer (m/? (softly run-id "Mapping the day"
                               (ask ctx llm-config (analysis/connection-prompt (dated day) stories dossiers recent
                                                                               sources/long-date))))]
       (when answer
-        (let [{:keys [trends links] :as found} (analysis/parse-connections answer (keys dossiers)
-                                                                            (map :thread recent) day)]
-          (log! run-id {:text (str "Mapped " (count trends) (if (= 1 (count trends)) " trend" " trends")
-                                   " and " (count links) (if (= 1 (count links)) " link" " links")
-                                   (let [n (count (filter #(contains? (set (map :thread recent)) (:thread %)) trends))]
-                                     (when (pos? n) (str ", " n " of the trends running from the days before"))))
+        (let [{:keys [forces trends links] :as found} (analysis/parse-connections answer (keys dossiers)
+                                                                                   (map :thread recent) day)]
+          (log! run-id {:text (str "Mapped " (counted (count forces) "structural force" "structural forces")
+                                   ", " (counted (count trends) "trend" "trends")
+                                   " and " (counted (count links) "link" "links")
+                                   (let [n (count (filter #(contains? (set (map :thread recent)) (:thread %))
+                                                          (concat forces trends)))]
+                                     (when (pos? n) (str ", " n " of them running from the days before"))))
                         :level :ok})
           found)))))
 
@@ -805,8 +810,6 @@
           open (retrospective/forecasts-shown (store/open-projections store day) storylines)]
       {:block (retrospective/record-block (labelled (store/latest-retrospective store)) standings outlets open)
        :records (retrospective/record-of standings)})))
-
-(defn- counted [n one many] (str n " " (if (= 1 n) one many)))
 
 (defn- record-projections
   "Task: the projections `markdown` makes, read by the model as of
@@ -1016,10 +1019,10 @@
             ;; the second round of research: historical precedents for the
             ;; day's stories, numbered after them, cited like any other
             history (m/? (precedents-task ctx day ranked kept
-                                          (analysis/trends-block stories (:trends the-map))))
+                                          (analysis/trends-block stories the-map)))
             numbered (news/cite (into day-sources history))
             graph (when (:map desk)
-                    (analysis/graph (:stories desk) dossiers (:links the-map)))
+                    (analysis/graph (:stories desk) dossiers the-map))
             record (track-record ctx day (set (keep news/origin (remove :precedent numbered)))
                                 (set (keep :story numbered)))
             analysed (when desk
@@ -1066,7 +1069,7 @@
         ;; in place of a rerun's, even when this run found none
         (let [by-key (into {} (map (juxt :key identity)) stories)]
           (store/save-trends! store day (map (fn [t] (update t :stories #(vec (distinct (keep (comp :story by-key) %)))))
-                                             (:trends the-map))))
+                                             (concat (:forces the-map) (:trends the-map)))))
         (log! run-id {:text (str "Filed the briefing: " (count cited) " of " (count numbered)
                                  " sources cited") :level :ok})
         (when max-facts

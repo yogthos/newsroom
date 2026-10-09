@@ -90,11 +90,16 @@
 (defn- diagram
   "A mermaid diagram with its zoom and pan controls. The page's script draws
   it (mermaid reads the text) and drives the controls; they are rendered here
-  rather than added by the script so a live re-render keeps them."
+  rather than added by the script so a live re-render keeps them. A
+  `%% caption:` comment in it is shown under it, as how to read it."
   [code]
-  (str "<figure class=\"diagram\">" diagram-tools
-       "<div class=\"diagram-view\"><pre class=\"mermaid\">" code "</pre></div>"
-       "</figure>"))
+  (let [lines (str/split-lines code)
+        caption? #(re-find #"^\s*%% caption: " %)
+        captions (keep #(second (re-find #"^\s*%% caption: (.*)$" %)) lines)]
+    (str "<figure class=\"diagram\">" diagram-tools
+         "<div class=\"diagram-view\"><pre class=\"mermaid\">" (str/join "\n" (remove caption? lines)) "</pre></div>"
+         (when (seq captions) (str "<figcaption>" (str/join " " captions) "</figcaption>"))
+         "</figure>")))
 
 (defn- heading [line]
   (let [[_ hashes text] (re-find #"^(#{1,6})\s+(.*?)\s*#*\s*$" line)

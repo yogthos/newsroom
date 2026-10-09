@@ -159,7 +159,14 @@
            (select-keys (first threads) [:name :summary :days :first-day :last-day])))
     (is (= "### Energy squeeze\nSeen on 3 days, from 2026-09-28 to 2026-09-30. Direction: holding (2026-09-28), strengthening (2026-09-30).\nWhere it stood last: New."
            (first (str/split (trends/trends-block threads identity) #"\n\n"))))
-    (is (nil? (trends/trends-block [] identity)))))
+    (is (nil? (trends/trends-block [] identity)))
+    (is (= "trend" (:level (first threads))) "a row with no level is a trend")))
+
+(deftest a-structural-force-is-followed-like-a-trend
+  (let [threads (trends/trend-threads [{:day "2026-09-30" :thread "f" :level "force" :name "Tech stacks split"
+                                        :direction "strengthening" :summary "Chips."}])]
+    (is (= "force" (:level (first threads))))
+    (is (str/starts-with? (trends/trends-block threads identity) "### Tech stacks split (a structural force)\n"))))
 
 (deftest a-gap-searchs-result-doesnt-make-a-storyline
   (is (= [1] (map :n (:sources (first (trends/storylines [{:n 1 :story "fed" :vector fed}

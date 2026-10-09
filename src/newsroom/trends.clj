@@ -387,7 +387,7 @@
 
 (defn trend-threads
   "The desk's daily trends, `rows` as the store keeps them, followed as
-  threads: each {:thread :name :summary :direction :days :first-day
+  threads: each {:thread :level :name :summary :direction :days :first-day
   :last-day :directions}, its name and summary its latest, :directions the
   direction of each day it was seen. The longest running first, then the
   latest seen."
@@ -397,6 +397,7 @@
               (let [rs (sort-by :day rs)
                     latest (last rs)]
                 {:thread thread
+                 :level (or (:level latest) "trend")
                  :name (:name latest)
                  :summary (:summary latest)
                  :direction (:direction latest)
@@ -422,8 +423,8 @@
   [threads long-date]
   (when (seq threads)
     (str/join "\n\n"
-              (for [{:keys [name summary days first-day last-day directions]} threads]
-                (str "### " name "\n"
+              (for [{:keys [name level summary days first-day last-day directions]} threads]
+                (str "### " name (when (= "force" level) " (a structural force)") "\n"
                      "Seen on " days (if (= 1 days) " day" " days")
                      (when (not= first-day last-day)
                        (str ", from " (long-date first-day) " to " (long-date last-day)))

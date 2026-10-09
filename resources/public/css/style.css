@@ -93,6 +93,17 @@ main { padding: 48px clamp(20px, 6vw, 80px) 80px; }
 .diagram.expanded .diagram-view { flex: 1; max-height: none; min-height: 0; position: relative; }
 .diagram.expanded .diagram-view pre.mermaid { position: absolute; inset: 0; padding: 0; text-align: left; }
 @media (max-width: 800px) { .diagram-hint { display: none; } }
+/* the levels of the day's map: mermaid's own styles are scoped by the svg's id, so these need !important */
+.diagram .node.force rect { fill: var(--accent) !important; stroke: var(--accent) !important; }
+.diagram .node.force .nodeLabel, .diagram .node.force span { color: var(--accent-ink) !important; font-weight: 700; }
+.diagram .node.implied rect { stroke-dasharray: 5 4 !important; fill: var(--paper) !important; }
+.diagram .node.implied .nodeLabel { font-style: italic; }
+.diagram .node.news rect { fill: var(--panel) !important; stroke: var(--rule) !important; }
+.diagram .cluster rect { fill: transparent !important; }
+.diagram .cluster .nodeLabel, .diagram .cluster-label span { color: var(--muted) !important; font: 600 11px var(--sans);
+  text-transform: uppercase; letter-spacing: .14em; }
+.diagram figcaption { padding: 8px 12px; border-top: 1px solid var(--rule); font: 13px/1.5 var(--sans); color: var(--muted); }
+.diagram.expanded figcaption { display: none; }
 .prose hr { border: 0; border-top: 1px solid var(--rule); margin: 2rem 0; }
 .meta { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule); color: var(--muted);
         font: 13px var(--sans); }
@@ -229,3 +240,65 @@ fieldset.plugin legend { font-weight: 700; padding: 0 6px; }
 .snippet mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; padding: 0 1px; border-radius: 2px; }
 .result-link { margin: .2rem 0 0; font: 12px var(--sans); overflow-wrap: anywhere; }
 .result-link a { color: var(--muted); }
+
+/* the reader's topics: a pane on the right, and the + that adds a paragraph to it */
+.topic-add { position: absolute; z-index: 30; width: 26px; height: 26px; margin: 0; padding: 0;
+             border-radius: 50%; font: 700 16px/1 var(--sans); border: 1px solid var(--accent);
+             background: var(--paper); color: var(--accent); opacity: .85; }
+.topic-add:hover, .topic-add.on { background: var(--accent); color: var(--accent-ink); opacity: 1; filter: none; }
+.prose .picked, .facts .picked { box-shadow: -14px 0 0 -11px var(--accent); }
+.topics-toggle { position: fixed; right: 0; top: 40%; z-index: 40; width: auto; margin: 0; padding: 10px 8px;
+                 writing-mode: vertical-rl; border-radius: 6px 0 0 6px; font: 600 12px var(--sans);
+                 letter-spacing: .08em; text-transform: uppercase; }
+.topics-toggle .count { display: inline-block; margin-top: 6px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+.topics-open .topics-toggle { display: none; }
+.topics { position: fixed; top: 0; right: 0; bottom: 0; z-index: 45; width: min(420px, 100vw);
+          display: flex; flex-direction: column; gap: 10px; padding: 18px 18px 14px; overflow-y: auto;
+          background: var(--panel); border-left: 1px solid var(--rule); font: 14px/1.5 var(--sans);
+          box-shadow: -6px 0 18px rgba(0, 0, 0, .08); }
+.topics[hidden] { display: none; }
+.topics.wide { width: min(760px, 100vw); }
+.topics-open main { padding-right: calc(420px + 24px); }
+.topics-open:has(.topics.wide) main { padding-right: calc(760px + 24px); }
+.topics header { display: flex; align-items: center; gap: 6px; }
+.topics h2 { flex: 1; margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: var(--muted); }
+.topics button { margin: 0; }
+.topics button.quiet, .topics-message-tools button { width: auto; padding: 4px 9px; background: var(--paper);
+                                                     color: var(--ink); border-color: var(--rule); font-weight: 500; }
+.topics button.quiet:hover { border-color: var(--accent); filter: none; }
+.topics button:disabled { opacity: .5; cursor: default; filter: none; }
+.topics-hint { margin: 0; }
+.topics-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.topics-list li { padding: 8px 10px; background: var(--paper); border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+                  border-radius: 4px; }
+.topics-list li p { margin: 0; }
+.topics-list li p:first-child { font: 14px/1.45 var(--serif); display: -webkit-box; -webkit-line-clamp: 5;
+                                -webkit-box-orient: vertical; overflow: hidden; }
+.topics-list li p.muted { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+                          margin-top: 6px; font-size: 12px; }
+.topics-list li button.quiet { padding: 1px 7px; font-size: 11px; }
+.topics-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.topics-actions input { flex: 1 1 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--rule);
+                        background: var(--paper); color: var(--ink); border-radius: 4px; }
+.topics-actions button:not(.quiet) { flex: 1; }
+.topics-chat { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--rule); padding-top: 10px; }
+.topics-chat:empty { display: none; }
+.topics-message { border-radius: 6px; padding: 8px 12px; }
+.topics-message.user { align-self: flex-end; max-width: 85%; background: var(--accent); color: var(--accent-ink); }
+.topics-message.user p { margin: 0; white-space: pre-wrap; }
+.topics-message.assistant { background: var(--paper); border: 1px solid var(--rule); }
+.topics-message.error { border-color: var(--bad); color: var(--bad); }
+.topics-message .prose { font: 15px/1.6 var(--serif); }
+.topics-message .prose h1 { font-size: 1.4rem; margin-bottom: .6rem; }
+.topics-message .prose h2 { margin-top: 1.4rem; }
+.topics-streaming { white-space: pre-wrap; font: 14px/1.55 var(--serif); }
+.topics-status { margin: 0 0 4px; font-style: italic; }
+.topics-message-tools { display: flex; justify-content: flex-end; }
+.topics-ask { display: flex; flex-direction: column; gap: 6px; margin-top: auto; padding-top: 10px;
+              border-top: 1px solid var(--rule); }
+.topics-ask textarea { font: inherit; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 4px; resize: vertical;
+                       background: var(--paper); color: var(--ink); }
+.topics-ask-actions { display: flex; gap: 6px; }
+.topics-ask-actions button[type=submit] { flex: 1; }
+@media (max-width: 1100px) { .topics-open main { padding-right: clamp(20px, 6vw, 80px); } }
+@media (max-width: 800px) { .topic-add { left: 2px !important; } }

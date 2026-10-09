@@ -27,7 +27,10 @@
               "<div class=\"diagram-view\"><pre class=\"mermaid\">flowchart LR\n  A[&quot;Oil &amp; gas&quot;] --&gt; B</pre></div>"
               "</figure><p>After.</p>")
          (md/html "```mermaid\nflowchart LR\n  A[\"Oil & gas\"] --> B\n```\n\nAfter.")))
-  (is (str/includes? (md/html "``` Mermaid \ngraph TD\n```") "<pre class=\"mermaid\">graph TD</pre>")))
+  (is (str/includes? (md/html "``` Mermaid \ngraph TD\n```") "<pre class=\"mermaid\">graph TD</pre>"))
+  (let [h (md/html "```mermaid\nflowchart BT\n  %% caption: Read it <up>.\n  a --> b\n```")]
+    (is (str/includes? h "<pre class=\"mermaid\">flowchart BT\n  a --&gt; b</pre>") "a caption isn't drawn")
+    (is (str/includes? h "</div><figcaption>Read it &lt;up&gt;.</figcaption></figure>") "it is put under the diagram")))
 
 (deftest inline
   (is (= "<p><strong>bold</strong> and <em>it</em> and <em>it2</em> and <code>c&lt;</code></p>"

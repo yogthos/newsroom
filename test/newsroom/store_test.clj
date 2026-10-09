@@ -199,11 +199,14 @@
                                             :summary "Oil up." :stories ["fed" "oil"]}])
       (store/save-trends! db "2026-09-30" [{:thread "2026-09-29/T1" :name "Energy squeeze" :direction "strengthening"
                                             :summary "Oil higher." :stories ["oil"]}
-                                           {:thread "2026-09-30/T2" :name "Chip blocs" :stories []}])
-      (is (= [{:day "2026-09-29" :thread "2026-09-29/T1" :name "Energy squeeze" :direction "holding"
+                                           {:thread "2026-09-30/T2" :name "Chip blocs" :stories []}
+                                           {:thread "2026-09-30/F1" :level "force" :name "Tech stacks split" :stories ["oil"]}])
+      (is (= [{:day "2026-09-29" :thread "2026-09-29/T1" :level "trend" :name "Energy squeeze" :direction "holding"
                :summary "Oil up." :stories ["fed" "oil"]}]
              (store/trends-between db "2026-09-29" "2026-09-29")))
-      (is (= ["2026-09-29/T1" "2026-09-29/T1" "2026-09-30/T2"]
+      (is (= ["trend" "trend" "force"] (map :level (store/trends-between db "2026-09-30" "2026-09-30")))
+          "a structural force is kept beside the trends, by its level")
+      (is (= ["2026-09-29/T1" "2026-09-29/T1" "2026-09-30/T2" "2026-09-30/F1"]
              (map :thread (store/trends-between db "2026-09-01" "2026-09-30"))))
       (store/save-trends! db "2026-09-30" [])
       (is (= 1 (count (store/trends-between db "2026-09-01" "2026-09-30"))) "saving a day again replaces its trends")
