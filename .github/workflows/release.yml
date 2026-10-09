@@ -28,7 +28,9 @@ jobs:
           - os: macos-latest
             target: aarch64-macos
             shell: bash
-          - os: ubuntu-latest
+          # 22.04's glibc and libstdc++, so the binary runs there and on
+          # anything newer
+          - os: ubuntu-22.04
             target: x86_64-linux
             shell: bash
           # Windows has none of the native libraries, so the archive carries
@@ -95,6 +97,21 @@ jobs:
       - name: Use MSYS2's sqlite
         if: runner.os == 'Windows'
         run: cp /ucrt64/bin/libsqlite3-0.dll "$(dirname "$(command -v jolt)")/sqlite3.dll"
+
+      # the speech engine: llama.cpp, the S3 decoder and LAME, linked into
+      # the binary. Windows goes without it, and so without podcasts
+      - name: Cache the speech engine's build
+        if: runner.os != 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: |
+            native/llama.cpp
+            native/lame
+          key: tts-${{ matrix.target }}-${{ hashFiles('deps.edn', 'native/build_tts.sh') }}
+
+      - name: Build the speech engine
+        if: runner.os != 'Windows'
+        run: jolt tts
 
       - name: Test
         run: jolt -M:test

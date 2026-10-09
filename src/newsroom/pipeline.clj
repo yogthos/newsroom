@@ -28,6 +28,10 @@
   and keeps the lessons, and the briefings and digests are told how the
   projections have gone (see newsroom.retrospective).
 
+  Once a day is filed, its podcast is written and recorded, when the
+  speech engine is there, by a worker of its own that doesn't hold the run
+  (see newsroom.narration).
+
   Progress is published to `status`, a glimmer ratom, so every open page
   shows it live."
   (:require [clojure.java.io :as io]
@@ -42,6 +46,7 @@
             [newsroom.feed :as feed]
             [newsroom.llm.client :as llm]
             [newsroom.llm.providers :as providers]
+            [newsroom.narration :as narration]
             [newsroom.news :as news]
             [newsroom.notes :as notes]
             [newsroom.precedents :as precedents]
@@ -49,7 +54,8 @@
             [newsroom.retrospective :as retrospective]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
-            [newsroom.trends :as trends]))
+            [newsroom.trends :as trends]
+            [newsroom.tts :as tts]))
 
 (defonce ^{:doc "The current or last run, for the page to show."}
   status (ratom/atom {:state :idle}))
@@ -890,6 +896,13 @@
                                          " from how the projections went")
                               :level :ok})))))))))
 
+(defn narrate!
+  "Have the podcast of the stored `day` written and recorded, on its own
+  worker rather than as a run (see newsroom.narration), the pages showing
+  the day refreshed once it is stored."
+  [ctx day]
+  (narration/enqueue! (assoc (select-keys ctx [:config :store :chat]) :on-saved #(swap! stored inc)) day))
+
 (defn run-task
   "Task: gather, analyse and store `day`. Completes with the stored day's
   summary; fails when nothing was gathered or the model call fails.
@@ -1046,6 +1059,10 @@
           (log! run-id {:text (str "Dropped " (count gone) " old "
                                    (if (= 1 (count gone)) "day" "days")
                                    " past the limit of " (:keep-days config default-keep-days))}))
+        ;; the podcast takes minutes, so it is recorded once the run is over
+        (when (and (:podcast config) (tts/available?))
+          (log! run-id {:text "The podcast of the briefing will be written and recorded next"})
+          (narrate! ctx day))
         (swap! stored inc)
         {:day day :digest nil :items (count numbered) :cited (count cited)}))))
 

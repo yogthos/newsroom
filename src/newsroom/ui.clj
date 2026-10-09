@@ -12,14 +12,17 @@
             [newsroom.config-page :as config-page]
             [jolt.datastar.core :as ds]
             [newsroom.markdown :as md]
+            [newsroom.narration :as narration]
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
+            [newsroom.podcast :as podcast]
             [newsroom.progress :as progress]
             [newsroom.retrospective :as retrospective]
             [newsroom.search :as search]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
-            [newsroom.trends :as trends]))
+            [newsroom.trends :as trends]
+            [newsroom.tts :as tts]))
 
 ;; --- sidebar -----------------------------------------------------------------------
 
@@ -175,6 +178,27 @@
        [:button {"data-on:click" (str "@post('/run?day=" today "')")}
         "Gather today’s news"])]))
 
+(defn- narration-panel
+  "What the desk says about the podcast being made or made last, a line
+  under the run's, nothing before the first."
+  [{:keys [state day done total error pending note]}]
+  (let [line (case state
+               :writing (if total
+                          [:p "Writing the podcast of " (sources/long-date day) ", segment "
+                           (min total (inc done)) " of " total "…"]
+                          [:p "Planning the podcast of " (sources/long-date day) "…"])
+               :speaking (if note
+                           [:p "Recording the podcast of " (sources/long-date day) ": " note "…"]
+                           [:p "Recording the podcast of " (sources/long-date day) ": " done " of " total " lines…"])
+               :done [:p "Recorded the podcast of " [:a {:href (str "/day/" day)} (sources/long-date day)] "."]
+               :failed [:p.bad "The podcast of " (sources/long-date day) " failed: " error]
+               :cancelled [:p.muted "The podcast of " (sources/long-date day) " was cancelled."]
+               nil)]
+    (when line
+      [:div.narration
+       (cond-> line (#{:writing :speaking} state) with-spinner)
+       (when pending [:p.muted "The podcast of " (sources/long-date pending) " is next."])])))
+
 (defn- feed-health
   "The run desk's long view of which feeds have been failing: each source's
   last success and how many times in a row it has failed since."
@@ -237,6 +261,7 @@
              "data-on:change" "evt.target.value && (window.location = '/day/' + evt.target.value)"}]]
    (stepper archive digests current)
    (run-panel @pipeline/status (pipeline/today))
+   (narration-panel @narration/status)
    (feed-health health)
    (story-list stories current)
    (digest-list :month "Monthly" digests current)
@@ -358,10 +383,51 @@
                             (if url [:a {:href url :rel "noopener" :target "_blank"} source] source)))])
        (when-not (str/blank? summary) [:p.summary summary])])]])
 
+(defn- duration
+  "A podcast's length, 12:34, or 1:02:03 past an hour."
+  [seconds]
+  (let [s (long (Math/round (double seconds)))
+        h (quot s 3600)
+        m (quot (rem s 3600) 60)]
+    (if (pos? h)
+      (format "%d:%02d:%02d" h m (rem s 60))
+      (format "%d:%02d" m (rem s 60)))))
+
+(defn- podcast-player
+  "The day's podcast, a player with its transcript, under the dateline.
+  The player keeps its id, so the article drawn again while it plays
+  leaves it playing. With no podcast yet, what the narration is doing on
+  the day, or a button to record one when speech can be made; how far it
+  has got is the desk's to show, since the article is drawn again only as
+  the work moves on (see `fragment`)."
+  [st day]
+  (if-let [{:keys [created-at seconds transcript]} (store/narration st day)]
+    [:section#podcast.podcast
+     [:p.podcast-label "Podcast" (when seconds [:span.muted " · " (duration seconds)])]
+     [:audio#podcast-player {:controls true :preload "none"
+                             :src (str "/day/" day ".mp3?v=" (java.net.URLEncoder/encode (str created-at) "UTF-8"))}]
+     (when (seq transcript)
+       [:details.transcript
+        [:summary "Transcript"]
+        (for [{:keys [speaker text]} transcript]
+          [:p [:strong speaker] " " (podcast/readable text)])])]
+    (let [{:keys [state pending] :as now} @narration/phase]
+      (cond
+        (and (= day (:day now)) (= :writing state))
+        [:p#podcast.podcast.muted "The podcast of this briefing is being written…"]
+        (and (= day (:day now)) (= :speaking state))
+        [:p#podcast.podcast.muted "The podcast of this briefing is being recorded…"]
+        (= day pending)
+        [:p#podcast.podcast.muted "The podcast of this briefing will be recorded next."]
+        (tts/available?)
+        [:p#podcast.podcast
+         [:button.quiet {"data-on:click" (str "@post('/podcast?day=" day "')")} "Record a podcast of this briefing"]]))))
+
 (defn- article [st day]
   (if-let [{:keys [markdown sources model provider created-at]} (store/day st day)]
     [:article.briefing
      [:p.dateline (sources/long-date day)]
+     (podcast-player st day)
      [:div.prose (h/raw (md/html markdown))]
      [:footer.meta
       "Written by " provider (when model (str " / " model))
@@ -555,8 +621,10 @@
 
   The two stream apart because each re-renders only when a ratom it read
   changes. The sidebar reads the run's status, which changes several times a
-  second during a run; the article reads only `stored`, so it, and the
-  diagram in it, stays still until a day is written."
+  second during a run, and the podcast's; the article reads only `stored`,
+  and the podcast's phase, which changes as its work moves on rather than
+  at every line, so it, the diagram in it and the podcast playing in it
+  stay still until a day or a podcast is written."
   [st current selector]
   ;; stored changes when a day is written, so both re-read the store
   @pipeline/stored

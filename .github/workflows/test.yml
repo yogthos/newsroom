@@ -83,5 +83,20 @@ jobs:
           key: deps-${{ matrix.target }}-${{ hashFiles('deps.edn') }}
           restore-keys: deps-${{ matrix.target }}-
 
+      # the speech engine: llama.cpp, the S3 decoder and LAME, linked into
+      # the binary. Windows goes without it, and so without podcasts
+      - name: Cache the speech engine's build
+        if: runner.os != 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: |
+            native/llama.cpp
+            native/lame
+          key: tts-${{ matrix.target }}-${{ hashFiles('deps.edn', 'native/build_tts.sh') }}
+
+      - name: Build the speech engine
+        if: runner.os != 'Windows'
+        run: jolt tts
+
       - name: Test
         run: jolt -M:test

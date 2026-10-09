@@ -5,6 +5,9 @@
     GET  /day/YYYY-MM-DD    a day's page; the same path, as datastar's SSE
                             stream, re-renders it live
     GET  /day/YYYY-MM-DD.md the day's briefing as markdown
+    GET  /day/YYYY-MM-DD.mp3
+                            the day's podcast, a Range of it when one is
+                            asked for
     GET  /week/YYYY-Www     a week's digest, live like a day's page, and
     GET  /month/YYYY-MM     a month's; either with .md as markdown
     GET  /stories           every storyline the briefings keep notes on
@@ -26,6 +29,7 @@
     POST /digest?kind=week&period=YYYY-Www
                             write a digest (kind week or month)
     POST /cancel            cancel the run in flight
+    POST /podcast?day=...   write and record a stored day's podcast again
     POST /ask               a report on the reader's topics, or an answer
                             in a conversation about them, streamed as
                             server-sent events (see newsroom.ask)"
@@ -43,6 +47,7 @@
             [newsroom.ask :as ask]
             [newsroom.config :as config]
             [newsroom.config-page :as config-page]
+            [newsroom.narration :as narration]
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
             [newsroom.plugin :as plugin]
@@ -186,10 +191,50 @@
   [part]
   (if (str/ends-with? part ".md") [(subs part 0 (- (count part) 3)) true] [part false]))
 
+(defn byte-range
+  "The bytes the Range `header` asks for of a body `size` long, as [from
+  to], both inclusive; :unsatisfiable when none of them are there, and nil
+  for the whole body, when there is no header or one it can't read. A
+  header asking for several ranges is answered with the whole body, which
+  a server may always do."
+  [header size]
+  (when-let [[_ from to] (some->> header str/trim (re-matches #"bytes=(\d{0,15})-(\d{0,15})"))]
+    (let [from (when-not (str/blank? from) (parse-long from))
+          to (when-not (str/blank? to) (parse-long to))]
+      (cond
+        (and (nil? from) (nil? to)) nil
+        (zero? size) :unsatisfiable
+        ;; bytes=-n is the last n
+        (nil? from) (if (pos? to) [(max 0 (- size to)) (dec size)] :unsatisfiable)
+        (and to (< to from)) nil
+        (>= from size) :unsatisfiable
+        :else [from (min (dec size) (or to (dec size)))]))))
+
+(defn- audio
+  "The bytes `mp3` as an answer to `req`: all of them, or the range its
+  Range header asks for."
+  [req mp3]
+  (if-not mp3
+    (not-found)
+    (let [size (alength ^bytes mp3)
+          range (byte-range (get-in req [:headers "range"]) size)
+          headers {"Content-Type" "audio/mpeg" "Accept-Ranges" "bytes" "Cache-Control" "no-cache"}]
+      (cond
+        (nil? range) {:status 200 :headers headers :body mp3}
+        (= :unsatisfiable range) {:status 416 :headers (assoc headers "Content-Range" (str "bytes */" size))
+                                  :body (byte-array 0)}
+        :else (let [[from to] range]
+                {:status 206
+                 :headers (assoc headers "Content-Range" (str "bytes " from "-" to "/" size))
+                 :body (java.util.Arrays/copyOfRange ^bytes mp3 (int from) (int (inc to)))})))))
+
 (defn- day-page [{:keys [params] :as req}]
-  (let [[day md?] (with-md (:day params))]
+  (let [part (:day params)
+        mp3? (str/ends-with? part ".mp3")
+        [day md?] (with-md (if mp3? (subs part 0 (- (count part) 4)) part))]
     (cond
       (not (news/valid-day? day)) (not-found)
+      mp3? (audio req (store/narration-audio (:store @system) day))
       md? (markdown (store/day (:store @system) day))
       :else (live req day))))
 
@@ -205,6 +250,13 @@
   (let [day (get params "day" (pipeline/today))]
     (if (news/valid-day? day)
       (do (pipeline/start-run! (ctx) day)
+          (ds/patch-signals {}))
+      {:status 400 :body "bad day\n"})))
+
+(defn- start-podcast [{:keys [params]}]
+  (let [day (get params "day")]
+    (if (and day (news/valid-day? day))
+      (do (pipeline/narrate! (ctx) day)
           (ds/patch-signals {}))
       {:status 400 :body "bad day\n"})))
 
@@ -260,6 +312,7 @@
    {:path "/search" :method :get :response #(live % {:search (search-query %)})}
    {:path "/run" :method :post :response start-run}
    {:path "/digest" :method :post :response start-digest}
+   {:path "/podcast" :method :post :response start-podcast}
    {:path "/ask" :method :post :response ask-page}
    {:path "/cancel" :method :post :response (fn [_] (pipeline/cancel-run!) (ds/patch-signals {}))}
    {:path "/config" :method :get
@@ -337,6 +390,7 @@
 (defn stop! []
   (when-let [{:keys [schedule server store]} @system]
     (pipeline/cancel-run!)
+    (narration/cancel!)
     (when schedule (schedule))
     (when server (adapter/stop-server server))
     (when store (store/close store))

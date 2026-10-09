@@ -9,3 +9,12 @@ target/
 newsroom.build/
 .clj-kondo/
 .lsp/
+# the speech engine's build: llama.cpp and LAME checkouts and the libraries
+native/llama.cpp/
+native/lame/
+native/build/
+native/*.a
+native/*.dylib
+native/*.so
+native/*.dll
+native/frameworks/

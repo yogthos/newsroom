@@ -22,6 +22,11 @@
   indexes read, one by stem for matching and ranking, one by the words as
   written for guessing at misspellings; see newsroom.search.
 
+  A day's podcast, its briefing talked through by two hosts, is kept with
+  it as MP3, with its script; see newsroom.narration. It tells the
+  briefing it was written from, so a rerun of the day drops it, and it is
+  pruned with its day.
+
   The settings, everything about newsroom that can change while it runs,
   are kept here too, a row a key with the value as EDN; see
   newsroom.settings.
@@ -140,6 +145,16 @@
       checked_at text)"
    "create index if not exists projections_due on projections (status, due)"
    "create index if not exists projections_ref on projections (origin, ref)"
+   ;; a day's podcast: the episode as MP3, and its script as EDN,
+   ;; [{:speaker :text}]
+   "create table if not exists narrations (
+      day text primary key,
+      mp3 blob not null,
+      transcript text,
+      seconds real,
+      model text,
+      provider text,
+      created_at text not null)"
    "create table if not exists retrospectives (
       kind text not null,
       period text not null,
@@ -338,6 +353,8 @@
         (jdbc/execute! conn ["delete from sources where day = ?" day])
         (jdbc/execute! conn ["delete from coverage where day = ?" day])
         (jdbc/execute! conn ["delete from briefings where day = ?" day])
+        ;; a podcast of the briefing replaced no longer tells it
+        (jdbc/execute! conn ["delete from narrations where day = ?" day])
         (insert-coverage! conn (map #(coverage-row day cited %) sources))
         (jdbc/execute! conn ["delete from standfirsts where day = ?" day])
         (when tldr (jdbc/execute! conn ["insert into standfirsts (day, tldr) values (?, ?)" day tldr]))
@@ -573,10 +590,11 @@
   124)
 
 (defn prune!
-  "Delete every day but the newest `n`, with its sources, and return the
-  days deleted, newest first; their coverage goes once it is
-  `coverage-days` days older still. A negative `n` keeps everything. The
-  file is vacuumed after a deletion so the space goes back to the disk."
+  "Delete every day but the newest `n`, with its sources and its podcast,
+  and return the days deleted, newest first; their coverage goes once it
+  is `coverage-days` days older still. A negative `n` keeps everything.
+  The file is vacuumed after a deletion so the space goes back to the
+  disk."
   [store n]
   (if (neg? n)
     []
@@ -589,6 +607,7 @@
                          (unindex! conn ["day" "source"] d)
                          (jdbc/execute! conn ["delete from sources where day = ?" d])
                          (jdbc/execute! conn ["delete from briefings where day = ?" d]))
+                       (jdbc/execute! conn "delete from narrations where day not in (select day from briefings)")
                        (jdbc/execute! conn ["delete from coverage where day not in
                                                (select distinct day from coverage order by day desc limit ?)"
                                             (+ n coverage-days)])
@@ -603,6 +622,39 @@
         (stale! store)
         (with-db [conn store] (jdbc/execute! conn "vacuum")))
       gone)))
+
+;; --- podcasts --------------------------------------------------------------------
+
+(defn save-narration!
+  "Store the podcast of `day`, its :mp3 bytes and its :transcript,
+  [{:speaker :text}], with its length in :seconds and the :model and
+  :provider that wrote it, replacing the day's last."
+  [store {:keys [day mp3 transcript seconds model provider]}]
+  (with-db [conn store]
+    (jdbc/execute! conn ["insert or replace into narrations (day, mp3, transcript, seconds, model, provider, created_at)
+                          values (?, ?, ?, ?, ?, ?, ?)"
+                         day mp3 (pr-str (vec transcript)) (some-> seconds double) model provider (now)]))
+  nil)
+
+(defn narration
+  "The podcast of `day` without its audio, or nil: {:day :transcript
+  :seconds :model :provider :created-at}."
+  [store day]
+  (with-db [conn store]
+    (when-let [r (jdbc/fetch-one conn ["select day, transcript, seconds, model, provider, created_at
+                                        from narrations where day = ?" day])]
+      {:day (:day r)
+       :transcript (some-> (:transcript r) edn/read-string)
+       :seconds (some-> (:seconds r) double)
+       :model (:model r)
+       :provider (:provider r)
+       :created-at (:created_at r)})))
+
+(defn narration-audio
+  "The MP3 of `day`'s podcast as bytes, or nil."
+  [store day]
+  (with-db [conn store]
+    (:mp3 (jdbc/fetch-one conn ["select mp3 from narrations where day = ?" day]))))
 
 ;; --- trends ----------------------------------------------------------------------
 

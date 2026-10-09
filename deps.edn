@@ -86,6 +86,21 @@
 
  :jolt/build {:embed ["resources"]}
 
+ ;; the speech engine behind newsroom.tts: llama.cpp, the S3 decoder on ggml
+ ;; and LAME, built by `jolt tts` into native/. Optional at runtime: without
+ ;; it there are no podcasts. `jolt build` links the archive in, with the C++
+ ;; runtime it needs
+ :jolt/native [{:name "newsroom_tts"
+                :optional true
+                :darwin ["native/libnewsroom_tts.dylib"]
+                :linux ["native/libnewsroom_tts.so"]
+                :static {:archive "native/libnewsroom_tts.a"}}
+               {:name "cxx"
+                :optional true
+                :darwin ["libc++.1.dylib"]
+                :linux ["libstdc++.so.6"]
+                :static {:darwin {:lib "c++"} :linux {:lib "stdc++"}}}]
+
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {jlt-commons/writ
                                {:git/url "https://github.com/jlt-commons/writ"
@@ -93,5 +108,61 @@
                                 :git/sha "4055b495575e5ddd806b155e25a6678b31153761"}}
                   :main-opts ["-m" "newsroom.test-runner"]}}
 
- :tasks {serve {:doc "run the newsroom server" :main-opts ["-m" "newsroom.core"]}
-         test  "jolt -M:test"}}
+ :tasks {:requires ([babashka.fs :as fs])
+
+         serve {:doc "run the newsroom server" :main-opts ["-m" "newsroom.core"]}
+         test  "jolt -M:test"
+
+         tts
+         {:doc "fetch llama.cpp at the pinned commit into native/llama.cpp, build it static for the CPU, and build the speech engine around it into native/libnewsroom_tts.* (LLAMA_CPP_SRC=path fetches from a local checkout holding that commit)"
+          :task (let [rev "0bb496dbd3af0add77ff82c406a915b41e839d56" ; b11400
+                      src (or (System/getenv "LLAMA_CPP_SRC") "https://github.com/ggml-org/llama.cpp")
+                      dir "native/llama.cpp"
+                      head (str dir "/.git/HEAD")
+                      mac? (some? (re-find #"^Mac" (System/getProperty "os.name")))
+                      x86? (some? (re-find #"(?i)x86_64|amd64" (System/getProperty "os.arch")))]
+                  (when-not (and (fs/exists? head) (= rev (.trim (slurp head))))
+                    (fs/delete-tree dir)
+                    (fs/create-dirs dir)
+                    (shell "git" "-C" dir "init" "--quiet")
+                    (shell "git" "-C" dir "fetch" "--quiet" "--depth" "1" src rev)
+                    (shell "git" "-C" dir "checkout" "--quiet" "FETCH_HEAD"))
+                  (when-not (fs/exists? (str dir "/build/src/libllama.a"))
+                    ;; for the CPU the release is built on's kind, not the one
+                    ;; machine: AVX2 and FMA on x86, NEON on ARM
+                    (apply shell "cmake" "-S" dir "-B" (str dir "/build") "-DCMAKE_BUILD_TYPE=Release"
+                           "-DBUILD_SHARED_LIBS=OFF" "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+                           "-DGGML_OPENMP=OFF" "-DGGML_NATIVE=OFF" "-DGGML_CPU_ALL_VARIANTS=OFF"
+                           "-DGGML_METAL=OFF" "-DGGML_BLAS=OFF" "-DGGML_ACCELERATE=OFF"
+                           "-DLLAMA_BUILD_TESTS=OFF" "-DLLAMA_BUILD_EXAMPLES=OFF" "-DLLAMA_BUILD_TOOLS=OFF"
+                           "-DLLAMA_BUILD_SERVER=OFF" "-DLLAMA_BUILD_COMMON=OFF" "-DLLAMA_CURL=OFF"
+                           "-DLLAMA_OPENSSL=OFF"
+                           (if (and x86? (not mac?))
+                             ["-DGGML_AVX=ON" "-DGGML_AVX2=ON" "-DGGML_FMA=ON" "-DGGML_F16C=ON"]
+                             []))
+                    ;; a bare -j is unbounded, which a small CI runner answers
+                    ;; with an OOM kill
+                    (shell "cmake" "--build" (str dir "/build") "--target" "llama" "ggml"
+                           "--parallel" (str (.availableProcessors (Runtime/getRuntime)))))
+                  (shell "sh" "native/build_tts.sh"))}
+
+         tts-test
+         {:doc "check the speech engine against test/golden/tts: the decoder stage by stage, then the prompt, the speech model's first logits and a spoken line, written to native/build/golden.mp3. Needs `jolt tts` and the model's converted files, in NEWSROOM_TTS_DIR or ~/.config/newsroom/tts, which the first podcast fetches"
+          :depends [tts]
+          :task (let [dir (or (System/getenv "NEWSROOM_TTS_DIR")
+                              (str (or (System/getenv "NEWSROOM_HOME")
+                                       (str (System/getProperty "user.home") "/.config/newsroom"))
+                                   "/tts"))]
+                  (when-not (fs/exists? (str dir "/s3gen.gguf"))
+                    (throw (ex-info (str "no converted model files in " dir) {})))
+                  (shell "native/build/test-s3gen" (str dir "/s3gen.gguf") "test/golden/tts")
+                  (shell "native/build/test-tts" (str dir "/model-q4_0.gguf") (str dir "/s3gen.gguf")
+                         (str dir "/voices.gguf") "test/golden/tts" "native/build/golden.mp3"))}
+
+         tts-golden
+         {:doc "regenerate test/golden/tts from the upstream kittenml package (dev/tts_golden.py through uv)"
+          :task (shell "uv" "run" "--no-project" "--python" "3.12"
+                       "--with" "kittenml==0.9.4" "--with" "torch==2.14.1" "--with" "torchaudio==2.11.0"
+                       "--with" "transformers==5.19.0" "--with" "numpy==2.5.3" "--with" "safetensors==0.8.0"
+                       "--with" "soundfile==0.14.0"
+                       "python" "dev/tts_golden.py" "test/golden/tts")}}}
