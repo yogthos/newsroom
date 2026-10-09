@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The topics pane shows how far the analyst has got, as the desk does for
+  a briefing: the words of reasoning while it thinks, then the words
+  written and the section it is in.
+
 ## v0.10.0 — 9 October 2026
 
 ### Added

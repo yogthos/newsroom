@@ -46,7 +46,7 @@ jobs:
       run:
         shell: ${{ matrix.shell }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up MSYS2
         if: runner.os == 'Windows'
@@ -83,7 +83,7 @@ jobs:
       # Maven Central sometimes answers a runner with 403. The smoke test
       # still hides these while it runs.
       - name: Cache deps
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .ci-deps
           key: deps-${{ matrix.target }}-${{ hashFiles('deps.edn') }}
@@ -190,7 +190,7 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" "${PKG}" --clobber
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: newsroom-${{ matrix.target }}
           path: ${{ env.PKG }}

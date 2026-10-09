@@ -117,7 +117,8 @@
       (is (str/includes? markdown "Burned [[1]](https://e.com/1)."))
       (is (str/includes? markdown "## Sources"))
       (is (str/includes? html "<h1")))
-    (is (some #(= ["status" "Reasoning it through"] %) events))))
+    (is (some #(= ["status" "Thinking · 1 word of reasoning"] %) events)
+        "the reader sees the model think, as the desk does")))
 
 (deftest a-chat-needs-a-question-and-a-topic
   (let [st (stored)
