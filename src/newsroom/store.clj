@@ -305,6 +305,7 @@
                           ["gap" "text"]]]
       (add-column! conn "sources" column ddl))
     (add-column! conn "story_notes" "status" "text")
+    (add-column! conn "day_trends" "level" "text")
     (jdbc/execute! conn "create index if not exists sources_story on sources (story)")
     (jdbc/execute! conn "create index if not exists day_trends_thread on day_trends (thread)")
     (jdbc/execute! conn "create index if not exists coverage_story on coverage (story)")
@@ -606,26 +607,28 @@
 ;; --- trends ----------------------------------------------------------------------
 
 (defn save-trends!
-  "Store the trends the desk found on `day`, {:thread :name :direction
-  :summary :stories}, the stories by their storylines, in place of the
-  day's last."
+  "Store the trends and structural forces the desk found on `day`,
+  {:thread :level :name :direction :summary :stories}, :level \"trend\"
+  or \"force\", the stories by their storylines, in place of the day's
+  last."
   [store day trends]
   (with-db [conn store]
     (jdbc/atomic conn
       (jdbc/execute! conn ["delete from day_trends where day = ?" day])
-      (doseq [[i {:keys [thread name direction summary stories]}] (map-indexed vector trends)]
-        (jdbc/execute! conn ["insert into day_trends (day, idx, thread, name, direction, summary, stories)
-                              values (?, ?, ?, ?, ?, ?, ?)"
-                             day i thread name direction summary (pr-str (vec stories))]))))
+      (doseq [[i {:keys [thread level name direction summary stories]}] (map-indexed vector trends)]
+        (jdbc/execute! conn ["insert into day_trends (day, idx, thread, level, name, direction, summary, stories)
+                              values (?, ?, ?, ?, ?, ?, ?, ?)"
+                             day i thread (or level "trend") name direction summary (pr-str (vec stories))]))))
   nil)
 
 (defn trends-between
   "The trends found on the days from `from` to `to`, both inclusive, in
-  order: {:day :thread :name :direction :summary :stories}. They are kept
+  order: {:day :thread :level :name :direction :summary :stories}. They are kept
   as long as the coverage."
   [store from to]
   (with-db [conn store]
-    (mapv (fn [r] {:day (:day r) :thread (:thread r) :name (:name r) :direction (:direction r)
+    (mapv (fn [r] {:day (:day r) :thread (:thread r) :level (or (:level r) "trend") :name (:name r)
+                   :direction (:direction r)
                    :summary (:summary r) :stories (some-> (:stories r) edn/read-string)})
           (jdbc/fetch conn ["select * from day_trends where day >= ? and day <= ? order by day, idx" from to]))))
 

@@ -150,29 +150,93 @@
    "G3" {:label "Chip \"controls\"" :domain "technology" :summary "Widened."}})
 
 (deftest the-map-is-read-strictly
-  (let [answer (str "{\"trends\": [{\"name\": \"Energy squeeze\", \"continues\": \"2026-09-29/T1\","
+  (let [answer (str "{\"forces\": [{\"id\": \"F1\", \"name\": \"Energy security over cost\", \"continues\": \"2026-09-29/F1\","
+                    " \"direction\": \"strengthening\", \"summary\": \"F.\"},"
+                    " {\"id\": \"F2\", \"name\": \"Tech stacks split\", \"continues\": \"made-up\"},"
+                    " {\"id\": \"F3\"}],"
+                    " \"trends\": [{\"id\": \"T1\", \"name\": \"Energy squeeze\", \"continues\": \"2026-09-29/T1\","
                     " \"direction\": \"gathering strength\", \"stories\": [\"G2\", \"G1\", \"G7\"], \"summary\": \"S.\"},"
-                    " {\"name\": \"Tech blocs\", \"continues\": \"made-up\", \"stories\": [\"G3\"]},"
-                    " {\"name\": \"Nothing\", \"stories\": [\"G8\"]}],"
-                    " \"links\": [{\"from\": \"G2\", \"to\": \"G1\", \"mechanism\": \"raises prices\", \"confidence\": \"HIGH\"},"
+                    " {\"id\": \"T2\", \"name\": \"Inflation expectations\", \"stories\": [], \"implied\": true},"
+                    " {\"id\": \"T3\", \"name\": \"Nothing\", \"stories\": [\"G8\"]},"
+                    " {\"id\": \"T4\", \"name\": \"Unreached\", \"implied\": true}],"
+                    " \"links\": [{\"from\": \"G2\", \"to\": \"T1\", \"mechanism\": \"tightens supply\", \"confidence\": \"HIGH\","
+                    " \"effect\": \"strengthens\", \"channel\": \"energy\", \"lag\": \"days\", \"explanation\": \"E.\"},"
+                    " {\"from\": \"T1\", \"to\": \"T2\", \"mechanism\": \"raises prices\", \"lag\": \"forever\"},"
+                    " {\"from\": \"T2\", \"to\": \"F1\", \"mechanism\": \"buyers pay for security\", \"effect\": \"weakens\"},"
+                    " {\"from\": \"G3\", \"to\": \"F2\", \"mechanism\": \"forces own chips\", \"confidence\": \"sure\"},"
                     " {\"from\": \"G1\", \"to\": \"G1\", \"mechanism\": \"self\"},"
-                    " {\"from\": \"G3\", \"to\": \"G2\", \"mechanism\": \"maybe\", \"confidence\": \"sure\"}]}")
-        {:keys [trends links]} (analysis/parse-connections answer ["G1" "G2" "G3"] ["2026-09-29/T1"] "2026-09-30")]
-    (is (= ["2026-09-29/T1" "2026-09-30/T2"] (map :thread trends))
-        "a trend continues a thread it names from the days before, else starts its own")
-    (is (= [["G2" "G1"] ["G3"]] (map :stories trends)))
+                    " {\"from\": \"G1\", \"to\": \"T3\", \"mechanism\": \"to a dropped trend\"},"
+                    " {\"from\": \"G1\", \"to\": \"F1\"}],"
+                    " \"risks\": [{\"risk\": \"Oil spikes\", \"likelihood\": \"possible\", \"horizon\": \"weeks\","
+                    " \"exposed\": \"oil +, airlines -\", \"signpost\": \"Brent over 100\", \"nodes\": [\"T1\", \"T9\"]},"
+                    " {\"likelihood\": \"likely\"}],"
+                    " \"outlook\": {\"base\": \"Prices stay high.\", \"confirm\": \"C.\", \"overturn\": \"O.\"}}")
+        {:keys [forces trends links risks outlook]}
+        (analysis/parse-connections answer ["G1" "G2" "G3"] ["2026-09-29/T1" "2026-09-29/F1"] "2026-09-30")]
+    (is (= [["F1" "2026-09-29/F1" "force"] ["F2" "2026-09-30/F2" "force"]] (map (juxt :id :thread :level) forces))
+        "a force continues a thread it names from the days before, else starts its own; one with no name is none")
+    (is (= [["T1" "2026-09-29/T1" false] ["T2" "2026-09-30/T2" true]] (map (juxt :id :thread :implied) trends))
+        "a trend needs a story of the day, or to be implied and reached by a link")
+    (is (= ["G2" "G1"] (:stories (first trends))))
+    (is (= ["G2" "G1"] (:stories (second trends)) (:stories (first forces)))
+        "an implied trend and a force are shown by the stories whose chains reach them")
+    (is (= ["G3"] (:stories (second forces))))
     (is (= ["strengthening" nil] (map :direction trends)))
-    (is (= [["G2" "G1" "high"] ["G3" "G2" "medium"]] (map (juxt :from :to :confidence) links)))))
+    (is (= [["G2" "T1" "high" "strengthens" "days"] ["T1" "T2" "medium" "strengthens" nil]
+            ["T2" "F1" "medium" "weakens" nil] ["G3" "F2" "medium" "strengthens" nil]]
+           (map (juxt :from :to :confidence :effect :lag) links))
+        "a link needs a mechanism and two different nodes of the map")
+    (is (= [{:risk "Oil spikes" :likelihood "possible" :horizon "weeks" :exposed "oil +, airlines -"
+             :signpost "Brent over 100" :nodes ["T1"]}]
+           risks))
+    (is (= {:base "Prices stay high." :confirm "C." :overturn "O."} outlook))))
 
-(deftest the-graph-is-drawn-from-the-links
-  (let [g (analysis/graph stories dossiers [{:from "G2" :to "G1" :mechanism "raises \"prices\"" :confidence "high"}
-                                            {:from "G3" :to "G1" :mechanism "chips | costs" :confidence "low"}])]
-    (is (str/starts-with? g "flowchart LR\n  subgraph pol[\"Politics\"]\n    g2[\"Oil sanctions\"]\n  end\n"))
-    (is (str/includes? g "subgraph eco[\"Economics\"]\n    g1[\"Fed holds\"]\n  end"))
-    (is (str/includes? g "g3[\"Chip controls\"]"))
-    (is (str/includes? g "  g2 -->|\"raises prices\"| g1\n"))
-    (is (str/includes? g "  g3 -.->|\"chips costs\"| g1\n") "a link the evidence is least sure of is dashed"))
-  (is (nil? (analysis/graph stories dossiers []))))
+(deftest a-map-in-the-old-shape-still-reads
+  (let [answer (str "{\"trends\": [{\"name\": \"Energy squeeze\", \"stories\": [\"G2\", \"G1\"]}],"
+                    " \"links\": [{\"from\": \"G2\", \"to\": \"G1\", \"mechanism\": \"raises prices\"}]}")
+        {:keys [forces trends links]} (analysis/parse-connections answer ["G1" "G2"] [] "2026-09-30")]
+    (is (empty? forces))
+    (is (= [["2026-09-30/T1" ["G2" "G1"]]] (map (juxt :thread :stories) trends)))
+    (is (= [["G2" "G1"]] (map (juxt :from :to) links)))))
+
+(def the-map
+  {:forces [{:id "F1" :name "Energy security over cost" :direction "strengthening" :summary "F." :stories ["G2"]}]
+   :trends [{:id "T1" :name "Energy (squeeze)" :direction "strengthening" :stories ["G2"] :summary "S."}
+            {:id "T2" :name "Inflation expectations" :implied true :stories ["G2"] :summary "I."}]
+   :links [{:from "G2" :to "T1" :mechanism "tightens \"supply\"" :confidence "high" :effect "strengthens"
+            :explanation "Sanctions cut barrels." :lag "days" :channel "energy"}
+           {:from "T1" :to "T2" :mechanism "raises | prices" :confidence "medium" :effect "strengthens" :lag "weeks"}
+           {:from "T2" :to "F1" :mechanism "makes buyers pay" :confidence "low" :effect "weakens"}
+           {:from "G3" :to "F1" :mechanism "chips" :confidence "high" :effect "weakens"}]
+   :risks [{:risk "Oil spikes" :likelihood "possible" :horizon "weeks" :exposed "oil +, airlines -"
+            :signpost "Brent over 100" :nodes ["T1"]}]
+   :outlook {:base "Prices stay high." :confirm "Brent holds." :overturn "A deal."}})
+
+(deftest the-graph-is-drawn-from-the-map
+  (let [g (analysis/graph stories dossiers the-map)]
+    (is (str/starts-with? g "flowchart BT\n  %% caption: Read it from the bottom up")
+        "the forces sit on top, today's news at the bottom")
+    (is (not (str/includes? g "subgraph")) "the levels are told apart by their look, which lays out far better")
+    (is (str/includes? g "  f1[\"Energy security over cost\"]\n"))
+    (is (str/includes? g "  t1[\"Energy squeeze\"]\n  t2[\"Inflation expectations\"]\n"))
+    (is (str/includes? g "  g2[\"Oil sanctions\"]\n  g3[\"Chip controls\"]\n"))
+    (is (not (str/includes? g "g1[")) "a story no link touches is left out")
+    (is (str/includes? g "  g2 ==> t1\n") "a story's link is drawn bare, the analysis is in the links above it")
+    (is (str/includes? g "  t1 -->|\"raises prices\"| t2\n"))
+    (is (str/includes? g "  t2 -.-x|\"makes buyers pay\"| f1\n") "a weakening link ends in a cross, a possibility is dotted")
+    (is (str/includes? g "  g3 ==x f1\n") "a link the reports show is drawn bold")
+    (is (str/includes? g "  class f1 force\n"))
+    (is (str/includes? g "  class t2 implied\n") "an implied trend is marked as one")
+    (is (str/includes? g "  class g2,g3 news\n")))
+  (testing "only the main stories are drawn"
+    (let [many (vec (for [i (range 1 15)] {:key (str "G" i) :title (str "Story " i) :sources [{:n i}]}))
+          m {:trends [{:id "T1" :name "Squeeze" :stories (mapv :key many)}]
+             :links (vec (for [s many] {:from (:key s) :to "T1" :mechanism "adds" :confidence "medium"}))}
+          g (analysis/graph many {} m)]
+      (is (str/includes? g "g10[\"Story 10\"]"))
+      (is (not (str/includes? g "g11")))))
+  (is (nil? (analysis/graph stories dossiers {:links []})))
+  (is (nil? (analysis/graph stories dossiers nil))))
 
 (deftest the-graph-goes-where-things-connect
   (let [answer "# Day\n\n## Overview\n\nText.\n\n## How it all connects\n\nChains.\n\n## Outlook\n\nNext."]
@@ -190,15 +254,15 @@
   (is (= "Just text\n\n```mermaid\ng```" (analysis/with-graph "Just text" "g"))))
 
 (deftest the-analyst-is-told-the-desks-work
-  (let [block (analysis/analysis-block stories dossiers
-                                       {:trends [{:name "Energy squeeze" :direction "strengthening"
-                                                  :stories ["G2" "G1"] :summary "Oil up."}]
-                                        :links [{:from "G2" :to "G1" :mechanism "raises prices"
-                                                 :explanation "Costs feed inflation." :confidence "high"}]}
-                                       [{:n 5 :key "G1" :gap "The vote"}]
-                                       true)]
-    (is (str/includes? block "- **Energy squeeze** (strengthening), in Oil sanctions [3] [3], Fed holds [1, 2]: Oil up."))
-    (is (str/includes? block "- Oil sanctions [3] [3] → Fed holds [1, 2]: raises prices. Costs feed inflation. (high confidence)"))
+  (let [block (analysis/analysis-block stories dossiers the-map [{:n 5 :key "G1" :gap "The vote"}] true)]
+    (is (str/includes? block "### Structural forces\n\n- **Energy security over cost** (strengthening): F."))
+    (is (str/includes? block "- **Energy (squeeze)** (strengthening), in Oil sanctions [3] [3]: S."))
+    (is (str/includes? block "- **Inflation expectations** (implied, not yet in the reports): I."))
+    (is (str/includes? block (str "- Oil sanctions [3] [3] → Energy (squeeze): tightens \"supply\", strengthens it"
+                                  " within days. Sanctions cut barrels. (high confidence)")))
+    (is (str/includes? block "- Inflation expectations → Energy security over cost: makes buyers pay, weakens it. (low confidence)"))
+    (is (str/includes? block "### Risks the desk sees\n\n- Oil spikes (possible, weeks). Exposed: oil +, airlines -. Signpost: Brent over 100."))
+    (is (str/includes? block "### The desk's outlook\n\nPrices stay high. Would confirm it: Brent holds. Would overturn it: A deal."))
     (is (str/includes? block "### Fed holds: Fed holds\nSources [1, 2]\n\nHeld.\n\nFacts:\n- Held at 4%. [1]"))
     (is (str/includes? block "Disputed:\n- Next: Markets: Cut [2]"))
     (is (str/includes? block "so don't draw one")))
@@ -218,9 +282,13 @@
 
 (deftest the-researcher-is-told-the-trends
   (is (= "The trends the desk found running through the day:\n\n- Energy squeeze (strengthening), in stories [3, 1, 2]: Oil up."
-         (analysis/trends-block stories [{:name "Energy squeeze" :direction "strengthening"
-                                          :stories ["G2" "G1"] :summary "Oil up."}])))
-  (is (nil? (analysis/trends-block stories []))))
+         (analysis/trends-block stories {:trends [{:name "Energy squeeze" :direction "strengthening"
+                                                   :stories ["G2" "G1"] :summary "Oil up."}]})))
+  (is (= (str "The structural forces the desk found the day feeding:\n\n- Energy security over cost (strengthening), in stories [3]: F."
+              "\n\nThe trends the desk found running through the day:\n\n- Energy (squeeze) (strengthening), in stories [3]: S."
+              "\n- Inflation expectations, in stories [3]: I.")
+         (analysis/trends-block stories the-map)))
+  (is (nil? (analysis/trends-block stories {:trends []}))))
 
 ;; --- article pages -----------------------------------------------------------------
 

@@ -25,15 +25,22 @@
     POST /run?day=...       gather and analyse a day (today by default)
     POST /digest?kind=week&period=YYYY-Www
                             write a digest (kind week or month)
-    POST /cancel            cancel the run in flight"
-  (:require [clojure.java.io :as io]
+    POST /cancel            cancel the run in flight
+    POST /ask               a report on the reader's topics, or an answer
+                            in a conversation about them, streamed as
+                            server-sent events (see newsroom.ask)"
+  (:require [clojure.core.async :as async]
+            [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [hiccup2.core :as h]
             [jolt.datastar.core :as ds]
             [ring-chez.adapter :as adapter]
             [ring-chez.middleware.multipart :as multipart]
+            [ring-chez.sse :as sse]
             [ring.middleware.params :as params]
             [ruuter.core :as ruuter]
+            [newsroom.ask :as ask]
             [newsroom.config :as config]
             [newsroom.config-page :as config-page]
             [newsroom.news :as news]
@@ -150,6 +157,7 @@
   {"/js/datastar.js" "application/javascript"
    "/js/diagrams.js" "application/javascript"
    "/js/config.js"   "application/javascript"
+   "/js/topics.js"   "application/javascript"
    "/css/style.css"  "text/css; charset=utf-8"})
 
 (defn- asset [{:keys [uri]}]
@@ -224,6 +232,21 @@
      :sort (when (= "newest" (get params "sort")) :newest)
      :page page}))
 
+(defn- ask-page
+  "The reader's topics put to the analyst: the request's JSON read (see
+  newsroom.ask/read-request) and the answer streamed back as server-sent
+  events, each event's data JSON. The answer is worked out on a thread of
+  its own, and the stream ends with it."
+  [{:keys [body]}]
+  (if-let [request (ask/read-request (try (some-> body slurp json/read-str) (catch Throwable _ nil)))]
+    (let [ch (async/chan 256)
+          emit (fn [event data] (async/>!! ch (sse/format-event {:event event :data (json/write-str data)})))]
+      (future
+        (try (ask/answer! (ctx) request emit)
+             (finally (async/close! ch))))
+      (sse/event-response ch))
+    {:status 400 :headers {"Content-Type" "text/plain"} :body "bad request\n"}))
+
 (def routes
   "Every path the server answers, as ruuter routes; see the namespace doc."
   [{:path "/" :method :get
@@ -237,6 +260,7 @@
    {:path "/search" :method :get :response #(live % {:search (search-query %)})}
    {:path "/run" :method :post :response start-run}
    {:path "/digest" :method :post :response start-digest}
+   {:path "/ask" :method :post :response ask-page}
    {:path "/cancel" :method :post :response (fn [_] (pipeline/cancel-run!) (ds/patch-signals {}))}
    {:path "/config" :method :get
     :response #(if (:jolt.datastar/sse-request %) (live % {:config true}) (config-page %))}

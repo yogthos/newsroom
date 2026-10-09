@@ -2,6 +2,7 @@
   "Runs every test namespace, and checks the core against its writ spec."
   (:require [clojure.test :as t]
             [newsroom.analysis-test]
+            [newsroom.ask-test]
             [newsroom.config-test]
             [newsroom.critique-test]
             [newsroom.embed-test]
@@ -26,6 +27,7 @@
 (def namespaces
   '[newsroom.news-spec
     newsroom.analysis-test
+    newsroom.ask-test
     newsroom.config-test
     newsroom.critique-test
     newsroom.embed-test

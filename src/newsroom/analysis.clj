@@ -452,15 +452,34 @@
 
 (def confidences ["high" "medium" "low"])
 
+(def effects ["strengthens" "weakens"])
+
+(def lags ["days" "weeks" "months" "years"])
+
+(def channels
+  "The channels a link of the map runs through."
+  ["trade" "prices" "energy" "capital" "supply chains" "technology" "security" "alliances"
+   "domestic politics" "policy" "labour" "demand"])
+
+(def likelihoods ["unlikely" "possible" "likely" "very likely"])
+
+(defn- one-of [options v]
+  (some #{(some-> v str str/trim str/lower-case)} options))
+
 (defn- source-numbers [story] (mapv :n (:sources story)))
 
 (defn- cite-list [ns] (str "[" (str/join ", " ns) "]"))
 
 (defn- map-story-block [{:keys [key title] :as story} dossier]
-  (let [{:keys [label domain status summary forces facts]} dossier]
-    (str "### " key ": " (or label title) " (" domain (when status (str ", " status)) ")\n"
+  (let [{:keys [label status summary forces facts significance actors]} dossier]
+    (str "### " key ": " (or label title) (when status (str " (" status ")")) "\n"
          (when summary (str summary "\n"))
          (when (seq forces) (str "Forces: " (str/join "; " forces) "\n"))
+         (when significance (str "Why it matters: " significance "\n"))
+         (when (seq actors)
+           (str "Actors: " (str/join "; " (for [{:keys [name interests]} (take 4 actors)]
+                                            (str name (when interests (str ", who stands to " interests)))))
+                "\n"))
          (str/join "\n" (for [{:keys [fact]} (take 5 facts)] (str "- " fact))))))
 
 (defn- recent-trend-line [long-date {:keys [thread name direction summary day]}]
@@ -469,78 +488,183 @@
        (when summary (str ". " summary))))
 
 (defn connection-prompt
-  "The prompt that has the desk map the trends running through the day's
-  `stories`, written up in `dossiers`, and the links between them.
-  `recent` are the trends of the days before, the latest of each thread,
-  which a trend today can continue."
+  "The prompt that has the desk map how the day's `stories`, written up in
+  `dossiers`, move the world: the trends they push on, the structural
+  forces those feed, and the links of cause and effect between all three,
+  with the risks and the outlook the map shows. `recent` are the forces
+  and trends of the days before, the latest of each thread, which today's
+  can continue."
   [day stories dossiers recent long-date]
-  (str "You map the day's news for a daily briefing. Today is " day ".\n\n"
-       "Below are the dossiers on the day's main stories. Find the trends running through them and how "
-       "the stories drive one another, across politics, economics, and science and technology.\n\n"
-       "A trend is a force that shows in several stories at once, like debt piling up while rates stay "
-       "high, trade splitting into blocs, an energy squeeze, a rising power pressing an established one, "
-       "or a technology shifting the balance of production. Name each one plainly, list the stories that "
-       "show it, say whether today's stories show it strengthening, weakening or holding, and say in two "
-       "sentences what the force is and how today's stories show it. A trend that continues one of the "
-       "recent days' gives that trend's id in \"continues\", so it can be followed from day to day, and "
-       "keeps its name unless it has changed. A force that shows in only one story is not a trend.\n\n"
-       "A link is a chain of cause and effect from one story to another: a sanction that tightens supply "
-       "and pushes up a price, a rate rise that squeezes a government's budget. Give the mechanism in "
-       "five words or fewer for a graph, like \"raises oil prices\", the chain in a sentence, and how "
-       "sure the evidence makes you: high when the reports show the effect, medium when the mechanism is well known and its conditions are there, "
-       "low when it's a possibility worth watching. Only link stories where you can name the mechanism. "
-       "Links across domains matter most.\n\n"
-       "Answer with JSON only, in this shape:\n"
-       "{\"trends\": [{\"name\": \"...\", \"continues\": \"an id from the recent trends, or null\", "
-       "\"direction\": \"strengthening\", \"stories\": [\"G1\", \"G4\"], \"summary\": \"...\"}], "
-       "\"links\": [{\"from\": \"G1\", \"to\": \"G4\", \"mechanism\": \"...\", \"explanation\": \"...\", "
-       "\"confidence\": \"high\"}]}\n\n"
-       (when (seq recent)
-         (str "Recent trends:\n\n" (str/join "\n" (map #(recent-trend-line long-date %) recent)) "\n\n"))
-       "Stories:\n\n"
-       (str/join "\n\n" (for [s stories :let [d (get dossiers (:key s))] :when d]
-                          (map-story-block s d)))))
+  (let [{forces "force" trends "trend"} (group-by #(or (:level %) "trend") recent)]
+    (str "You map how the day's news moves the world, for a daily briefing read by people who act on it, "
+         "investors and traders among them. Today is " day ".\n\n"
+         "Below are the dossiers on the day's main stories. Don't connect stories to one another because they "
+         "share a country, an actor or a topic. Build a causal map in three levels, from the bottom up:\n\n"
+         "1. Stories: today's events, the dossiers below, by their keys.\n"
+         "2. Trends: the pressures that run for weeks or months and that today's stories push on, like rerouted "
+         "shipping raising freight costs, a chip export ban, a central bank holding rates high, a government "
+         "losing its majority. A trend is a process that changes some quantity, capacity, incentive or balance, "
+         "named so the reader can tell which way it runs. A trend is wider than any one story: one that only "
+         "restates a story, like \"Spain's snap election\", is that story, so link the story straight to what it "
+         "moves instead. The best trends gather several stories, or follow from them. Then follow each chain past "
+         "what the reports say, to the consequences its mechanisms make likely: oil, freight and insurance prices "
+         "after a chokepoint is attacked, inflation expectations and the rate path after energy costs rise, a "
+         "currency and bond spreads after a fiscal turn, a supplier's market share after an export ban. These "
+         "implied trends are what the reader has to act on before the news reports them, so the map needs several "
+         "of them. An implied trend has no stories of its own: it is reached through the trends that cause it, "
+         "and it is marked implied.\n"
+         "3. Forces: the few structural forces the trends feed, which play out over years, like trade splitting "
+         "into blocs, energy security overriding cost, the technology stacks of the US and China splitting apart, "
+         "debt piling up while rates stay high, or open models eroding the margins of closed ones. Name two to "
+         "four, each fed by more than one trend or story. A worry that only one story raises is no structural "
+         "force.\n\n"
+         "A force or trend that continues one of the recent days' gives its id in \"continues\", so it can be "
+         "followed from day to day, and keeps its name unless it has changed.\n\n"
+         "Then the links, each a step of cause and effect:\n"
+         "- story to trend, or to a force directly: what the event does to the pressure.\n"
+         "- trend to trend: one pressure driving another, which is where the chains are, like export controls "
+         "pushing China to build its own chips, which splits the tech stacks; tariffs rerouting trade, which "
+         "raises input prices, which keeps inflation up; open models matching closed ones, which squeezes what "
+         "the closed labs can charge, which reprices the companies betting on them.\n"
+         "- trend to force: how the pressure moves the structural force.\n"
+         "- force to trend, sparingly: a force that bears back on a pressure, closing a loop.\n\n"
+         "Every link must name the channel it runs through and the mechanism, what changes in the target and "
+         "why: a price, a supply, a cost, a capability, an incentive, a constraint, a balance of power, a "
+         "coalition. \"Both involve Iran\" or \"adds to tensions\" is no mechanism. If you can't say what "
+         "changes, leave the link out. Say whether the link strengthens or weakens its target, how soon it bites, "
+         "and how sure you are: high when the reports show the effect, medium when the mechanism is well "
+         "established and its conditions hold, low when it is a possibility to watch. Cross-domain links, a war "
+         "moving a price, a price moving a vote, a technology moving the balance between states, matter most.\n\n"
+         "Follow the main chains at least two steps past the news, from the event to the pressure it adds, to "
+         "what that pressure does to prices, supply, budgets, votes or capabilities, and on to the force. Every "
+         "story you use must feed a trend or a force, and every trend must reach a force through the links. Leave "
+         "out stories that move nothing beyond themselves. Keep the map readable: about eight to sixteen trends "
+         "and forces together.\n\n"
+         "Then the risks: the three to five ways the map could break against the reader in the coming weeks, "
+         "each with what could happen, how likely it is (" (str/join ", " likelihoods) "), when, what it would "
+         "hit, markets, sectors, prices, currencies or governments, with the direction, and the signpost that "
+         "would show it is happening, as concrete as a level, a vote or a date. And the outlook: the base case in "
+         "two sentences, what would confirm it and what would overturn it.\n\n"
+         "Answer with JSON only, in this shape:\n"
+         "{\"forces\": [{\"id\": \"F1\", \"name\": \"six words or fewer\", \"continues\": \"an id from the recent forces, or null\", "
+         "\"direction\": \"" (str/join "|" directions) "\", \"summary\": \"what the force is and how today moved "
+         "it, two sentences\"}],\n"
+         " \"trends\": [{\"id\": \"T1\", \"name\": \"six words or fewer\", \"continues\": \"an id from the recent trends, or null\", "
+         "\"direction\": \"strengthening\", \"stories\": [\"G1\"], \"implied\": false, \"summary\": \"...\"}, "
+         "{\"id\": \"T2\", \"name\": \"...\", \"continues\": null, \"direction\": \"strengthening\", \"stories\": [], "
+         "\"implied\": true, \"summary\": \"...\"}],\n"
+         " \"links\": [{\"from\": \"G1\", \"to\": \"T1\", \"effect\": \"" (str/join "|" effects) "\", "
+         "\"channel\": \"" (str/join "|" channels) "\", \"mechanism\": \"five words or fewer\", "
+         "\"explanation\": \"one sentence: A changes X, so B ...\", \"lag\": \"" (str/join "|" lags) "\", "
+         "\"confidence\": \"" (str/join "|" confidences) "\"}],\n"
+         " \"risks\": [{\"risk\": \"...\", \"likelihood\": \"possible\", \"horizon\": \"weeks\", \"exposed\": \"...\", "
+         "\"signpost\": \"...\", \"nodes\": [\"T2\"]}],\n"
+         " \"outlook\": {\"base\": \"...\", \"confirm\": \"...\", \"overturn\": \"...\"}}\n\n"
+         (when (seq forces)
+           (str "Recent forces:\n\n" (str/join "\n" (map #(recent-trend-line long-date %) forces)) "\n\n"))
+         (when (seq trends)
+           (str "Recent trends:\n\n" (str/join "\n" (map #(recent-trend-line long-date %) trends)) "\n\n"))
+         "Stories:\n\n"
+         (str/join "\n\n" (for [s stories :let [d (get dossiers (:key s))] :when d]
+                            (map-story-block s d))))))
+
+(defn- reached
+  "The stories whose chains of `links` reach each node, {id [key]}, from
+  the stories each node shows itself, `own`, in the order they are met."
+  [own links]
+  (loop [m own]
+    (let [m' (reduce (fn [m {:keys [from to]}]
+                       (let [have (get m to [])
+                             more (remove (set have) (get m from))]
+                         (if (seq more) (assoc m to (into have more)) m)))
+                     m links)]
+      (if (= m m') m (recur m')))))
 
 (defn parse-connections
-  "The trends and links of the desk's `answer` over the stories keyed
-  `keys`: {:trends [{:thread :name :direction :stories :summary}] :links
-  [{:from :to :mechanism :explanation :confidence}]}. A trend continues the
-  thread it names when that is one of `threads`, else starts its own,
-  named by the day and its place; it needs a story of the day. A link
-  needs two different stories."
+  "The map of the desk's `answer` over the stories keyed `keys`: {:forces
+  [{:id :thread :level :name :direction :summary :stories}] :trends [{:id
+  :thread :level :name :direction :stories :implied :summary}] :links
+  [{:from :to :effect :channel :mechanism :explanation :lag :confidence}]
+  :risks [{:risk :likelihood :horizon :exposed :signpost :nodes}]
+  :outlook {:base :confirm :overturn}}.
+
+  A force or trend continues the thread it names when that is one of
+  `threads`, else starts its own, named by the day and its id. A trend
+  needs a story of the day, or to be implied and reached by a link. A
+  link needs a mechanism and two different nodes, stories, trends or
+  forces. The :stories of an implied trend and of a force are the stories
+  whose chains reach it. A map in the older shape, trends over stories
+  and links between stories, reads the same way."
   [answer keys threads day]
   (let [m (json-object answer)
         keys (set keys)
         threads (set threads)
-        story-keys #(->> (if (sequential? %) % [%]) (map (fn [k] (str/trim (str k)))) (filter keys) distinct vec)]
-    {:trends (vec (keep-indexed
-                   (fn [i t]
-                     (let [name (text (get t "name") 120)
-                           stories (story-keys (get t "stories"))
-                           continues (some-> (get t "continues") str str/trim)]
-                       (when (and name (seq stories))
-                         {:thread (if (contains? threads continues) continues (str day "/T" (inc i)))
-                          :name name
-                          :direction (direction-of (get t "direction"))
-                          :stories stories
-                          :summary (text (get t "summary") 600)})))
-                   (maps (get m "trends"))))
-     :links (vec (for [l (maps (get m "links"))
-                       :let [from (str/trim (str (get l "from")))
-                             to (str/trim (str (get l "to")))
-                             mechanism (text (get l "mechanism") 60)]
-                       :when (and (keys from) (keys to) (not= from to) mechanism)]
-                   {:from from :to to :mechanism mechanism
-                    :explanation (text (get l "explanation") 400)
-                    :confidence (or (some #{(some-> (get l "confidence") str str/lower-case str/trim)} confidences)
-                                    "medium")}))}))
+        story-keys #(->> (if (sequential? %) % [%]) (map (fn [k] (str/trim (str k)))) (filter keys) distinct vec)
+        id-of (fn [x prefix i] (or (some-> (get x "id") str str/trim not-empty) (str prefix (inc i))))
+        thread-of (fn [x id] (let [c (some-> (get x "continues") str str/trim)]
+                               (if (contains? threads c) c (str day "/" id))))
+        forces (vec (keep-indexed
+                     (fn [i f]
+                       (when-let [name (text (get f "name") 120)]
+                         (let [id (id-of f "F" i)]
+                           {:id id :thread (thread-of f id) :level "force" :name name
+                            :direction (direction-of (get f "direction"))
+                            :summary (text (get f "summary") 600)})))
+                     (maps (get m "forces"))))
+        trends (vec (keep-indexed
+                     (fn [i t]
+                       (when-let [name (text (get t "name") 120)]
+                         (let [id (id-of t "T" i)]
+                           {:id id :thread (thread-of t id) :level "trend" :name name
+                            :direction (direction-of (get t "direction"))
+                            :stories (story-keys (get t "stories"))
+                            :implied (true? (get t "implied"))
+                            :summary (text (get t "summary") 600)})))
+                     (maps (get m "trends"))))
+        ;; a trend with stories stands; an implied one only once a link reaches it
+        standing (set (concat keys (map :id forces) (map :id (filter (comp seq :stories) trends))))
+        candidates (into standing (map :id trends))
+        links (vec (for [l (maps (get m "links"))
+                         :let [from (str/trim (str (get l "from")))
+                               to (str/trim (str (get l "to")))
+                               mechanism (text (get l "mechanism") 60)]
+                         :when (and (candidates from) (candidates to) (not= from to) mechanism)]
+                     {:from from :to to :mechanism mechanism
+                      :effect (or (one-of effects (get l "effect")) "strengthens")
+                      :channel (text (get l "channel") 30)
+                      :explanation (text (get l "explanation") 400)
+                      :lag (one-of lags (get l "lag"))
+                      :confidence (or (one-of confidences (get l "confidence")) "medium")}))
+        ;; the nodes reached from what stands, following the links
+        live (loop [live standing]
+               (let [more (into live (keep (fn [{:keys [from to]}] (when (live from) to))) links)]
+                 (if (= more live) live (recur more))))
+        trends (filterv (fn [{:keys [id stories implied]}] (and (live id) (or (seq stories) implied))) trends)
+        nodes (into keys (concat (map :id forces) (map :id trends)))
+        links (filterv (fn [{:keys [from to]}] (and (nodes from) (nodes to))) links)
+        reach (reached (merge (into {} (map (fn [k] [k [k]])) keys)
+                              (into {} (map (juxt :id :stories)) trends))
+                       links)
+        with-reach (fn [x] (assoc x :stories (vec (filter keys (get reach (:id x) (:stories x))))))]
+    {:forces (mapv with-reach forces)
+     :trends (mapv #(if (:implied %) (with-reach %) %) trends)
+     :links links
+     :risks (vec (for [r (maps (get m "risks"))
+                       :let [risk (text (get r "risk") 300)]
+                       :when risk]
+                   {:risk risk
+                    :likelihood (one-of likelihoods (get r "likelihood"))
+                    :horizon (text (get r "horizon") 40)
+                    :exposed (text (get r "exposed") 300)
+                    :signpost (text (get r "signpost") 300)
+                    :nodes (vec (filter nodes (map #(str/trim (str %)) (if (sequential? (get r "nodes")) (get r "nodes") []))))}))
+     :outlook (let [o (get m "outlook")]
+                (when (map? o)
+                  (let [o {:base (text (get o "base") 600) :confirm (text (get o "confirm") 400)
+                           :overturn (text (get o "overturn") 400)}]
+                    (when (:base o) o))))}))
 
 ;; --- the graph ---------------------------------------------------------------------
-
-(def ^:private subgraphs
-  [["politics" "pol" "Politics"]
-   ["economics" "eco" "Economics"]
-   ["technology" "tech" "Science and technology"]])
 
 (defn- label-text
   "Text that can sit in a mermaid label: no brackets, quotes, pipes or
@@ -558,33 +682,70 @@
   [s n]
   (str/join " " (take n (str/split (str/trim s) #"\s+"))))
 
+(defn- arrow
+  "The mermaid arrow for a link: bold where the reports show the effect,
+  dotted where it is a possibility, ending in a cross where it weakens."
+  [{:keys [confidence effect]}]
+  (let [x? (= "weakens" effect)]
+    (case confidence
+      "high" (if x? "==x" "==>")
+      "low" (if x? "-.-x" "-.->")
+      (if x? "--x" "-->"))))
+
+(def ^:private legend
+  "How to read the graph, shown under it."
+  (str "Read it from the bottom up: today's news in grey, the pressures it pushes on, and the structural "
+       "forces on top. A dashed box is a consequence the reports don't show yet. A bold arrow is an effect "
+       "the reports show, a dotted one a possibility, and one ending in a cross weakens what it points to."))
+
+(def ^:private graph-stories
+  "The most stories the graph draws, the main ones: more and the chains
+  above them are lost in the lines."
+  10)
+
 (defn graph
-  "The day's links drawn as a mermaid flowchart, the stories they join as
-  nodes under a subgraph for each domain, a link the evidence is least
-  sure of dashed. nil when there are no links."
-  [stories dossiers links]
-  (when (seq links)
-    (let [linked (set (mapcat (juxt :from :to) links))
-          nodes (vec (for [{:keys [key title]} stories
-                           :when (contains? linked key)
-                           :let [d (get dossiers key)]]
-                       {:key key
-                        :id (str/lower-case key)
-                        :label (label-text (or (:label d) title) 40)
-                        :domain (or (:domain d) "politics")}))
-          id-of (into {} (map (juxt :key :id)) nodes)]
-      (str "flowchart LR\n"
-           (str/join ""
-                     (for [[domain id title] subgraphs
-                           :let [in (filter #(= domain (:domain %)) nodes)]
-                           :when (seq in)]
-                       (str "  subgraph " id "[\"" title "\"]\n"
-                            (str/join "" (for [n in] (str "    " (:id n) "[\"" (:label n) "\"]\n")))
-                            "  end\n")))
-           (str/join "" (for [{:keys [from to mechanism confidence]} links
-                              :when (and (id-of from) (id-of to))]
-                          (str "  " (id-of from) (if (= "low" confidence) " -.->" " -->")
-                               "|\"" (words (label-text mechanism 200) 6) "\"| " (id-of to) "\n")))))))
+  "The day's map drawn as a mermaid flowchart from the bottom up: the main
+  stories, the trends they push on, and the structural forces those feed
+  on top. Only what a link touches is drawn. The levels are told apart by
+  their classes, for the page to style, an implied trend, one the reports
+  don't show yet, by its own: subgraphs for them would route every line
+  around the boxes. The links between trends and forces carry their
+  mechanism, and a story's link is drawn bare, since the reasoning is in
+  the chains above it. nil when there are no links."
+  [stories dossiers {:keys [forces trends links]}]
+  (let [shown (set (take graph-stories (keep :key stories)))
+        story? (set (keep :key stories))
+        links (filterv (fn [{:keys [from to]}]
+                         (and (or (not (story? from)) (shown from)) (or (not (story? to)) (shown to))))
+                       links)]
+    (when (seq links)
+      (let [linked (set (mapcat (juxt :from :to) links))
+            node (fn [id label] {:key id :id (str/lower-case id) :label (label-text label 60)})
+            story-nodes (vec (for [{:keys [key title]} stories
+                                   :when (contains? linked key)
+                                   :let [d (get dossiers key)]]
+                               (node key (or (:label d) title))))
+            trend-nodes (vec (for [t trends :when (contains? linked (:id t))]
+                               (assoc (node (:id t) (:name t)) :implied (:implied t))))
+            force-nodes (vec (for [f forces :when (contains? linked (:id f))] (node (:id f) (:name f))))
+            id-of (into {} (map (juxt :key :id)) (concat story-nodes trend-nodes force-nodes))
+            nodes (fn [ns] (str/join "" (for [n ns] (str "  " (:id n) "[\"" (:label n) "\"]\n"))))
+            classed (fn [class ns] (when (seq ns) (str "  class " (str/join "," (map :id ns)) " " class "\n")))]
+        (str "flowchart BT\n"
+             "  %% caption: " legend "\n"
+             (nodes force-nodes)
+             (nodes trend-nodes)
+             (nodes story-nodes)
+             (str/join "" (for [{:keys [from to mechanism] :as l} links
+                                :when (and (id-of from) (id-of to))]
+                            (str "  " (id-of from) " " (arrow l)
+                                 (when-not (story? from)
+                                   (str "|\"" (words (label-text mechanism 200) 6) "\"|"))
+                                 " " (id-of to) "\n")))
+             (classed "force" force-nodes)
+             (classed "trend" (remove :implied trend-nodes))
+             (classed "implied" (filter :implied trend-nodes))
+             (classed "news" story-nodes))))))
 
 (defn with-graph
   "The briefing `answer` with the `graph` drawn at the start of its
@@ -657,57 +818,96 @@
        (when (seq forces) (str "\nForces: " (str/join "; " forces) "\n"))
        (when significance (str "\nWhy it matters: " significance "\n"))))
 
+(defn- lag-text [lag] (when lag (str " within " lag)))
+
 (defn analysis-block
-  "What the analyst is told of the desk's work: the trends and links of
-  the map, with the stories by their source numbers, then the dossiers.
-  `found` are the sources the gap searches found, each with its :key and
-  :gap, and `records` each outlet's record on a subject, {[outlet subject]
-  record}, shown with what it expects. nil when there are no dossiers."
+  "What the analyst is told of the desk's work: the map, its structural
+  forces, the trends, the chains of cause and effect between them and the
+  stories, by their source numbers, and the risks and outlook it shows,
+  then the dossiers. `found` are the sources the gap searches found, each
+  with its :key and :gap, and `records` each outlet's record on a subject,
+  {[outlet subject] record}, shown with what it expects. nil when there
+  are no dossiers."
   ([stories dossiers the-map found graph?] (analysis-block stories dossiers the-map found graph? {}))
-  ([stories dossiers {:keys [trends links]} found graph? records]
+  ([stories dossiers {:keys [forces trends links risks outlook]} found graph? records]
    (when (seq dossiers)
      (let [by-key (into {} (map (juxt :key identity)) stories)
-           name-of (fn [k] (let [s (by-key k) d (get dossiers k)]
-                             (str (or (:label d) (:title s)) " " (cite-list (source-numbers s)))))
+           story-name (fn [k] (let [s (by-key k) d (get dossiers k)]
+                                (str (or (:label d) (:title s)) " " (cite-list (source-numbers s)))))
+           names (into {} (map (juxt :id :name)) (concat forces trends))
+           name-of (fn [k] (or (names k) (story-name k)))
            found-by (group-by :key found)]
        (str "## The desk's analysis\n\n"
             "Before you write, the desk sorted the day's reports into stories, read the main stories' reports "
-            "and wrote a dossier on each from them alone, then mapped the trends running through them and how "
-            "they drive one another. The dossiers' facts cite the numbered sources below, and so should you. "
-            "Take what happened from the dossiers, weigh the disputed accounts and say which way the evidence "
-            "leans, and build how things connect on the map, checking each link against the facts. Where "
-            "an outlet expects something, weigh it by the outlet's record on that subject."
-            (when graph? " The graph of the links is drawn for you, so don't draw one.")
+            "and wrote a dossier on each from them alone, then mapped how they move the world: the trends they "
+            "push on, the structural forces those feed, and the chains of cause and effect that run from one to "
+            "the next. The dossiers' facts cite the numbered sources below, and so should you. Take what "
+            "happened from the dossiers, weigh the disputed accounts and say which way the evidence leans, and "
+            "build the analysis on the map's chains, checking each link against the facts. The implied trends "
+            "are where the chains lead before the news reports it, so reason them through and say how sure "
+            "they are. Where an outlet expects something, weigh it by the outlet's record on that subject."
+            (when graph? " The graph of the map is drawn for you, so don't draw one.")
             "\n\n"
+            (when (seq forces)
+              (str "### Structural forces\n\n"
+                   (str/join "\n" (for [{:keys [name direction summary]} forces]
+                                    (str "- **" name "**" (when direction (str " (" direction ")"))
+                                         (when summary (str ": " summary)))))
+                   "\n\n"))
             (when (seq trends)
               (str "### Trends\n\n"
-                   (str/join "\n" (for [{:keys [name direction stories summary]} trends]
-                                    (str "- **" name "**" (when direction (str " (" direction ")"))
-                                         ", in " (str/join ", " (map name-of stories))
+                   (str/join "\n" (for [{:keys [name direction stories summary implied]} trends]
+                                    (str "- **" name "**"
+                                         (if implied
+                                           " (implied, not yet in the reports)"
+                                           (str (when direction (str " (" direction ")"))
+                                                ", in " (str/join ", " (map story-name stories))))
                                          (when summary (str ": " summary)))))
                    "\n\n"))
             (when (seq links)
-              (str "### How the stories connect\n\n"
-                   (str/join "\n" (for [{:keys [from to mechanism explanation confidence]} links]
+              (str "### How they drive one another\n\n"
+                   (str/join "\n" (for [{:keys [from to mechanism explanation confidence effect lag]} links]
                                     (str "- " (name-of from) " → " (name-of to) ": " mechanism
-                                         (when explanation (str ". " explanation))
+                                         ", " (or effect "strengthens") " it" (lag-text lag) "."
+                                         (when explanation (str " " explanation))
                                          " (" confidence " confidence)")))
+                   "\n\n"))
+            (when (seq risks)
+              (str "### Risks the desk sees\n\n"
+                   (str/join "\n" (for [{:keys [risk likelihood horizon exposed signpost]} risks]
+                                    (str "- " risk
+                                         (when-let [tags (seq (remove nil? [likelihood horizon]))]
+                                           (str " (" (str/join ", " tags) ")"))
+                                         "."
+                                         (when exposed (str " Exposed: " exposed "."))
+                                         (when signpost (str " Signpost: " signpost ".")))))
+                   "\n\n"))
+            (when-let [{:keys [base confirm overturn]} outlook]
+              (str "### The desk's outlook\n\n" base
+                   (when confirm (str " Would confirm it: " confirm))
+                   (when overturn (str " Would overturn it: " overturn))
                    "\n\n"))
             "### Dossiers\n\n"
             (str/join "\n" (for [s stories :let [d (get dossiers (:key s))] :when d]
                              (dossier-text s d (found-by (:key s)) records))))))))
 
 (defn trends-block
-  "The day's trends as the researcher looking for precedents is told
-  them, with their stories by source number. nil when there are none."
-  [stories trends]
-  (when (seq trends)
-    (let [by-key (into {} (map (juxt :key identity)) stories)]
-      (str "The trends the desk found running through the day:\n\n"
-           (str/join "\n" (for [{:keys [name direction stories summary]} trends]
-                            (str "- " name (when direction (str " (" direction ")"))
-                                 ", in stories " (cite-list (mapcat #(source-numbers (by-key %)) stories))
-                                 (when summary (str ": " summary)))))))))
+  "The day's map as the researcher looking for precedents is told it: the
+  structural forces and the trends, with their stories by source number.
+  nil when there are neither."
+  [stories {:keys [forces trends]}]
+  (let [by-key (into {} (map (juxt :key identity)) stories)
+        lines (fn [xs] (str/join "\n" (for [{:keys [name direction stories summary]} xs]
+                                        (str "- " name (when direction (str " (" direction ")"))
+                                             ", in stories " (cite-list (mapcat #(source-numbers (by-key %)) stories))
+                                             (when summary (str ": " summary))))))]
+    (when (or (seq forces) (seq trends))
+      (str/join "\n\n"
+                (remove nil?
+                        [(when (seq forces)
+                           (str "The structural forces the desk found the day feeding:\n\n" (lines forces)))
+                         (when (seq trends)
+                           (str "The trends the desk found running through the day:\n\n" (lines trends)))])))))
 
 (defn dossier-notes
   "The dossiers by storyline, as the notes are updated from them: each
