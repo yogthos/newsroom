@@ -718,15 +718,16 @@ static bool decoder_agrees(s3gen::decoder & gpu, const char * path, int threads,
 }
 
 // the speech model and its context, on the GPU or kept to the CPU
-static bool load_lm(nrtts * h, const char * lm, bool gpu) {
+static bool load_lm(nrtts * h, const char * lm, bool gpu, int n_ctx = 4096, bool repack = true) {
     static ggml_backend_dev_t no_devices[1] = {nullptr};
     auto mp = llama_model_default_params();
     mp.n_gpu_layers = gpu ? -1 : 0;
     if (!gpu) mp.devices = no_devices;
+    mp.use_extra_bufts = repack;
     h->model = llama_model_load_from_file(lm, mp);
     if (!h->model) return false;
     auto cp = llama_context_default_params();
-    cp.n_ctx = 4096;
+    cp.n_ctx = n_ctx;
     cp.n_batch = 512;
     cp.n_ubatch = 512;
     cp.n_threads = h->threads;
@@ -744,6 +745,38 @@ static bool load_lm(nrtts * h, const char * lm, bool gpu) {
     return true;
 }
 
+// Whether the speech model on the GPU ranks the first token of a prompt as a
+// CPU copy of it does. A driver that runs the model wrong (Mesa calls its own
+// Haswell support incomplete) would otherwise make noise of every line. The
+// copy maps the same file and keeps to its own weights, so it costs a prompt
+// of CPU time rather than another model's memory.
+static bool lm_agrees(nrtts * h, const char * lm) {
+    nrtts cpu;
+    cpu.threads = h->threads;
+    if (!load_lm(&cpu, lm, false, 1024, false)) return false;
+    cpu.n_embd = h->n_embd;
+    const voice & v = h->voices.at(0);
+    auto prompt = build_prompt(h, v, "Good morning, and welcome to the briefing.", false);
+    auto first = [&](nrtts * x) {
+        prefill(x, v, prompt);
+        const float * raw = llama_get_logits_ith(x->ctx, -1);
+        return std::vector<float>(raw, raw + h->n_vocab);
+    };
+    auto a = first(h), b = first(&cpu);
+    auto top = [](const std::vector<float> & l) {
+        std::vector<int> ids(l.size());
+        for (size_t i = 0; i < ids.size(); ++i) ids[i] = (int) i;
+        std::partial_sort(ids.begin(), ids.begin() + 10, ids.end(), [&](int x, int y) { return l[x] > l[y]; });
+        ids.resize(10);
+        return ids;
+    };
+    auto ta = top(a), tb = top(b);
+    int shared = 0;
+    for (int x : ta) shared += std::count(tb.begin(), tb.end(), x) > 0;
+    // Metal and Vulkan share all ten with the CPU and agree on the first
+    return ta[0] == tb[0] && shared >= 7;
+}
+
 nrtts * nrtts_open(const char * lm, const char * dec, const char * voices, int threads, int device) {
     nrtts * h = new (std::nothrow) nrtts();
     if (!h) return nullptr;
@@ -751,7 +784,8 @@ nrtts * nrtts_open(const char * lm, const char * dec, const char * voices, int t
         llama_log_set(quiet_log, nullptr);
         h->threads = threads > 0 ? threads : (int) std::max(1u, std::thread::hardware_concurrency());
         llama_backend_init();
-        bool gpu = device != NRTTS_CPU && have_gpu();
+        const bool want_gpu = device != NRTTS_CPU && have_gpu();
+        bool gpu = want_gpu;
         if (!load_lm(h, lm, gpu)) {
             // a GPU that can't take the model: the CPU, then
             if (!gpu || !load_lm(h, lm, false))
@@ -766,14 +800,27 @@ nrtts * nrtts_open(const char * lm, const char * dec, const char * voices, int t
         if (h->tm.base + h->tm.count > h->n_vocab) throw std::runtime_error("the voices' token map doesn't fit the model");
         for (auto & v : h->voices)
             if ((int) v.speaker.size() != h->n_embd) throw std::runtime_error("voice " + v.name + " doesn't fit the model");
-        h->decoder = std::make_unique<s3gen::decoder>(dec, h->threads, gpu);
-        if (gpu) h->device = gpu_name();
-        if (h->decoder->device() != "CPU" && !decoder_agrees(*h->decoder, dec, h->threads, h->voices.at(0))) {
-            // a GPU whose kernels get the decoder wrong: its speech model
-            // stays there, and the decoder goes to the CPU
-            h->decoder = std::make_unique<s3gen::decoder>(dec, h->threads, false);
-            h->device += " (decoder on the CPU)";
+        if (gpu && !lm_agrees(h, lm)) {
+            // a GPU that gets the speech model wrong: the CPU for it
+            llama_free(h->ctx);
+            llama_model_free(h->model);
+            h->ctx = nullptr;
+            h->model = nullptr;
+            if (!load_lm(h, lm, false)) throw std::runtime_error(std::string("cannot load the speech model from ") + lm);
+            h->n_ctx = (int) llama_n_ctx(h->ctx);
+            gpu = false;
         }
+        // the decoder is checked on its own, so a GPU that gets one of the two
+        // wrong still runs the other
+        h->decoder = std::make_unique<s3gen::decoder>(dec, h->threads, want_gpu);
+        bool dec_gpu = h->decoder->device() != "CPU";
+        if (dec_gpu && !decoder_agrees(*h->decoder, dec, h->threads, h->voices.at(0))) {
+            h->decoder = std::make_unique<s3gen::decoder>(dec, h->threads, false);
+            dec_gpu = false;
+        }
+        if (gpu && dec_gpu) h->device = gpu_name();
+        else if (gpu) h->device = gpu_name() + " (decoder on the CPU)";
+        else if (dec_gpu) h->device = gpu_name() + " (speech model on the CPU)";
     } catch (const std::exception & e) {
         h->error = e.what();
     }

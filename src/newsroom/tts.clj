@@ -370,8 +370,8 @@
 
 (defn device-name
   "What the engine says it runs on, as a reader says it: the GPU, or the CPU,
-  or the GPU for the speech model and the CPU for the decoder when the
-  decoder didn't match its CPU copy there."
+  or both, when one of its two models didn't match its CPU copy on the GPU
+  and runs on the CPU instead."
   [d]
   (let [d (str d)
         gpu (cond (re-find #"^MTL" d) "the GPU, through Metal"
@@ -379,7 +379,7 @@
                   (re-find #"(?i)^cuda" d) "the GPU, through CUDA"
                   (re-find #"(?i)^rocm|^hip" d) "the GPU, through ROCm")]
     (cond (= "CPU" d) "the CPU"
-          (and gpu (str/includes? d "decoder on the CPU")) (str gpu " and the CPU")
+          (and gpu (str/includes? d "on the CPU)")) (str gpu " and the CPU")
           gpu gpu
           :else d)))
 
