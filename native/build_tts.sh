@@ -7,6 +7,8 @@
 #   libnewsroom_tts.{dylib,so}   for jolt serve and jolt test
 #   libnewsroom_tts.a            the same, every member inside, for jolt build
 #   libnewsroom_tts_gpu.so       a GPU plugin, when NEWSROOM_TTS_GPU asks for one
+#   libnewsroom_tts_mini.{dylib,so}  the mini engine, KittenTTS mini on ONNX
+#                                Runtime, with libonnxruntime and espeak-ng-data
 #
 # The engine linked into newsroom runs on the CPU, and on macOS on Metal too,
 # which needs only the system's frameworks. Any other GPU backend needs a
@@ -162,6 +164,71 @@ case "$GPU" in
     echo "built the $GPU plugin"
     ;;
 esac
+
+# --- the mini engine: KittenTTS mini through ONNX Runtime, with espeak-ng ---------
+# libnewsroom_tts_mini in native/, with ONNX Runtime's library beside it
+# (the plugin finds it there) and espeak-ng's English data in
+# native/espeak-ng-data. NEWSROOM_TTS_MINI=0 leaves it out
+if [ "${NEWSROOM_TTS_MINI:-1}" != 0 ]; then
+  ESPEAK_VER=1.52.0
+  ESPEAK_SHA=bb4338102ff3b49a81423da8a1a158b420124b055b60fa76cfb4b18677130a23
+  ESPEAK_DIR=native/espeak-ng/espeak-ng-$ESPEAK_VER
+  if [ ! -f "$ESPEAK_DIR/build-static/src/libespeak-ng/libespeak-ng.a" ]; then
+    mkdir -p native/espeak-ng
+    tarball=native/espeak-ng/espeak-ng-$ESPEAK_VER.tar.gz
+    [ -f "$tarball" ] || curl -sSfL -o "$tarball" "https://github.com/espeak-ng/espeak-ng/archive/refs/tags/$ESPEAK_VER.tar.gz"
+    sum=$( (shasum -a 256 "$tarball" 2>/dev/null || sha256sum "$tarball") | cut -d' ' -f1)
+    if [ "$sum" != "$ESPEAK_SHA" ]; then echo "espeak-ng tarball checksum mismatch: $sum" >&2; exit 1; fi
+    rm -rf "$ESPEAK_DIR" && tar -xzf "$tarball" -C native/espeak-ng
+    # without sonic in place its CMake clones it with git, though it's off
+    cmake -S "$ESPEAK_DIR" -B "$ESPEAK_DIR/build-static" -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DUSE_MBROLA=OFF -DUSE_LIBSONIC=OFF -DUSE_LIBPCAUDIO=OFF -DUSE_ASYNC=OFF -DUSE_KLATT=OFF \
+      -DUSE_SPEECHPLAYER=OFF -DESPEAK_BUILD_MANPAGES=OFF -DEXTRA_cmn=OFF -DEXTRA_ru=OFF -DEXTRA_yue=OFF \
+      -DSONIC_LIB=unused -DSONIC_INC=unused
+    cmake --build "$ESPEAK_DIR/build-static" --parallel "$JOBS"
+  fi
+  # English is all it reads: its phonemes, its dictionary, and the voices
+  rm -rf native/espeak-ng-data && mkdir -p native/espeak-ng-data
+  for f in phondata phonindex phontab intonations en_dict lang voices; do
+    cp -R "$ESPEAK_DIR/build-static/espeak-ng-data/$f" native/espeak-ng-data/
+  done
+
+  ORT_VER=1.31.0
+  case "$OS-$ARCH" in
+    Darwin-arm64)  ORT_PKG=osx-arm64;     ORT_SHA=1031b36dd3bdaa8d976a6130d9cf2a05e9be320b93ae804f8427b91dc3432afc ;;
+    Linux-x86_64)  ORT_PKG=linux-x64;     ORT_SHA=cc5c72baf5ae5c8238a6841f0897227be2d02826b9cf98eaf02fdefaeeb03a57 ;;
+    Linux-aarch64) ORT_PKG=linux-aarch64; ORT_SHA=c5b8b3cca31f3d643a3b313b8f42e2d0f16a4fcefd02cda343d97bd5306afaab ;;
+    *) echo "no ONNX Runtime build for $OS-$ARCH" >&2; exit 1 ;;
+  esac
+  ORT=native/onnxruntime/onnxruntime-$ORT_PKG-$ORT_VER
+  if [ ! -d "$ORT/lib" ]; then
+    mkdir -p native/onnxruntime
+    tarball=native/onnxruntime/onnxruntime-$ORT_PKG-$ORT_VER.tgz
+    [ -f "$tarball" ] || curl -sSfL -o "$tarball" "https://github.com/microsoft/onnxruntime/releases/download/v$ORT_VER/onnxruntime-$ORT_PKG-$ORT_VER.tgz"
+    sum=$( (shasum -a 256 "$tarball" 2>/dev/null || sha256sum "$tarball") | cut -d' ' -f1)
+    if [ "$sum" != "$ORT_SHA" ]; then echo "onnxruntime tarball checksum mismatch: $sum" >&2; exit 1; fi
+    tar -xzf "$tarball" -C native/onnxruntime
+  fi
+  MINC="-I$ESPEAK_DIR/src/include -I$ESPEAK_DIR/src/ucd-tools/src/include -I$ORT/include"
+  MLIBS="$ESPEAK_DIR/build-static/src/libespeak-ng/libespeak-ng.a $ESPEAK_DIR/build-static/src/ucd-tools/libucd.a"
+  c++ $CXXFLAGS $MINC -c native/mini.cpp -o "$B/mini.o"
+  if [ "$OS" = Darwin ]; then
+    cp "$ORT/lib/libonnxruntime.$ORT_VER.dylib" native/
+    ln -sf "libonnxruntime.$ORT_VER.dylib" native/libonnxruntime.1.dylib
+    c++ -dynamiclib "$B/mini.o" $MLIBS -Lnative -lonnxruntime.1 -Wl,-rpath,@loader_path \
+      -install_name @rpath/libnewsroom_tts_mini.dylib -o native/libnewsroom_tts_mini.dylib
+  else
+    cp "$ORT/lib/libonnxruntime.so.$ORT_VER" native/
+    ln -sf "libonnxruntime.so.$ORT_VER" native/libonnxruntime.so.1
+    c++ -shared "$B/mini.o" $MLIBS -Lnative -l:libonnxruntime.so.1 -Wl,-rpath,'$ORIGIN' -lm -lpthread \
+      -o native/libnewsroom_tts_mini.so
+  fi
+  c++ $CXXFLAGS $MINC native/test_mini.cpp "$B/mini.o" $MLIBS -Lnative \
+    $( [ "$OS" = Darwin ] && echo "-lonnxruntime.1 -Wl,-rpath,@executable_path/.." || echo "-l:libonnxruntime.so.1 -Wl,-rpath,\$ORIGIN/.." ) \
+    -lpthread -o "$B/test-mini"
+  echo "built the mini engine"
+fi
 
 c++ $CXXFLAGS native/test_s3gen.cpp "$B/s3gen.o" $LIBS $(backend_deps $MAIN) -lpthread -o "$B/test-s3gen"
 c++ $CXXFLAGS native/test_tts.cpp $OBJS $LIBS $(backend_deps $MAIN) -lpthread -o "$B/test-tts"

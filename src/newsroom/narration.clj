@@ -116,6 +116,7 @@
                                                      ;; the first time, the engine fetches its model
                                                      :on-status #(swap! status assoc :note %)
                                                      :on-device #(swap! status assoc :device %)
+                                                     :engine (:podcast-engine config :kitten-2)
                                                      :device (:podcast-device config :auto)
                                                      :cancelled? cancelled?})]
     (when (cancelled?) (throw (cancelled-error)))

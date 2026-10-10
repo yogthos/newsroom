@@ -17,7 +17,14 @@
   sentences into chunks the model reads well (`chunks`), as the upstream
   kittenml package does; the model's own markup, a leading [emotion] and
   (((emphasis))), passes through. Its vocal events, <laugh> and the like,
-  are dropped: this checkpoint says them as words."
+  are dropped: this checkpoint says them as words.
+
+  A smaller engine, KittenTTS mini 0.8, can speak the lines instead
+  (`synthesize`'s :engine :kitten-mini): a plugin of its own, on the CPU,
+  through ONNX Runtime with espeak-ng for its phonemes. It reads no markup,
+  so the tags are taken out (`without-markup`), and a host's voice it
+  doesn't have is mapped to one it does (`engine-voice`). Its files are
+  fetched as they are, into tts/mini/."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [jolt.ffi :as ffi]
@@ -31,36 +38,42 @@
 ;; Two engines can be there. The one linked into newsroom runs on the CPU,
 ;; and on macOS on Metal. A GPU plugin, libnewsroom_tts_gpu, built for CUDA,
 ;; HIP or Vulkan (native/build_tts.sh), is the same engine with its entry
-;; points named nrttsg_; it is loaded when it's beside the binary, in
-;; native/, or at NEWSROOM_TTS_GPU_LIB, and its own libraries, the GPU's
-;; driver among them, are there to load it. Each binding calls the plugin's
-;; function when it loaded, else the linked engine's.
+;; points named nrttsg_; it is loaded from the config directory's
+;; plugins/speech/ (`library-places`), or NEWSROOM_TTS_GPU_LIB, and its own
+;; libraries, the GPU's driver among them, are there to load it. Each binding
+;; calls the plugin's function when it loaded, else the linked engine's.
 
 (def ^:private plugin-name
   (if (re-find #"(?i)mac|darwin" (System/getProperty "os.name")) "libnewsroom_tts_gpu.dylib" "libnewsroom_tts_gpu.so"))
 
-(defn- executable-dir
-  "The directory the running binary is in, where it can be told."
-  []
-  (try (some-> (io/file "/proc/self/exe") .getCanonicalFile .getParentFile .getPath)
-       (catch Throwable _ nil)))
+(defn library-places
+  "Where the speech engine's library `name` is looked for, in order: the
+  config directory's plugins/speech/, where a release's go, and a
+  checkout's native/, where `jolt tts` builds them."
+  [name]
+  [(config/path "plugins" "speech" name)
+   (.getPath (io/file "native" name))])
+
+(defn- library-path
+  "The first place `name` is, NEWSROOM_TTS_<env>_LIB before the rest."
+  [env name]
+  (->> (cons (not-empty (System/getenv (str "NEWSROOM_TTS_" env "_LIB"))) (library-places name))
+       (remove nil?)
+       (filter #(.exists (io/file %)))
+       first))
 
 (def ^:private plugin
   "Whether the GPU plugin loaded, tried once."
   (delay
-    (let [candidates (distinct (remove nil? [(not-empty (System/getenv "NEWSROOM_TTS_GPU_LIB"))
-                                             (some-> (executable-dir) (io/file plugin-name) .getPath)
-                                             (.getPath (io/file "native" plugin-name))]))
-          present (filter #(.exists (io/file %)) candidates)]
-      (when (seq present)
-        (try (ffi/load-library (vec present))
-             (some? (ffi/find-symbol "nrttsg_open"))
-             (catch Throwable e
-               ;; most often the GPU's own libraries aren't installed
-               (binding [*out* *err*]
-                 (println "newsroom: the speech engine's GPU plugin didn't load, so it runs on the CPU:"
-                          (ex-message e)))
-               false))))))
+    (when-let [path (library-path "GPU" plugin-name)]
+      (try (ffi/load-library path)
+           (some? (ffi/find-symbol "nrttsg_open"))
+           (catch Throwable e
+             ;; most often the GPU's own libraries aren't installed
+             (binding [*out* *err*]
+               (println "newsroom: the speech engine's GPU plugin didn't load, so it runs on the CPU:"
+                        (ex-message e)))
+             false)))))
 
 (defmacro ^:private defengine
   "A binding of the engine's `sym` that calls the plugin's when it loaded,
@@ -87,12 +100,50 @@
 (defengine mp3-bytes* "mp3_bytes" [:pointer] :pointer)
 (defengine mp3-seconds* "mp3_seconds" [:pointer] :double)
 (defengine mp3-close* "mp3_close" [:pointer] :void)
+(defengine mp3-add-pcm* "mp3_add_pcm" [:pointer :pointer :int :int] :int :blocking)
 
 (defn native?
   "Whether the speech engine is there: the GPU plugin, or the engine
   linked into newsroom."
   []
   (or @plugin (some? (ffi/find-symbol "nrtts_open"))))
+
+;; The small engine, KittenTTS mini 0.8, is a plugin of its own,
+;; libnewsroom_tts_mini (native/mini.cpp), with ONNX Runtime beside it and
+;; espeak-ng's data in espeak-ng-data/ there, or at NEWSROOM_ESPEAK_DATA. It
+;; is loaded from where the GPU plugin is, or NEWSROOM_TTS_MINI_LIB; its
+;; audio goes to the MP3 through the engine above.
+
+(def ^:private mini-name
+  (if (re-find #"(?i)mac|darwin" (System/getProperty "os.name")) "libnewsroom_tts_mini.dylib" "libnewsroom_tts_mini.so"))
+
+(def ^:private mini-path
+  "The mini plugin's file, the first of the places it can be that has it."
+  (delay (library-path "MINI" mini-name)))
+
+(def ^:private mini
+  "Whether the mini plugin loaded, tried once."
+  (delay
+    (when-let [path @mini-path]
+      (try (ffi/load-library path)
+           (some? (ffi/find-symbol "nrttsm_open"))
+           (catch Throwable e
+             (binding [*out* *err*]
+               (println "newsroom: the small speech engine's plugin didn't load:" (ex-message e)))
+             false)))))
+
+(defn- espeak-data
+  "espeak-ng's data directory, for the mini engine."
+  []
+  (or (not-empty (System/getenv "NEWSROOM_ESPEAK_DATA"))
+      (some-> @mini-path io/file .getAbsoluteFile .getParentFile (io/file "espeak-ng-data") .getPath)))
+
+(ffi/defcfn mini-open* "nrttsm_open" [:pointer :pointer :pointer :pointer :int] :pointer :blocking)
+(ffi/defcfn mini-ok* "nrttsm_ok" [:pointer] :int)
+(ffi/defcfn mini-error* "nrttsm_error" [:pointer] :string)
+(ffi/defcfn mini-free* "nrttsm_free" [:pointer] :void)
+(ffi/defcfn mini-speak* "nrttsm_speak" [:pointer :pointer :pointer :float] :int :blocking)
+(ffi/defcfn mini-audio* "nrttsm_audio" [:pointer] :pointer)
 
 ;; --- the model's files ---------------------------------------------------------
 
@@ -107,6 +158,15 @@
    "config.json" {:url (str kitten "config.json")}
    "s3gen_meanflow.safetensors" {:url (str chatterbox "s3gen_meanflow.safetensors") :size 1064875036}})
 
+(def ^:private mini-repo
+  "https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/c02725660cea441db4c383af69f1f26f5cd00947/")
+
+(def mini-downloads
+  "What the mini engine fetches, into tts/mini/, and loads as it is."
+  {"kitten_tts_mini_v0_8.onnx" {:url (str mini-repo "kitten_tts_mini_v0_8.onnx") :size 78268016}
+   "voices.npz" {:url (str mini-repo "voices.npz") :size 3278902}
+   "config.json" {:url (str mini-repo "config.json")}})
+
 (def ^:private engine-files
   "What the engine loads, each converted from the downloads named."
   {:lm {:file "model-q4_0.gguf" :from ["model-tq2_1.gguf"]}
@@ -120,24 +180,47 @@
 
 (defn- file-of [k] (io/file (home) (get-in engine-files [k :file])))
 
+(defn- mini-home [] (io/file (home) "mini"))
+
+(defn- mini-file [name] (io/file (mini-home) name))
+
 (defn prepared?
-  "Whether the converted files the engine loads are all in place."
-  []
-  (every? #(.exists (file-of %)) (keys engine-files)))
+  "Whether the files `engine`, :kitten-2 (the default) or :kitten-mini,
+  loads are all in place."
+  ([] (prepared? :kitten-2))
+  ([engine]
+   (if (= :kitten-mini engine)
+     (every? (fn [[name {:keys [size]}]]
+               (let [f (mini-file name)] (and (.exists f) (or (nil? size) (= size (.length f))))))
+             mini-downloads)
+     (every? #(.exists (file-of %)) (keys engine-files)))))
 
 (defn available?
-  "Whether speech can be made: the native library is loaded. The model's
-  files are fetched the first time it is."
-  []
-  (native?))
+  "Whether speech can be made with `engine`: its native library is loaded,
+  and for the mini engine its plugin too. The model's files are fetched the
+  first time it is."
+  ([] (available? :kitten-2))
+  ([engine]
+   (and (native?) (or (not= :kitten-mini engine) (boolean @mini)))))
+
+(defn engines-line
+  "What startup says of the speech engines it can record with, and, when
+  `config` turns podcasts off, that they are."
+  ([] (engines-line {}))
+  ([config]
+   (let [engines (cond-> []
+                   (native?) (conj (if @plugin "KittenTTS 2 (with the GPU plugin)" "KittenTTS 2"))
+                   (available? :kitten-mini) (conj "KittenTTS mini"))]
+     (str "speech engines: " (if (seq engines) (str/join ", " engines) "none, so no podcasts")
+          (when (false? (:podcast config)) " (podcasts are off)")))))
 
 (defn- download!
-  "Fetch `name` into the model's directory unless it is there, through a
-  .part file, telling `report` how far it has got."
-  [name report]
-  (let [{:keys [url size]} (get downloads name)
-        dest (io/file (home) name)
-        part (io/file (home) (str name ".part"))]
+  "Fetch `name`, as `downloads` has it, into the model's directory unless it
+  is there, through a .part file, telling `report` how far it has got."
+  ([name report] (download! (io/file (home)) (get downloads name) name report))
+  ([dir {:keys [url size]} name report]
+  (let [dest (io/file dir name)
+        part (io/file dir (str name ".part"))]
     (when-not (and (.exists dest) (or (nil? size) (= size (.length dest))))
       (report (str "Downloading the speech model's " name))
       (let [{:keys [status body]} (http/get url {:as :stream :timeout 600000})]
@@ -159,7 +242,7 @@
         (when (and size (not= size (.length part)))
           (.delete part)
           (throw (ex-info (str "the download of " name " was cut short") {:name name})))
-        (.renameTo part dest)))))
+        (.renameTo part dest))))))
 
 (defn- converted!
   "Convert `k`'s downloads with `convert`, unless its file is there, and
@@ -189,6 +272,15 @@
    (converted! :lm convert-lm* report)
    (converted! :decoder convert-decoder* report)
    (converted! :voices convert-voices* report)))
+
+(defn- prepare-mini!
+  "Fetch the mini engine's files that aren't in place yet."
+  [report]
+  (when-not (available? :kitten-mini)
+    (throw (ex-info "the small speech engine isn't built: run jolt tts" {})))
+  (.mkdirs (mini-home))
+  (doseq [[name spec] mini-downloads]
+    (download! (mini-home) spec name report)))
 
 ;; --- text, as it is spoken -----------------------------------------------------
 
@@ -396,24 +488,59 @@
   [chunk]
   (max 200 (min 1000 (long (* (/ (count chunk) 20.0) 25 1.8)))))
 
+(def ^:private female
+  "KittenTTS 2's women's voices; the rest are men's."
+  #{"Bella" "Luna" "Rosie" "Kiki" "Willow" "Dolores" "Saoirse" "Claire" "Raven" "Diana" "Maeve" "Edith"
+    "Grace" "Iris" "Serena" "Eleanor" "Martha" "Sable" "Victoria"})
+
 (defn voices
-  "The names of the built-in voices, in the model's order."
-  []
-  ["Bella" "Jasper" "Luna" "Bruno" "Rosie" "Hugo" "Kiki" "Leo" "Matthew" "Elliot" "Willow" "Dolores"
+  "The names of `engine`'s built-in voices, in the model's order: :kitten-2
+  (the default) or :kitten-mini."
+  ([] (voices :kitten-2))
+  ([engine]
+   (if (= :kitten-mini engine)
+     ["Bella" "Jasper" "Luna" "Bruno" "Rosie" "Hugo" "Kiki" "Leo"]
+     ["Bella" "Jasper" "Luna" "Bruno" "Rosie" "Hugo" "Kiki" "Leo" "Matthew" "Elliot" "Willow" "Dolores"
    "Victor" "Dante" "Alfred" "Saoirse" "Claire" "Raven" "Marcus" "Herbert" "Diana" "Laurence" "Maeve"
    "Walter" "Edith" "Miles" "Grace" "Reginald" "Iris" "Frank" "Serena" "Julian" "Eleanor" "Otis"
-   "Vincent" "Martha" "Sable" "Victoria"])
+   "Vincent" "Martha" "Sable" "Victoria"])))
 
-(defn synthesize
-  "The MP3 of `lines`, [{:voice :text}], spoken in order with a short
-  pause between them: {:mp3 bytes :seconds audio-length}. `opts`:
-  :on-progress, called with the lines done and the total as each is
-  spoken, :on-status, told what the engine is doing while it fetches and
-  converts its files, :on-device, told what it runs on once it has
-  loaded (see `device-name`), :cancelled?, a
-  function checked as the model writes, which stops the work with an
-  exception when true, :device, :auto (the GPU when one comes up, else the
-  CPU) or :cpu, :threads and :seed. Throws when speech isn't available."
+(defn engine-voice
+  "The voice `engine` speaks a host's `voice`, a KittenTTS 2 name, in: its
+  own, when it has it, else its deepest of the same sex."
+  [engine voice]
+  (cond
+    (some #{voice} (voices engine)) voice
+    (female voice) "Luna"
+    :else "Bruno"))
+
+(defn without-markup
+  "`text` without KittenTTS 2's markup, which the mini engine would read
+  out: its [emotion] tags go, and (((emphasis))) is plain."
+  [text]
+  (-> text
+      (str/replace #"\[(?:mundane|nervous|tender|angry|excited|stern|sad|contemplative|surprised|joyful)\]\s*" "")
+      (str/replace #"\(\(\(([^()\n]{1,80})\)\)\)" "$1")
+      (str/replace #"\s{2,}" " ")
+      str/trim))
+
+(defn- encoded
+  "The MP3 `write` puts the audio in, handed the encoder: {:mp3 :seconds}."
+  [write]
+  (let [e (mp3-open* (int sample-rate) (int (:kbps settings)))]
+    (when (zero? (ffi/address e)) (throw (ex-info "could not start the MP3 encoder" {})))
+    (try
+      (write e)
+      (let [n (mp3-finish* e)]
+        (when (neg? n) (throw (ex-info "could not finish the MP3" {})))
+        {:mp3 (ffi/read-array (mp3-bytes* e) n)
+         :seconds (mp3-seconds* e)})
+      (finally (mp3-close* e)))))
+
+(defn- cancelled! []
+  (throw (ex-info "the speech was cancelled" {::cancelled true})))
+
+(defn- synthesize-kitten-2
   [lines {:keys [on-progress on-status on-device cancelled? device threads seed] :or {seed 1234}}]
   (prepare! (or on-status (fn [_])))
   (let [h (ffi/with-arena [a]
@@ -427,45 +554,87 @@
       (when (zero? (ok* h))
         (throw (ex-info (str "could not load the speech engine: " (error* h)) {})))
       (when on-device (on-device (device* h)))
-      (let [{:keys [temperature top-k top-p min-p kbps]} settings
-            e (mp3-open* (int sample-rate) (int kbps))
+      (let [{:keys [temperature top-k top-p min-p]} settings
             total (count lines)]
-        (when (zero? (ffi/address e)) (throw (ex-info "could not start the MP3 encoder" {})))
-        (try
-          (ffi/with-arena [a]
-            ;; the engine reads `cancel` between tokens; `watch` sets it, and
-            ;; is waited on before the arena that holds it goes
-            (let [cancel (ffi/alloc a :int)
-                  stop (atom false)
-                  watch (when cancelled?
-                          (future (loop []
-                                    (when-not @stop
-                                      (when (cancelled?) (ffi/write cancel :int 1))
-                                      (Thread/sleep 100)
-                                      (recur)))))]
-              (try
-                (doseq [[i {:keys [voice text]}] (map-indexed vector lines)
-                        :let [say (spoken text)
-                              parts (chunks say)]]
-                  (doseq [[j part] (map-indexed vector parts)]
-                    (when (and cancelled? (cancelled?)) (throw (ex-info "the speech was cancelled" {::cancelled true})))
-                    (let [n (speak* h (ffi/string->ptr a (str voice)) (ffi/string->ptr a part)
-                                    (int (if (expression? say) 1 0))
-                                    ;; a :float takes a double: jolt refuses a
-                                    ;; java.lang.Float there
-                                    (double temperature) (int top-k) (double top-p) (double min-p)
-                                    (int (+ seed (* 1000 i) j)) (int (token-budget part)) cancel)]
-                      (cond
-                        (= -2 n) (throw (ex-info "the speech was cancelled" {::cancelled true}))
-                        (neg? n) (throw (ex-info (str "could not speak a line: " (error* h)) {:line i})))
-                      (mp3-add-speech* e h (int (if (= j (dec (count parts))) line-gap-ms chunk-gap-ms)))))
-                  (when on-progress (on-progress (inc i) total)))
-                (finally
-                  (reset! stop true)
-                  (when watch @watch)))))
-          (let [n (mp3-finish* e)]
-            (when (neg? n) (throw (ex-info "could not finish the MP3" {})))
-            {:mp3 (ffi/read-array (mp3-bytes* e) n)
-             :seconds (mp3-seconds* e)})
-          (finally (mp3-close* e))))
+        (encoded
+         (fn [e]
+           (ffi/with-arena [a]
+             ;; the engine reads `cancel` between tokens; `watch` sets it, and
+             ;; is waited on before the arena that holds it goes
+             (let [cancel (ffi/alloc a :int)
+                   stop (atom false)
+                   watch (when cancelled?
+                           (future (loop []
+                                     (when-not @stop
+                                       (when (cancelled?) (ffi/write cancel :int 1))
+                                       (Thread/sleep 100)
+                                       (recur)))))]
+               (try
+                 (doseq [[i {:keys [voice text]}] (map-indexed vector lines)
+                         :let [say (spoken text)
+                               parts (chunks say)]]
+                   (doseq [[j part] (map-indexed vector parts)]
+                     (when (and cancelled? (cancelled?)) (cancelled!))
+                     (let [n (speak* h (ffi/string->ptr a (str voice)) (ffi/string->ptr a part)
+                                     (int (if (expression? say) 1 0))
+                                     ;; a :float takes a double: jolt refuses a
+                                     ;; java.lang.Float there
+                                     (double temperature) (int top-k) (double top-p) (double min-p)
+                                     (int (+ seed (* 1000 i) j)) (int (token-budget part)) cancel)]
+                       (cond
+                         (= -2 n) (cancelled!)
+                         (neg? n) (throw (ex-info (str "could not speak a line: " (error* h)) {:line i})))
+                       (mp3-add-speech* e h (int (if (= j (dec (count parts))) line-gap-ms chunk-gap-ms)))))
+                   (when on-progress (on-progress (inc i) total)))
+                 (finally
+                   (reset! stop true)
+                   (when watch @watch))))))))
       (finally (free* h)))))
+
+(defn- synthesize-mini
+  [lines {:keys [on-progress on-status on-device cancelled? threads]}]
+  (prepare-mini! (or on-status (fn [_])))
+  (let [h (ffi/with-arena [a]
+            (mini-open* (ffi/string->ptr a (.getPath (mini-file "kitten_tts_mini_v0_8.onnx")))
+                        (ffi/string->ptr a (.getPath (mini-file "voices.npz")))
+                        (ffi/string->ptr a (.getPath (mini-file "config.json")))
+                        (ffi/string->ptr a (espeak-data))
+                        (int (or threads 0))))]
+    (when (zero? (ffi/address h)) (throw (ex-info "out of memory loading the small speech engine" {})))
+    (try
+      (when (zero? (mini-ok* h))
+        (throw (ex-info (str "could not load the small speech engine: " (mini-error* h)) {})))
+      (when on-device (on-device "CPU"))
+      (let [total (count lines)]
+        (encoded
+         (fn [e]
+           (ffi/with-arena [a]
+             (doseq [[i {:keys [voice text]}] (map-indexed vector lines)
+                     :let [parts (chunks (without-markup (spoken text)))]]
+               (doseq [[j part] (map-indexed vector parts)]
+                 (when (and cancelled? (cancelled?)) (cancelled!))
+                 (let [n (mini-speak* h (ffi/string->ptr a (engine-voice :kitten-mini voice))
+                                      (ffi/string->ptr a part) (double 1.0))]
+                   (when (neg? n)
+                     (throw (ex-info (str "could not speak a line: " (mini-error* h)) {:line i})))
+                   (mp3-add-pcm* e (mini-audio* h) (int n)
+                                 (int (if (= j (dec (count parts))) line-gap-ms chunk-gap-ms)))))
+               (when on-progress (on-progress (inc i) total)))))))
+      (finally (mini-free* h)))))
+
+(defn synthesize
+  "The MP3 of `lines`, [{:voice :text}], spoken in order with a short
+  pause between them: {:mp3 bytes :seconds audio-length}. `opts`:
+  :engine, :kitten-2 (the default) or :kitten-mini, the small one, which
+  runs on the CPU and speaks a voice it doesn't have in its nearest
+  (`engine-voice`), :on-progress, called with the lines done and the total
+  as each is spoken, :on-status, told what the engine is doing while it
+  fetches and converts its files, :on-device, told what it runs on once it
+  has loaded (see `device-name`), :cancelled?, a function checked as the
+  model writes, which stops the work with an exception when true, :device,
+  :auto (the GPU when one comes up, else the CPU) or :cpu, :threads and
+  :seed. Throws when speech isn't available."
+  [lines opts]
+  (if (= :kitten-mini (:engine opts))
+    (synthesize-mini lines opts)
+    (synthesize-kitten-2 lines opts)))

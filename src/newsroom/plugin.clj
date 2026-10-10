@@ -305,7 +305,9 @@
   (let [dir (io/file root)
         entries (when (.isDirectory dir)
                   (->> (.listFiles dir)
-                       (filter #(or (.isDirectory %) (clj-file? %)))
+                       ;; a folder holding no Clojure, like speech/ with the
+                       ;; speech engine's libraries, isn't a plugin
+                       (filter #(if (.isDirectory %) (some clj-file? (file-seq %)) (clj-file? %)))
                        (remove #(str/starts-with? (.getName %) "."))
                        (sort-by #(.getName %))))]
     (when (seq entries)

@@ -112,7 +112,11 @@
  ;; it off
  :podcast true
  :podcast-auto true
- ;; what the speech engine records on: :auto, the GPU when the engine was
+ ;; the speech engine: :kitten-2, KittenTTS 2, or :kitten-mini, KittenTTS
+ ;; mini, smaller and much faster, on the CPU only, which speaks a host's
+ ;; voice it lacks in its deepest of the same sex
+ :podcast-engine :kitten-2
+ ;; what KittenTTS 2 records on: :auto, the GPU when the engine was
  ;; built for one and it comes up, else the CPU, or :cpu
  :podcast-device :auto
  :podcast-segments 5

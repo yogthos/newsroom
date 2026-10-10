@@ -63,6 +63,14 @@
     (is (str/includes? (ex-message e) "NEWSROOM_TEST_UNSET_VAR"))
     (is (str/includes? (ex-message e) "delta"))))
 
+(deftest a-folder-with-no-clojure-is-not-a-plugin
+  (testing "like plugins/speech/, which holds the speech engine's libraries"
+    (let [dir (plugins-dir {"speech/libnewsroom_tts_mini.so" "not clojure"
+                            "speech/espeak-ng-data/phontab" "data"
+                            "fine/core.clj" "(ns fine.core)\n(def ok 1)\n"})
+          report (by-name (plugin/load-all! dir {}))]
+      (is (= #{"fine"} (set (keys report)))))))
+
 (deftest a-single-file-is-a-plugin-too
   (let [dir (plugins-dir {"solo.clj" "(ns solo)\n(def here true)\n"})
         report (by-name (plugin/load-all! dir {}))]

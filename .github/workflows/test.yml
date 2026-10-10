@@ -92,6 +92,8 @@ jobs:
           path: |
             native/llama.cpp
             native/lame
+            native/espeak-ng
+            native/onnxruntime
           key: tts-${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('deps.edn', 'native/build_tts.sh') }}
 
       # the Vulkan SDK, for the speech engine's GPU plugin: the shader

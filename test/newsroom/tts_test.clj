@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [newsroom.config :as config]
             [newsroom.tts :as tts]))
 
 (deftest numbers-are-read-out
@@ -55,8 +56,52 @@
   (is (= "the GPU, through Vulkan and the CPU" (tts/device-name "Vulkan0 (decoder on the CPU)")))
   (is (= "the GPU, through Vulkan and the CPU" (tts/device-name "Vulkan0 (speech model on the CPU)"))))
 
+(deftest the-speech-libraries-live-in-the-config-plugins-folder
+  (let [places (tts/library-places "libnewsroom_tts_mini.so")]
+    (is (= (config/path "plugins" "speech" "libnewsroom_tts_mini.so") (first places)))
+    (is (= (.getPath (io/file "native" "libnewsroom_tts_mini.so")) (last places)) "and a checkout's native/, for development")
+    (is (= 2 (count places)) "and nowhere else, like beside the binary")))
+
 (deftest the-model-files-are-named-by-pinned-revisions
-  (is (every? #(re-find #"/resolve/[0-9a-f]{40}/" (:url %)) (vals tts/downloads))))
+  (is (every? #(re-find #"/resolve/[0-9a-f]{40}/" (:url %)) (concat (vals tts/downloads) (vals tts/mini-downloads)))))
+
+;; what startup says, which the release's smoke test reads
+(deftest the-engines-there-are-said
+  (is (re-find #"^speech engines: " (tts/engines-line)))
+  (is (= (tts/available? :kitten-mini) (boolean (re-find #"KittenTTS mini" (tts/engines-line)))))
+  (testing "said whether podcasts are on or off, and which"
+    (is (not (str/includes? (tts/engines-line {}) "podcasts are off")))
+    (is (str/ends-with? (tts/engines-line {:podcast false}) " (podcasts are off)"))))
+
+;; --- the mini engine ------------------------------------------------------------
+
+(deftest the-mini-engine-has-voices-for-every-host
+  (is (= ["Bella" "Jasper" "Luna" "Bruno" "Rosie" "Hugo" "Kiki" "Leo"] (tts/voices :kitten-mini)))
+  (is (= (tts/voices) (tts/voices :kitten-2)))
+  (testing "a voice it has is its own"
+    (is (= "Hugo" (tts/engine-voice :kitten-mini "Hugo")))
+    (is (= "Kiki" (tts/engine-voice :kitten-mini "Kiki"))))
+  (testing "one it doesn't have is its deepest of the same sex"
+    (is (= "Luna" (tts/engine-voice :kitten-mini "Martha")))
+    (is (= "Bruno" (tts/engine-voice :kitten-mini "Frank"))))
+  (is (= "Martha" (tts/engine-voice :kitten-2 "Martha"))))
+
+(deftest the-mini-engine-reads-no-markup
+  (is (= "It's huge, right?" (tts/without-markup "[excited] It's (((huge))), right?")))
+  (is (= "Plain." (tts/without-markup "Plain."))))
+
+(deftest the-mini-engine-speaks
+  (if-not (and (tts/available? :kitten-mini) (tts/prepared? :kitten-mini))
+    (println "skipping the mini engine's test: its plugin or its model files are missing")
+    (let [progress (atom [])
+          {:keys [mp3 seconds]} (tts/synthesize [{:voice "Hugo" :text "Good morning, and welcome to the briefing."}
+                                                 {:voice "Martha" :text "[excited] It's a big day!"}]
+                                                {:engine :kitten-mini
+                                                 :on-progress (fn [done total] (swap! progress conj [done total]))})]
+      (is (< 1.5 seconds 15))
+      (is (< 4000 (alength mp3)))
+      (is (= [[1 2] [2 2]] @progress))
+      (is (= 0xff (bit-and (aget mp3 0) 0xff))))))
 
 ;; The engine itself, when its native library is built and its files are in
 ;; place: NEWSROOM_TTS_DIR, else the config directory's tts/.

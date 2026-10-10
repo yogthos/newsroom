@@ -99,7 +99,8 @@ jobs:
         run: cp /ucrt64/bin/libsqlite3-0.dll "$(dirname "$(command -v jolt)")/sqlite3.dll"
 
       # the speech engine: llama.cpp, the S3 decoder and LAME, linked into
-      # the binary. Windows goes without it, and so without podcasts
+      # the binary, and the small engine's plugin, espeak-ng and ONNX
+      # Runtime. Windows goes without them, and so without podcasts
       - name: Cache the speech engine's build
         if: runner.os != 'Windows'
         uses: actions/cache@v6
@@ -107,6 +108,8 @@ jobs:
           path: |
             native/llama.cpp
             native/lame
+            native/espeak-ng
+            native/onnxruntime
           key: tts-${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('deps.edn', 'native/build_tts.sh') }}
 
       # the Vulkan SDK, for the speech engine's GPU plugin: the shader
@@ -157,10 +160,20 @@ jobs:
           exe=newsroom
           [ -f newsroom.exe ] && exe=newsroom.exe
           cp "$exe" README.md CHANGELOG.md "$name/"
-          # the speech engine's GPU plugin, which newsroom loads from beside itself
-          if [ -f native/libnewsroom_tts_gpu.so ]; then cp native/libnewsroom_tts_gpu.so "$name/"; fi
           cp examples/config.edn "$name/config.example.edn"
           cp -r plugins "$name/plugins"
+          # the speech engine's plugins, the GPU one and the small engine with
+          # ONNX Runtime, under the name it links, and espeak-ng's English
+          # data, which newsroom loads from the config directory's
+          # plugins/speech/
+          sp="$name/plugins/speech"
+          mkdir -p "$sp"
+          for f in libnewsroom_tts_gpu.so libnewsroom_tts_mini.so libnewsroom_tts_mini.dylib \
+                   libonnxruntime.so.1 libonnxruntime.1.dylib; do
+            if [ -e "native/$f" ]; then cp -L "native/$f" "$sp/"; fi
+          done
+          if [ -d native/espeak-ng-data ]; then cp -r native/espeak-ng-data "$sp/"; fi
+          rmdir "$sp" 2>/dev/null || true
           # Windows looks beside the exe first, for a library and for the DLLs
           # it loads. sqlite goes in under the first name jolt-lang/db asks
           # for, so another program's sqlite3.dll on the PATH can't stand in.
@@ -226,11 +239,11 @@ jobs:
             --verify-tag \
             --notes "Standalone binaries for macOS (arm64), Linux (x86_64) and Windows (x86_64).
 
-          Unpack the archive and run \`newsroom\`, then open http://127.0.0.1:3000. The first run writes its config to \`~/.config/newsroom\`, and \`config.example.edn\` shows every option. The plugins in \`plugins/\` add sources newsroom doesn't read itself; copy a plugin's folder to \`~/.config/newsroom/plugins/\` to use it. The default model is DeepSeek, which reads \`DEEPSEEK_API_KEY\`.
+          Unpack the archive and run \`newsroom\`, then open http://127.0.0.1:3000. The first run writes its config to \`~/.config/newsroom\`, and \`config.example.edn\` shows every option. The plugins in \`plugins/\` add sources newsroom doesn't read itself; copy a plugin's folder to \`~/.config/newsroom/plugins/\` to use it. \`plugins/speech/\` holds the speech engine's GPU plugin and its small engine; copy it there too for those. The default model is DeepSeek, which reads \`DEEPSEEK_API_KEY\`.
 
           Runtime libraries: Linux needs sqlite3, libxml2 and OpenSSL 3, which most distributions have. macOS needs OpenSSL 3 (\`brew install openssl@3\`). The Windows archive carries its own, beside \`newsroom.exe\`.
 
-          The macOS binary is unsigned, so clear the quarantine flag before the first run: \`xattr -d com.apple.quarantine ./newsroom\`." \
+          The macOS binary is unsigned, so clear the quarantine flag in the unpacked folder before the first run: \`xattr -dr com.apple.quarantine .\`." \
             || echo "release already exists, uploading asset"
           gh release upload "${GITHUB_REF_NAME}" "${PKG}" --clobber
 
