@@ -104,8 +104,7 @@ llama_libs() {
 backend_deps() {
   case "$1" in
     metal)  echo "-framework Metal -framework Foundation -framework MetalKit" ;;
-    vulkan) if [ -n "$VULKAN_SDK" ]; then echo "-L$VULKAN_SDK/lib -lvulkan"
-            else pkg-config --libs vulkan 2>/dev/null || echo "-lvulkan"; fi ;;
+    vulkan) pkg-config --libs vulkan 2>/dev/null || echo "-lvulkan" ;;
     cuda)   c=${CUDA_PATH:-/usr/local/cuda}; echo "-L$c/lib64 -L$c/lib64/stubs -lcudart -lcublas -lcublasLt -lcuda" ;;
     hip)    r=${ROCM_PATH:-/opt/rocm}; echo "-L$r/lib -lhipblas -lrocblas -lamdhip64" ;;
   esac
