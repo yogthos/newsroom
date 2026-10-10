@@ -59,7 +59,7 @@
 (deftest the-speech-libraries-live-in-the-config-plugins-folder
   (let [places (tts/library-places "libnewsroom_tts_mini.so")]
     (is (= (config/path "plugins" "speech" "libnewsroom_tts_mini.so") (first places)))
-    (is (= "native/libnewsroom_tts_mini.so" (last places)) "and a checkout's native/, for development")
+    (is (= (.getPath (io/file "native" "libnewsroom_tts_mini.so")) (last places)) "and a checkout's native/, for development")
     (is (= 2 (count places)) "and nowhere else, like beside the binary")))
 
 (deftest the-model-files-are-named-by-pinned-revisions
