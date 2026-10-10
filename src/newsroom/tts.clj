@@ -27,30 +27,72 @@
 ;; --- the native library --------------------------------------------------------
 ;; :blocking calls may run while the collector does, so they take no :string
 ;; arguments: every string goes in as an arena's pointer.
+;;
+;; Two engines can be there. The one linked into newsroom runs on the CPU,
+;; and on macOS on Metal. A GPU plugin, libnewsroom_tts_gpu, built for CUDA,
+;; HIP or Vulkan (native/build_tts.sh), is the same engine with its entry
+;; points named nrttsg_; it is loaded when it's beside the binary, in
+;; native/, or at NEWSROOM_TTS_GPU_LIB, and its own libraries, the GPU's
+;; driver among them, are there to load it. Each binding calls the plugin's
+;; function when it loaded, else the linked engine's.
 
-(ffi/defcfn version* "nrtts_version" [] :string)
-(ffi/defcfn convert-lm* "nrtts_convert_lm" [:pointer :pointer :pointer :int] :int :blocking)
-(ffi/defcfn convert-decoder* "nrtts_convert_decoder" [:pointer :pointer :pointer :int] :int :blocking)
-(ffi/defcfn convert-voices* "nrtts_convert_voices" [:pointer :pointer :pointer :pointer :int] :int :blocking)
-(ffi/defcfn open* "nrtts_open" [:pointer :pointer :pointer :int] :pointer :blocking)
-(ffi/defcfn ok* "nrtts_ok" [:pointer] :int)
-(ffi/defcfn error* "nrtts_error" [:pointer] :string)
-(ffi/defcfn free* "nrtts_free" [:pointer] :void)
-(ffi/defcfn voice-count* "nrtts_voice_count" [:pointer] :int)
-(ffi/defcfn voice-name* "nrtts_voice_name" [:pointer :int] :string)
-(ffi/defcfn speak* "nrtts_speak"
+(def ^:private plugin-name
+  (if (re-find #"(?i)mac|darwin" (System/getProperty "os.name")) "libnewsroom_tts_gpu.dylib" "libnewsroom_tts_gpu.so"))
+
+(defn- executable-dir
+  "The directory the running binary is in, where it can be told."
+  []
+  (try (some-> (io/file "/proc/self/exe") .getCanonicalFile .getParentFile .getPath)
+       (catch Throwable _ nil)))
+
+(def ^:private plugin
+  "Whether the GPU plugin loaded, tried once."
+  (delay
+    (let [candidates (distinct (remove nil? [(not-empty (System/getenv "NEWSROOM_TTS_GPU_LIB"))
+                                             (some-> (executable-dir) (io/file plugin-name) .getPath)
+                                             (.getPath (io/file "native" plugin-name))]))
+          present (filter #(.exists (io/file %)) candidates)]
+      (when (seq present)
+        (try (ffi/load-library (vec present))
+             (some? (ffi/find-symbol "nrttsg_open"))
+             (catch Throwable e
+               ;; most often the GPU's own libraries aren't installed
+               (binding [*out* *err*]
+                 (println "newsroom: the speech engine's GPU plugin didn't load, so it runs on the CPU:"
+                          (ex-message e)))
+               false))))))
+
+(defmacro ^:private defengine
+  "A binding of the engine's `sym` that calls the plugin's when it loaded,
+  else the linked engine's."
+  [name sym args ret & opts]
+  (let [cpu (symbol (str name "-cpu")) gpu (symbol (str name "-gpu"))]
+    `(do (ffi/defcfn ~cpu ~(str "nrtts_" sym) ~args ~ret ~@opts)
+         (ffi/defcfn ~gpu ~(str "nrttsg_" sym) ~args ~ret ~@opts)
+         (defn- ~name [& xs#] (apply (if @plugin ~gpu ~cpu) xs#)))))
+
+(defengine convert-lm* "convert_lm" [:pointer :pointer :pointer :int] :int :blocking)
+(defengine convert-decoder* "convert_decoder" [:pointer :pointer :pointer :int] :int :blocking)
+(defengine convert-voices* "convert_voices" [:pointer :pointer :pointer :pointer :int] :int :blocking)
+(defengine open* "open" [:pointer :pointer :pointer :int :int] :pointer :blocking)
+(defengine ok* "ok" [:pointer] :int)
+(defengine error* "error" [:pointer] :string)
+(defengine device* "device" [:pointer] :string)
+(defengine free* "free" [:pointer] :void)
+(defengine speak* "speak"
   [:pointer :pointer :pointer :int :float :int :float :float :uint32 :int :pointer] :int :blocking)
-(ffi/defcfn mp3-open* "nrtts_mp3_open" [:int :int] :pointer)
-(ffi/defcfn mp3-add-speech* "nrtts_mp3_add_speech" [:pointer :pointer :int] :int :blocking)
-(ffi/defcfn mp3-finish* "nrtts_mp3_finish" [:pointer] :int :blocking)
-(ffi/defcfn mp3-bytes* "nrtts_mp3_bytes" [:pointer] :pointer)
-(ffi/defcfn mp3-seconds* "nrtts_mp3_seconds" [:pointer] :double)
-(ffi/defcfn mp3-close* "nrtts_mp3_close" [:pointer] :void)
+(defengine mp3-open* "mp3_open" [:int :int] :pointer)
+(defengine mp3-add-speech* "mp3_add_speech" [:pointer :pointer :int] :int :blocking)
+(defengine mp3-finish* "mp3_finish" [:pointer] :int :blocking)
+(defengine mp3-bytes* "mp3_bytes" [:pointer] :pointer)
+(defengine mp3-seconds* "mp3_seconds" [:pointer] :double)
+(defengine mp3-close* "mp3_close" [:pointer] :void)
 
 (defn native?
-  "Whether the speech engine's native library is loaded."
+  "Whether the speech engine is there: the GPU plugin, or the engine
+  linked into newsroom."
   []
-  (some? (ffi/find-symbol "nrtts_open")))
+  (or @plugin (some? (ffi/find-symbol "nrtts_open"))))
 
 ;; --- the model's files ---------------------------------------------------------
 
@@ -326,6 +368,21 @@
 
 (def sample-rate 24000)
 
+(defn device-name
+  "What the engine says it runs on, as a reader says it: the GPU, or the CPU,
+  or the GPU for the speech model and the CPU for the decoder when the
+  decoder didn't match its CPU copy there."
+  [d]
+  (let [d (str d)
+        gpu (cond (re-find #"^MTL" d) "the GPU, through Metal"
+                  (re-find #"(?i)^vulkan" d) "the GPU, through Vulkan"
+                  (re-find #"(?i)^cuda" d) "the GPU, through CUDA"
+                  (re-find #"(?i)^rocm|^hip" d) "the GPU, through ROCm")]
+    (cond (= "CPU" d) "the CPU"
+          (and gpu (str/includes? d "decoder on the CPU")) (str gpu " and the CPU")
+          gpu gpu
+          :else d)))
+
 (def ^:private settings
   "The model's stable preset, and the bitrate of the episode."
   {:temperature 0.8 :top-k 50 :top-p 0.8 :min-p 0.0 :kbps 64})
@@ -352,20 +409,24 @@
   pause between them: {:mp3 bytes :seconds audio-length}. `opts`:
   :on-progress, called with the lines done and the total as each is
   spoken, :on-status, told what the engine is doing while it fetches and
-  converts its files, :cancelled?, a function checked as the model writes,
-  which stops the work with an exception when true, :threads and :seed.
-  Throws when speech isn't available."
-  [lines {:keys [on-progress on-status cancelled? threads seed] :or {seed 1234}}]
+  converts its files, :on-device, told what it runs on once it has
+  loaded (see `device-name`), :cancelled?, a
+  function checked as the model writes, which stops the work with an
+  exception when true, :device, :auto (the GPU when one comes up, else the
+  CPU) or :cpu, :threads and :seed. Throws when speech isn't available."
+  [lines {:keys [on-progress on-status on-device cancelled? device threads seed] :or {seed 1234}}]
   (prepare! (or on-status (fn [_])))
   (let [h (ffi/with-arena [a]
             (open* (ffi/string->ptr a (.getPath (file-of :lm)))
                    (ffi/string->ptr a (.getPath (file-of :decoder)))
                    (ffi/string->ptr a (.getPath (file-of :voices)))
-                   (int (or threads 0))))]
+                   (int (or threads 0))
+                   (int (if (= :cpu device) 1 0))))]
     (when (zero? (ffi/address h)) (throw (ex-info "out of memory loading the speech engine" {})))
     (try
       (when (zero? (ok* h))
         (throw (ex-info (str "could not load the speech engine: " (error* h)) {})))
+      (when on-device (on-device (device* h)))
       (let [{:keys [temperature top-k top-p min-p kbps]} settings
             e (mp3-open* (int sample-rate) (int kbps))
             total (count lines)]

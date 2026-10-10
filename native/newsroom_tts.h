@@ -41,8 +41,14 @@ int nrtts_convert_voices(const char *voices_json, const char *config_json, const
 /* --- the engine --- */
 
 /* Loads the three converted files; NULL only when out of memory, else check
- * nrtts_ok. `threads` 0 picks the machine's count. */
-nrtts *nrtts_open(const char *lm_gguf, const char *decoder_gguf, const char *voices_gguf, int threads);
+ * nrtts_ok. `threads` 0 picks the machine's count. `device` NRTTS_AUTO runs
+ * on the GPU the build has a backend for (Metal, CUDA, HIP or Vulkan) when
+ * one comes up, and on the CPU when none does or it can't hold the model;
+ * NRTTS_CPU keeps to the CPU. */
+enum { NRTTS_AUTO = 0, NRTTS_CPU = 1 };
+nrtts *nrtts_open(const char *lm_gguf, const char *decoder_gguf, const char *voices_gguf, int threads, int device);
+/* what it runs on: the GPU backend's name, or CPU */
+const char *nrtts_device(nrtts *h);
 int nrtts_ok(nrtts *h);
 const char *nrtts_error(nrtts *h);
 void nrtts_free(nrtts *h);

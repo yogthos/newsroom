@@ -29,8 +29,8 @@
   :failed or :cancelled. While :writing, :done and :total count the
   script's segments, and while :speaking, its lines; :note, before the
   first line, is what the engine says it is doing, the first time it
-  fetches and converts its model. :pending is the day waiting to be made
-  next."}
+  fetches and converts its model, and :device what it records on.
+  :pending is the day waiting to be made next."}
   status (ratom/atom {:state :idle}))
 
 (defonce ^{:doc "The day being made, how far and what waits: `status`
@@ -115,6 +115,8 @@
                                                                              :note nil))
                                                      ;; the first time, the engine fetches its model
                                                      :on-status #(swap! status assoc :note %)
+                                                     :on-device #(swap! status assoc :device %)
+                                                     :device (:podcast-device config :auto)
                                                      :cancelled? cancelled?})]
     (when (cancelled?) (throw (cancelled-error)))
     (store/save-narration! store {:day day :mp3 mp3 :transcript transcript :seconds seconds
@@ -126,7 +128,8 @@
 (defn- run-job!
   "Make the podcast of `job`, catching whatever stops it into `status`."
   [{:keys [ctx day cancelled]}]
-  (swap! status merge {:state :writing :day day :done 0 :total nil :error nil :seconds nil :note nil})
+  (swap! status merge {:state :writing :day day :done 0 :total nil :error nil :seconds nil :note nil
+                       :device nil})
   (let [cancelled? #(deref cancelled)]
     (try
       (let [seconds (record! ctx day cancelled?)]

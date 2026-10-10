@@ -94,8 +94,25 @@ jobs:
             native/lame
           key: tts-${{ matrix.target }}-${{ hashFiles('deps.edn', 'native/build_tts.sh') }}
 
+      # the Vulkan SDK, for the speech engine's GPU plugin: the shader
+      # compiler and the headers. The plugin needs only the Vulkan loader
+      # a GPU's driver installs
+      - name: Install the Vulkan SDK
+        if: runner.os == 'Linux'
+        run: |
+          v=1.4.357.1
+          curl -sSfL -o "$RUNNER_TEMP/vulkan.tar.xz" "https://sdk.lunarg.com/sdk/download/$v/linux/vulkansdk-linux-x86_64-$v.tar.xz"
+          mkdir -p "$RUNNER_TEMP/vulkan"
+          tar -xJf "$RUNNER_TEMP/vulkan.tar.xz" -C "$RUNNER_TEMP/vulkan"
+          echo "VULKAN_SDK=$RUNNER_TEMP/vulkan/$v/x86_64" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/vulkan/$v/x86_64/bin" >> "$GITHUB_PATH"
+
+      # Metal on macOS; on Linux the CPU, with a Vulkan plugin beside it for
+      # the GPUs whose drivers are there
       - name: Build the speech engine
         if: runner.os != 'Windows'
+        env:
+          NEWSROOM_TTS_GPU: ${{ runner.os == 'Linux' && 'vulkan' || '' }}
         run: jolt tts
 
       - name: Test

@@ -433,6 +433,7 @@ struct nrtts {
     int repetition_window = 50;
     bool use_reference = true;
     int n_ctx = 0, n_embd = 0, n_vocab = 0, threads = 1;
+    std::string device = "CPU";
     std::vector<float> audio;
     std::string error;       // why it couldn't be opened
     std::string last_error;  // why the last call failed
@@ -669,39 +670,117 @@ static void quiet_log(enum ggml_log_level level, const char * text, void *) {
     if (level == GGML_LOG_LEVEL_ERROR) std::fputs(text, stderr);
 }
 
-nrtts * nrtts_open(const char * lm, const char * dec, const char * voices, int threads) {
+// whether the build has a GPU backend with a device that comes up
+static bool have_gpu() {
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        auto t = ggml_backend_dev_type(ggml_backend_dev_get(i));
+        if (t == GGML_BACKEND_DEVICE_TYPE_GPU || t == GGML_BACKEND_DEVICE_TYPE_IGPU) return true;
+    }
+    return false;
+}
+
+// the name of the GPU the speech model goes to, as ggml calls it
+static std::string gpu_name() {
+    for (auto type : {GGML_BACKEND_DEVICE_TYPE_GPU, GGML_BACKEND_DEVICE_TYPE_IGPU})
+        if (ggml_backend_dev_t d = ggml_backend_dev_by_type(type)) return ggml_backend_dev_name(d);
+    return "CPU";
+}
+
+// Whether the decoder on the GPU gets what a CPU copy of it gets for a few
+// seconds of the voice's own codec tokens, with the same noise. Every op
+// passes ggml's own checks on every backend, but a driver can still get a
+// whole graph wrong (MoltenVK computes one tile of the upsampled encoder
+// wrong at random), and the speech would come out as noise; the speech model
+// is a well-worn path through llama.cpp and stays on the GPU either way.
+static bool decoder_agrees(s3gen::decoder & gpu, const char * path, int threads, const voice & v) {
+    s3gen::decoder cpu(path, threads, false);
+    std::vector<int32_t> tokens(v.reference_tokens.begin(),
+                                v.reference_tokens.begin() + std::min<size_t>(50, v.reference_tokens.size()));
+    const size_t T_mu = 2 * (v.decoder.prompt_token.size() + tokens.size() + 3);
+    std::vector<float> z0(80 * T_mu);
+    std::mt19937 rng(7);
+    std::normal_distribution<float> gauss(0.0f, 1.0f);
+    for (auto & x : z0) x = gauss(rng);
+    std::vector<float> source((T_mu - v.decoder.prompt_rows) * 480, 0.0f);
+    s3gen::overrides o;
+    o.z0 = &z0;
+    o.source = &source;
+    auto a = gpu.decode(tokens, v.decoder, 1, &o), b = cpu.decode(tokens, v.decoder, 1, &o);
+    if (a.size() != b.size() || a.empty()) return false;
+    double dot = 0, aa = 0, bb = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        dot += (double) a[i] * b[i];
+        aa += (double) a[i] * a[i];
+        bb += (double) b[i] * b[i];
+    }
+    // Metal comes out at 0.9999; a broken graph near nothing
+    return dot / std::sqrt(std::max(aa * bb, 1e-30)) > 0.995;
+}
+
+// the speech model and its context, on the GPU or kept to the CPU
+static bool load_lm(nrtts * h, const char * lm, bool gpu) {
+    static ggml_backend_dev_t no_devices[1] = {nullptr};
+    auto mp = llama_model_default_params();
+    mp.n_gpu_layers = gpu ? -1 : 0;
+    if (!gpu) mp.devices = no_devices;
+    h->model = llama_model_load_from_file(lm, mp);
+    if (!h->model) return false;
+    auto cp = llama_context_default_params();
+    cp.n_ctx = 4096;
+    cp.n_batch = 512;
+    cp.n_ubatch = 512;
+    cp.n_threads = h->threads;
+    cp.n_threads_batch = h->threads;
+    if (!gpu) {
+        cp.offload_kqv = false;
+        cp.op_offload = false;
+    }
+    h->ctx = llama_init_from_model(h->model, cp);
+    if (!h->ctx) {
+        llama_model_free(h->model);
+        h->model = nullptr;
+        return false;
+    }
+    return true;
+}
+
+nrtts * nrtts_open(const char * lm, const char * dec, const char * voices, int threads, int device) {
     nrtts * h = new (std::nothrow) nrtts();
     if (!h) return nullptr;
     try {
         llama_log_set(quiet_log, nullptr);
         h->threads = threads > 0 ? threads : (int) std::max(1u, std::thread::hardware_concurrency());
         llama_backend_init();
-        auto mp = llama_model_default_params();
-        mp.n_gpu_layers = 0;
-        h->model = llama_model_load_from_file(lm, mp);
-        if (!h->model) throw std::runtime_error(std::string("cannot load the speech model from ") + lm);
+        bool gpu = device != NRTTS_CPU && have_gpu();
+        if (!load_lm(h, lm, gpu)) {
+            // a GPU that can't take the model: the CPU, then
+            if (!gpu || !load_lm(h, lm, false))
+                throw std::runtime_error(std::string("cannot load the speech model from ") + lm);
+            gpu = false;
+        }
         h->vocab = llama_model_get_vocab(h->model);
         h->n_vocab = llama_vocab_n_tokens(h->vocab);
         h->n_embd = llama_model_n_embd(h->model);
-        auto cp = llama_context_default_params();
-        cp.n_ctx = 4096;
-        cp.n_batch = 512;
-        cp.n_ubatch = 512;
-        cp.n_threads = h->threads;
-        cp.n_threads_batch = h->threads;
-        h->ctx = llama_init_from_model(h->model, cp);
-        if (!h->ctx) throw std::runtime_error("cannot create the speech model's context");
         h->n_ctx = (int) llama_n_ctx(h->ctx);
         load_voices(h, voices);
         if (h->tm.base + h->tm.count > h->n_vocab) throw std::runtime_error("the voices' token map doesn't fit the model");
         for (auto & v : h->voices)
             if ((int) v.speaker.size() != h->n_embd) throw std::runtime_error("voice " + v.name + " doesn't fit the model");
-        h->decoder = std::make_unique<s3gen::decoder>(dec, h->threads);
+        h->decoder = std::make_unique<s3gen::decoder>(dec, h->threads, gpu);
+        if (gpu) h->device = gpu_name();
+        if (h->decoder->device() != "CPU" && !decoder_agrees(*h->decoder, dec, h->threads, h->voices.at(0))) {
+            // a GPU whose kernels get the decoder wrong: its speech model
+            // stays there, and the decoder goes to the CPU
+            h->decoder = std::make_unique<s3gen::decoder>(dec, h->threads, false);
+            h->device += " (decoder on the CPU)";
+        }
     } catch (const std::exception & e) {
         h->error = e.what();
     }
     return h;
 }
+
+const char * nrtts_device(nrtts * h) { return h ? h->device.c_str() : "none"; }
 
 int nrtts_ok(nrtts * h) { return h && h->error.empty() && h->decoder ? 1 : 0; }
 const char * nrtts_error(nrtts * h) {

@@ -403,6 +403,7 @@
   (let [d (defaults)]
     (is (true? (:podcast d)))
     (is (true? (:podcast-auto d)))
+    (is (= :auto (:podcast-device d)))
     (is (= 5 (:podcast-segments d)))
     (testing "two hosts, each in a voice the speech engine has"
       (is (= 2 (count (:podcast-hosts d))))

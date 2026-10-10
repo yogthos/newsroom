@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <numeric>
 
@@ -28,12 +29,13 @@ int main(int argc, char ** argv) try {
     const std::string voice = meta.at("voice"), spoken = meta.at("spoken");
     int failures = 0;
 
-    nrtts * h = nrtts_open(argv[1], argv[2], argv[3], 0);
+    const char * dev = std::getenv("NRTTS_DEVICE");
+    nrtts * h = nrtts_open(argv[1], argv[2], argv[3], 0, dev && std::string(dev) == "cpu" ? NRTTS_CPU : NRTTS_AUTO);
     if (!nrtts_ok(h)) {
         std::fprintf(stderr, "cannot open the engine: %s\n", nrtts_error(h));
         return 1;
     }
-    std::printf("%d voices\n", nrtts_voice_count(h));
+    std::printf("%d voices, on %s\n", nrtts_voice_count(h), nrtts_device(h));
 
     // the prompt
     std::vector<int32_t> prompt(8192);

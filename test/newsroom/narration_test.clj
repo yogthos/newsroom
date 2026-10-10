@@ -59,10 +59,13 @@
         prompts (atom [])
         spoken (atom nil)
         progress (atom [])
-        saved (atom 0)]
+        saved (atom 0)
+        device (atom nil)]
     (try
-      (with-redefs [tts/synthesize (fn [lines {:keys [on-progress]}]
+      (with-redefs [tts/synthesize (fn [lines {:keys [on-progress on-device] :as opts}]
                                      (reset! spoken lines)
+                                     (reset! device (:device opts))
+                                     (on-device "MTL0")
                                      (doseq [i (range (count lines))]
                                        (on-progress (inc i) (count lines))
                                        (swap! progress conj (select-keys @narration/status [:state :done :total])))
@@ -85,7 +88,9 @@
           (is (= [{:voice "Hugo" :text "About tariffs."} {:voice "Kiki" :text "[excited] Right!"}
                   {:voice "Hugo" :text "About tariffs."} {:voice "Kiki" :text "[excited] Right!"}]
                  @spoken))
-          (is (= {:state :speaking :done 2 :total 4} (second @progress)) "and its progress shows"))
+          (is (= {:state :speaking :done 2 :total 4} (second @progress)) "and its progress shows")
+          (is (= :auto @device) "on the device the settings name, auto when they don't")
+          (is (= "MTL0" (:device @narration/status)) "and what it ran on is kept"))
         (testing "the episode is stored with its script, and the pages told"
           (let [n (store/narration st "2026-09-30")]
             (is (= [{:speaker "Hugo" :text "About tariffs."} {:speaker "Kiki" :text "[excited] Right!"}]

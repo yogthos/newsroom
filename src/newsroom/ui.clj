@@ -181,7 +181,7 @@
 (defn- narration-panel
   "What the desk says about the podcast being made or made last, a line
   under the run's, nothing before the first."
-  [{:keys [state day done total error pending note]}]
+  [{:keys [state day done total error pending note device]}]
   (let [line (case state
                :writing (if total
                           [:p "Writing the podcast of " (sources/long-date day) ", segment "
@@ -189,7 +189,8 @@
                           [:p "Planning the podcast of " (sources/long-date day) "…"])
                :speaking (if note
                            [:p "Recording the podcast of " (sources/long-date day) ": " note "…"]
-                           [:p "Recording the podcast of " (sources/long-date day) ": " done " of " total " lines…"])
+                           [:p "Recording the podcast of " (sources/long-date day) ": " done " of " total " lines"
+                            (when device (str ", on " (tts/device-name device))) "…"])
                :done [:p "Recorded the podcast of " [:a {:href (str "/day/" day)} (sources/long-date day)] "."]
                :failed [:p.bad "The podcast of " (sources/long-date day) " failed: " error]
                :cancelled [:p.muted "The podcast of " (sources/long-date day) " was cancelled."]

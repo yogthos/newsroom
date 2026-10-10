@@ -35,11 +35,16 @@ struct model;
 
 class decoder {
 public:
-    // Loads the GGUF that convert_safetensors writes.
-    decoder(const std::string & gguf_path, int n_threads);
+    // Loads the GGUF that convert_safetensors writes, onto the first GPU that
+    // comes up when `use_gpu`, else, or when none does, the CPU. Ops the GPU
+    // can't run go to the CPU.
+    decoder(const std::string & gguf_path, int n_threads, bool use_gpu = true);
     ~decoder();
     decoder(const decoder &) = delete;
     decoder & operator=(const decoder &) = delete;
+
+    // the backend the weights are on: the GPU's name, or CPU
+    std::string device() const;
 
     // 24 kHz audio for `tokens`, codec ids in [0, 6561); three silence tokens
     // are appended as the encoder's lookahead, as the Python decoder does.

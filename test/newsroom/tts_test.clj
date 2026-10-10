@@ -46,6 +46,14 @@
                                   " Then one more."))]
       (is (not-any? #(< (count %) 130) (butlast chunks))))))
 
+(deftest the-device-is-named-as-a-reader-says-it
+  (is (= "the CPU" (tts/device-name "CPU")))
+  (is (= "the GPU, through Metal" (tts/device-name "MTL0")))
+  (is (= "the GPU, through Vulkan" (tts/device-name "Vulkan0")))
+  (is (= "the GPU, through CUDA" (tts/device-name "CUDA0")))
+  (is (= "the GPU, through ROCm" (tts/device-name "ROCm0")))
+  (is (= "the GPU, through Vulkan and the CPU" (tts/device-name "Vulkan0 (decoder on the CPU)"))))
+
 (deftest the-model-files-are-named-by-pinned-revisions
   (is (every? #(re-find #"/resolve/[0-9a-f]{40}/" (:url %)) (vals tts/downloads))))
 

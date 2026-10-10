@@ -112,6 +112,9 @@
  ;; it off
  :podcast true
  :podcast-auto true
+ ;; what the speech engine records on: :auto, the GPU when the engine was
+ ;; built for one and it comes up, else the CPU, or :cpu
+ :podcast-device :auto
  :podcast-segments 5
  :podcast-hosts
  [{:name "Hugo" :voice "Hugo"

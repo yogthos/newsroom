@@ -18,6 +18,13 @@
   S3 decoder it writes for ported to ggml, and LAME for the MP3. The first
   podcast downloads the model, about 2 GB. `jolt tts` builds the engine
   from a checkout, and the macOS and Linux releases carry it.
+- **The GPU, when there's one.** The engine records on Metal on a Mac, and
+  on Linux through a Vulkan plugin beside the binary, for NVIDIA, AMD and
+  Intel GPUs, falling back to the CPU when there's no GPU or driver, or
+  when the GPU gets the decoder wrong. CUDA and ROCm plugins build from a
+  checkout. `:podcast-device` keeps it to the CPU.
+- `:podcast-auto` decides whether a podcast is recorded as each briefing
+  is filed; off, one is recorded from the day's page.
 
 ### Changed
 

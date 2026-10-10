@@ -52,7 +52,8 @@ constexpr int SR = 24000;
 }  // namespace
 
 struct model {
-    ggml_backend_t        backend = nullptr;
+    ggml_backend_t        gpu = nullptr;   // the GPU the weights live on, when there is one
+    ggml_backend_t        cpu = nullptr;   // for what the GPU can't run, and everything without one
     ggml_context *        ctx_w = nullptr;
     ggml_backend_buffer_t buffer_w = nullptr;
     std::map<std::string, ggml_tensor *> tensors;
@@ -64,7 +65,16 @@ struct model {
     ~model() {
         if (buffer_w) ggml_backend_buffer_free(buffer_w);
         if (ctx_w) ggml_free(ctx_w);
-        if (backend) ggml_backend_free(backend);
+        if (gpu) ggml_backend_free(gpu);
+        if (cpu) ggml_backend_free(cpu);
+    }
+
+    // the backends a graph is scheduled over, the GPU's first
+    std::vector<ggml_backend_t> backends() const {
+        std::vector<ggml_backend_t> b;
+        if (gpu) b.push_back(gpu);
+        b.push_back(cpu);
+        return b;
     }
 
     ggml_tensor * get(const std::string & name) const {
@@ -80,28 +90,28 @@ struct model {
         return v;
     }
 
-    void compute(ggml_cgraph * gf) const {
-        ggml_backend_cpu_set_n_threads(backend, n_threads);
-        ggml_backend_graph_compute(backend, gf);
-    }
 };
 
 namespace {
 
-// A graph's context and allocator, freed with it.
+// A graph's context and its scheduler over the model's backends, which runs
+// each op on the GPU when there is one and it can, else on the CPU; freed
+// with it.
 struct graph {
     std::vector<uint8_t> buf;
+    size_t nodes;
     ggml_context * ctx = nullptr;
     ggml_cgraph * gf = nullptr;
-    ggml_gallocr_t allocr = nullptr;
+    ggml_backend_sched_t sched = nullptr;
+    const model * m = nullptr;
 
-    graph(size_t meta_bytes, size_t nodes) : buf(meta_bytes) {
+    graph(size_t meta_bytes, size_t nodes) : buf(meta_bytes), nodes(nodes) {
         ggml_init_params p = { buf.size(), buf.data(), true };
         ctx = ggml_init(p);
         gf = ggml_new_graph_custom(ctx, nodes, false);
     }
     ~graph() {
-        if (allocr) ggml_gallocr_free(allocr);
+        if (sched) ggml_backend_sched_free(sched);
         if (ctx) ggml_free(ctx);
     }
     ggml_tensor * input(ggml_tensor * t, const char * name) {
@@ -109,14 +119,24 @@ struct graph {
         ggml_set_input(t);
         return t;
     }
-    void build(const model & m, ggml_tensor * out) {
+    void build(const model & mm, ggml_tensor * out) {
+        m = &mm;
         ggml_set_output(out);
         ggml_build_forward_expand(gf, out);
-        allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(m.backend));
-        if (!ggml_gallocr_alloc_graph(allocr, gf)) throw std::runtime_error("s3gen: cannot allocate a graph");
+        auto b = mm.backends();
+        sched = ggml_backend_sched_new(b.data(), nullptr, (int) b.size(), std::max(nodes, (size_t) GGML_DEFAULT_GRAPH_SIZE),
+                                       false, true);
+        if (!ggml_backend_sched_alloc_graph(sched, gf)) throw std::runtime_error("s3gen: cannot allocate a graph");
     }
+    void compute() {
+        ggml_backend_cpu_set_n_threads(m->cpu, m->n_threads);
+        if (ggml_backend_sched_graph_compute(sched, gf) != GGML_STATUS_SUCCESS)
+            throw std::runtime_error("s3gen: a graph failed to compute");
+    }
+    // an input's values; one the graph doesn't use has nowhere to go
     void set(const char * name, const void * data, size_t bytes) {
-        ggml_backend_tensor_set(ggml_graph_get_tensor(gf, name), data, 0, bytes);
+        ggml_tensor * t = ggml_graph_get_tensor(gf, name);
+        if (t && t->buffer) ggml_backend_tensor_set(t, data, 0, bytes);
     }
     std::vector<float> get(ggml_tensor * t) {
         std::vector<float> v(ggml_nelements(t));
@@ -150,9 +170,17 @@ ggml_tensor * conv_transpose1d(ggml_context * ctx, ggml_tensor * kernel, ggml_te
     return ggml_cont(ctx, v);
 }
 
-// zeros before and after dim 0
+// zeros before and after dim 0, as a concat of zeroed slices: Vulkan's
+// pad with a left margin goes wrong in these graphs
 ggml_tensor * zero_pad(ggml_context * ctx, ggml_tensor * x, int front, int back) {
-    return ggml_pad_ext(ctx, x, front, back, 0, 0, 0, 0, 0, 0);
+    auto zeros = [&](int n) {
+        ggml_tensor * v = ggml_view_4d(ctx, x, n, x->ne[1], x->ne[2], x->ne[3], x->nb[1], x->nb[2], x->nb[3], 0);
+        return ggml_scale(ctx, ggml_cont(ctx, v), 0.0f);
+    };
+    ggml_tensor * y = x;
+    if (front > 0) y = ggml_concat(ctx, zeros(front), y, 0);
+    if (back > 0) y = ggml_concat(ctx, y, zeros(back), 0);
+    return y;
 }
 
 ggml_tensor * mish(ggml_context * ctx, ggml_tensor * x) {
@@ -298,7 +326,7 @@ std::vector<float> run_encoder(const model & m, const std::vector<float> & embed
     auto pe1 = rel_pos_emb(T), pe2 = rel_pos_emb(T2);
     g.set("pos1", pe1.data(), pe1.size() * sizeof(float));
     g.set("pos2", pe2.data(), pe2.size() * sizeof(float));
-    m.compute(g.gf);
+    g.compute();
     return g.get(mu);
 }
 
@@ -388,7 +416,7 @@ std::vector<float> time_mlp(const model & m, float t) {
     y = linear(g.ctx, m.get("cfm/time_mlp/linear_2/weight"), m.get("cfm/time_mlp/linear_2/bias"), ggml_silu(g.ctx, y));
     g.build(m, y);
     g.set("x", sinus.data(), sinus.size() * sizeof(float));
-    m.compute(g.gf);
+    g.compute();
     return g.get(y);
 }
 
@@ -402,7 +430,7 @@ std::vector<float> time_mixed(const model & m, float t, float r) {
     g.build(m, y);
     g.set("t", te.data(), te.size() * sizeof(float));
     g.set("r", re.data(), re.size() * sizeof(float));
-    m.compute(g.gf);
+    g.compute();
     return g.get(y);
 }
 
@@ -452,7 +480,7 @@ struct estimator {
         g.set("spks", spks.data(), spks.size() * sizeof(float));
         g.set("cond", cond.data(), cond.size() * sizeof(float));
         g.set("t", t_emb.data(), t_emb.size() * sizeof(float));
-        m.compute(g.gf);
+        g.compute();
         return g.get(out);
     }
 };
@@ -480,7 +508,7 @@ std::vector<float> run_f0(const model & m, const std::vector<float> & mel, int T
     y = ggml_reshape_1d(g.ctx, ggml_abs(g.ctx, y), T);
     g.build(m, y);
     g.set("mel", mel.data(), mel.size() * sizeof(float));
-    m.compute(g.gf);
+    g.compute();
     return g.get(y);
 }
 
@@ -629,7 +657,7 @@ std::vector<float> run_hift(const model & m, const std::vector<float> & mel, int
     g.build(m, x);
     g.set("mel", mel.data(), mel.size() * sizeof(float));
     g.set("s", s_stft.data(), s_stft.size() * sizeof(float));
-    m.compute(g.gf);
+    g.compute();
     return g.get(x);
 }
 
@@ -637,13 +665,25 @@ std::vector<float> run_hift(const model & m, const std::vector<float> & mel, int
 
 // --- loading ---------------------------------------------------------------------
 
-decoder::decoder(const std::string & path, int n_threads) : m(std::make_unique<model>()) {
+// The first GPU that comes up, discrete before integrated, or nullptr.
+static ggml_backend_t init_gpu() {
+    for (auto type : {GGML_BACKEND_DEVICE_TYPE_GPU, GGML_BACKEND_DEVICE_TYPE_IGPU}) {
+        if (ggml_backend_dev_t dev = ggml_backend_dev_by_type(type)) {
+            if (ggml_backend_t b = ggml_backend_dev_init(dev, nullptr)) return b;
+        }
+    }
+    return nullptr;
+}
+
+decoder::decoder(const std::string & path, int n_threads, bool use_gpu) : m(std::make_unique<model>()) {
     ggml_context * tmp = nullptr;
     gguf_init_params gp = { false, &tmp };
     gguf_context * g = gguf_init_from_file(path.c_str(), gp);
     if (!g) throw std::runtime_error("cannot read the decoder's weights from " + path);
     m->n_threads = std::max(1, n_threads);
-    m->backend = ggml_backend_cpu_init();
+    m->cpu = ggml_backend_cpu_init();
+    if (!m->cpu) throw std::runtime_error("s3gen: cannot start the CPU backend");
+    if (use_gpu) m->gpu = init_gpu();
     const int64_t n = gguf_get_n_tensors(g);
     // the snake activations' reciprocals are added next to their alphas
     std::vector<std::string> alphas;
@@ -665,7 +705,14 @@ decoder::decoder(const std::string & path, int n_threads) : m(std::make_unique<m
         ggml_set_name(dst, inv.c_str());
         m->tensors[inv] = dst;
     }
-    m->buffer_w = ggml_backend_alloc_ctx_tensors(m->ctx_w, m->backend);
+    m->buffer_w = ggml_backend_alloc_ctx_tensors(m->ctx_w, m->gpu ? m->gpu : m->cpu);
+    if (!m->buffer_w && m->gpu) {
+        // no room on the GPU: the CPU, then
+        ggml_backend_free(m->gpu);
+        m->gpu = nullptr;
+        m->buffer_w = ggml_backend_alloc_ctx_tensors(m->ctx_w, m->cpu);
+    }
+    if (!m->buffer_w) throw std::runtime_error("s3gen: no memory for the decoder's weights");
     for (int64_t i = 0; i < n; ++i) {
         const char * name = gguf_get_tensor_name(g, i);
         ggml_tensor * src = ggml_get_tensor(tmp, name);
@@ -686,7 +733,22 @@ decoder::decoder(const std::string & path, int n_threads) : m(std::make_unique<m
 
 decoder::~decoder() = default;
 
+std::string decoder::device() const {
+    return m->gpu ? ggml_backend_name(m->gpu) : "CPU";
+}
+
 // --- decoding --------------------------------------------------------------------
+
+// the tokens' embeddings, ne=[D, T]
+static std::vector<float> embed(const model & m, const std::vector<int32_t> & tokens) {
+    ggml_tensor * e = m.get("flow/input_embedding");
+    if (e->ne[0] != D || e->ne[1] != VOCAB) throw std::runtime_error("s3gen: unexpected input embedding");
+    std::vector<float> out(tokens.size() * D);
+    for (size_t i = 0; i < tokens.size(); ++i)
+        ggml_backend_tensor_get(e, out.data() + i * D, (size_t) tokens[i] * D * sizeof(float), D * sizeof(float));
+    return out;
+}
+
 
 std::vector<float> decoder::decode(const std::vector<int32_t> & speech, const voice & v,
                                    uint32_t seed, const overrides * o) {
@@ -703,19 +765,7 @@ std::vector<float> decoder::decode(const std::vector<int32_t> & speech, const vo
     n_speech += LOOKAHEAD;
     const int T = (int) tokens.size(), T_mu = 2 * T;
 
-    // the tokens' embeddings, ne=[D, T]
-    {
-        ggml_tensor * e = m->get("flow/input_embedding");
-        if (e->ne[0] != D || e->ne[1] != VOCAB) throw std::runtime_error("s3gen: unexpected input embedding");
-    }
-    std::vector<float> embedded((size_t) T * D);
-    {
-        ggml_tensor * e = m->get("flow/input_embedding");
-        for (int i = 0; i < T; ++i)
-            ggml_backend_tensor_get(e, embedded.data() + (size_t) i * D, (size_t) tokens[i] * D * sizeof(float),
-                                    D * sizeof(float));
-    }
-    std::vector<float> mu_tm = run_encoder(*m, embedded, T);     // ne=[80, T_mu]
+    std::vector<float> mu_tm = run_encoder(*m, embed(*m, tokens), T);     // ne=[80, T_mu]
     if (o && o->mu_out) *o->mu_out = mu_tm;
     std::vector<float> mu((size_t) MEL * T_mu);                  // ne=[T_mu, 80]
     for (int c = 0; c < MEL; ++c)

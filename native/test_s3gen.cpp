@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 
 namespace {
@@ -80,7 +81,9 @@ int main(int argc, char ** argv) try {
     o.mel_out = &mel;
     o.f0_out = &f0;
 
-    s3gen::decoder dec(argv[1], 8);
+    const char * dev = std::getenv("NRTTS_DEVICE");
+    s3gen::decoder dec(argv[1], 8, !(dev && std::string(dev) == "cpu"));
+    std::printf("on %s\n", dec.device().c_str());
     auto wav = dec.decode(tokens, v, 1234, &o);
 
     // the mel Python's second step arrives at, after the prompt's frames
@@ -94,10 +97,14 @@ int main(int argc, char ** argv) try {
             want_mel[(size_t) c * T_mel + t] = x1[i] + 0.5f * out1[i];
         }
 
-    check("mu", mu, g.at("mu").f32(), 1e-4);
-    check("mel", mel, want_mel, 1e-3);
-    check("f0", f0, g.at("f0").f32(), 2e-3);
-    check("wav", wav, g.at("wav").f32(), 1e-2);
+    // the CPU's arithmetic is the reference's to within rounding; a GPU's
+    // kernels round differently and sum in another order, which the stages
+    // compound, so its limits are looser
+    const bool gpu = dec.device() != "CPU";
+    check("mu", mu, g.at("mu").f32(), gpu ? 1e-3 : 1e-4);
+    check("mel", mel, want_mel, gpu ? 5e-3 : 1e-3);
+    check("f0", f0, g.at("f0").f32(), gpu ? 5e-3 : 2e-3);
+    check("wav", wav, g.at("wav").f32(), gpu ? 5e-2 : 1e-2);
     return failures ? 1 : 0;
 } catch (const std::exception & e) {
     std::fprintf(stderr, "test-s3gen: %s\n", e.what());

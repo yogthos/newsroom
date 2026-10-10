@@ -145,6 +145,10 @@
              {:key :podcast-auto :type :boolean :default true
               :doc (str "Record the podcast as soon as each briefing is filed, so it's ready by the time "
                         "you read it. Off, a podcast is recorded only from the day's page.")}
+             {:key :podcast-device :type :keyword :options [:auto :cpu] :default :auto
+              :doc (str "What the speech engine records on. auto is the GPU when the engine was built for "
+                        "one and it comes up, Metal on a Mac, or the CUDA, ROCm or Vulkan plugin beside "
+                        "newsroom, and the CPU otherwise. cpu keeps it to the CPU.")}
              {:key :podcast-segments :type :int :min 2 :max 12 :default 5
               :doc (str "How many segments an episode is planned in, an introduction and a wrap-up among "
                         "them. Each is written with a model call of its own.")}
