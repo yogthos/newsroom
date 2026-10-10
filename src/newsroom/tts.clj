@@ -38,47 +38,42 @@
 ;; Two engines can be there. The one linked into newsroom runs on the CPU,
 ;; and on macOS on Metal. A GPU plugin, libnewsroom_tts_gpu, built for CUDA,
 ;; HIP or Vulkan (native/build_tts.sh), is the same engine with its entry
-;; points named nrttsg_; it is loaded when it's beside the binary, in
-;; native/, or at NEWSROOM_TTS_GPU_LIB, and its own libraries, the GPU's
-;; driver among them, are there to load it. Each binding calls the plugin's
-;; function when it loaded, else the linked engine's.
+;; points named nrttsg_; it is loaded from the config directory's
+;; plugins/speech/ (`library-places`), or NEWSROOM_TTS_GPU_LIB, and its own
+;; libraries, the GPU's driver among them, are there to load it. Each binding
+;; calls the plugin's function when it loaded, else the linked engine's.
 
 (def ^:private plugin-name
   (if (re-find #"(?i)mac|darwin" (System/getProperty "os.name")) "libnewsroom_tts_gpu.dylib" "libnewsroom_tts_gpu.so"))
 
-(ffi/defcfn ^:private ns-executable-path* "_NSGetExecutablePath" [:pointer :pointer] :int)
+(defn library-places
+  "Where the speech engine's library `name` is looked for, in order: the
+  config directory's plugins/speech/, where a release's go, and a
+  checkout's native/, where `jolt tts` builds them."
+  [name]
+  [(config/path "plugins" "speech" name)
+   (.getPath (io/file "native" name))])
 
-(defn- executable-dir
-  "The directory the running binary is in, where it can be told: from
-  /proc on Linux, and from dyld on macOS."
-  []
-  (try (let [exe (if (.exists (io/file "/proc/self/exe"))
-                   (io/file "/proc/self/exe")
-                   (when (ffi/find-symbol "_NSGetExecutablePath")
-                     (ffi/with-arena [a]
-                       (let [buf (ffi/alloc a 4096) size (ffi/alloc a :uint32)]
-                         (ffi/write size :uint32 4096)
-                         (when (zero? (ns-executable-path* buf size))
-                           (io/file (ffi/ptr->string buf)))))))]
-         (some-> exe .getCanonicalFile .getParentFile .getPath))
-       (catch Throwable _ nil)))
+(defn- library-path
+  "The first place `name` is, NEWSROOM_TTS_<env>_LIB before the rest."
+  [env name]
+  (->> (cons (not-empty (System/getenv (str "NEWSROOM_TTS_" env "_LIB"))) (library-places name))
+       (remove nil?)
+       (filter #(.exists (io/file %)))
+       first))
 
 (def ^:private plugin
   "Whether the GPU plugin loaded, tried once."
   (delay
-    (let [candidates (distinct (remove nil? [(not-empty (System/getenv "NEWSROOM_TTS_GPU_LIB"))
-                                             (some-> (executable-dir) (io/file plugin-name) .getPath)
-                                             (.getPath (io/file "native" plugin-name))]))
-          present (filter #(.exists (io/file %)) candidates)]
-      (when (seq present)
-        (try (ffi/load-library (vec present))
-             (some? (ffi/find-symbol "nrttsg_open"))
-             (catch Throwable e
-               ;; most often the GPU's own libraries aren't installed
-               (binding [*out* *err*]
-                 (println "newsroom: the speech engine's GPU plugin didn't load, so it runs on the CPU:"
-                          (ex-message e)))
-               false))))))
+    (when-let [path (library-path "GPU" plugin-name)]
+      (try (ffi/load-library path)
+           (some? (ffi/find-symbol "nrttsg_open"))
+           (catch Throwable e
+             ;; most often the GPU's own libraries aren't installed
+             (binding [*out* *err*]
+               (println "newsroom: the speech engine's GPU plugin didn't load, so it runs on the CPU:"
+                        (ex-message e)))
+             false)))))
 
 (defmacro ^:private defengine
   "A binding of the engine's `sym` that calls the plugin's when it loaded,
@@ -124,13 +119,7 @@
 
 (def ^:private mini-path
   "The mini plugin's file, the first of the places it can be that has it."
-  (delay
-    (->> [(not-empty (System/getenv "NEWSROOM_TTS_MINI_LIB"))
-          (some-> (executable-dir) (io/file mini-name) .getPath)
-          (.getPath (io/file "native" mini-name))]
-         (remove nil?)
-         (filter #(.exists (io/file %)))
-         first)))
+  (delay (library-path "MINI" mini-name)))
 
 (def ^:private mini
   "Whether the mini plugin loaded, tried once."

@@ -1,6 +1,7 @@
 /* mini.h: KittenTTS mini 0.8, the small engine, through ONNX Runtime, with
  * espeak-ng for its phonemes. A plugin of its own, libnewsroom_tts_mini,
- * which newsroom.tts loads beside the binary; see mini.cpp.
+ * which newsroom.tts loads from the config directory's plugins/speech/;
+ * see mini.cpp.
  *
  * Its audio goes to the MP3 through the main engine's nrtts_mp3_add_pcm. */
 #ifndef NEWSROOM_TTS_MINI_H

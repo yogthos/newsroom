@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [newsroom.config :as config]
             [newsroom.tts :as tts]))
 
 (deftest numbers-are-read-out
@@ -54,6 +55,12 @@
   (is (= "the GPU, through ROCm" (tts/device-name "ROCm0")))
   (is (= "the GPU, through Vulkan and the CPU" (tts/device-name "Vulkan0 (decoder on the CPU)")))
   (is (= "the GPU, through Vulkan and the CPU" (tts/device-name "Vulkan0 (speech model on the CPU)"))))
+
+(deftest the-speech-libraries-live-in-the-config-plugins-folder
+  (let [places (tts/library-places "libnewsroom_tts_mini.so")]
+    (is (= (config/path "plugins" "speech" "libnewsroom_tts_mini.so") (first places)))
+    (is (= "native/libnewsroom_tts_mini.so" (last places)) "and a checkout's native/, for development")
+    (is (= 2 (count places)) "and nowhere else, like beside the binary")))
 
 (deftest the-model-files-are-named-by-pinned-revisions
   (is (every? #(re-find #"/resolve/[0-9a-f]{40}/" (:url %)) (concat (vals tts/downloads) (vals tts/mini-downloads)))))

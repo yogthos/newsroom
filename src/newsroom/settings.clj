@@ -153,8 +153,8 @@
                         "it lacks in its deepest of the same sex, Luna or Bruno.")}
              {:key :podcast-device :type :keyword :options [:auto :cpu] :default :auto
               :doc (str "What the speech engine records on. auto is the GPU when the engine was built for "
-                        "one and it comes up, Metal on a Mac, or the CUDA, ROCm or Vulkan plugin beside "
-                        "newsroom, and the CPU otherwise. cpu keeps it to the CPU.")}
+                        "one and it comes up, Metal on a Mac, or the CUDA, ROCm or Vulkan plugin in "
+                        "plugins/speech/, and the CPU otherwise. cpu keeps it to the CPU.")}
              {:key :podcast-segments :type :int :min 2 :max 12 :default 5
               :doc (str "How many segments an episode is planned in, an introduction and a wrap-up among "
                         "them. Each is written with a model call of its own.")}

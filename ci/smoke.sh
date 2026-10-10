@@ -51,12 +51,14 @@ fi
 echo "smoke: read an https source"
 for p in plugins/*/; do
   [ -d "$p" ] || continue
+  # plugins/speech/ is the speech engine's libraries, not Clojure
+  find "$p" -name '*.clj' -o -name '*.cljc' | grep -q . || continue
   p=$(basename "$p")
   grep -q "loaded plugin $p" smoke.log || { echo "smoke: plugin $p didn't load"; exit 1; }
   echo "smoke: loaded plugin $p"
 done
-# the speech engines, linked in and beside the binary, where they're built
-if [ -f libnewsroom_tts_mini.so ] || [ -f libnewsroom_tts_mini.dylib ]; then
+# the speech engines, linked in and in plugins/speech/, where they're built
+if [ -f plugins/speech/libnewsroom_tts_mini.so ] || [ -f plugins/speech/libnewsroom_tts_mini.dylib ]; then
   grep -q "speech engines: .*KittenTTS mini" smoke.log || { echo "smoke: the small speech engine didn't load"; exit 1; }
   echo "smoke: loaded the small speech engine"
 fi

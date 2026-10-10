@@ -8,10 +8,19 @@
   :kitten-mini` records the podcast with KittenTTS mini 0.8 instead of
   KittenTTS 2: a small model on the CPU, many times faster, through ONNX
   Runtime with espeak-ng for its phonemes, in a plugin the macOS and Linux
-  releases carry beside the binary. It reads no emotion or emphasis, and a
+  releases carry. It reads no emotion or emphasis, and a
   host whose voice it lacks speaks in its deepest of the same sex. Its
   first podcast downloads about 80 MB. Startup says which speech engines
   newsroom found.
+
+### Changed
+
+- **The speech engine's plugins live with the other plugins.** The GPU
+  plugin and the small engine are looked for in the config directory's
+  `plugins/speech/`, not beside the binary, and the release carries them
+  in `plugins/speech/` for copying there, so nothing but `newsroom` goes
+  in a place like `/usr/local/bin`. Move a `libnewsroom_tts_gpu.so` from
+  beside the binary into `plugins/speech/`.
 
 ## v0.11.0 — 9 October 2026
 

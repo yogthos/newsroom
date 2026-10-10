@@ -166,7 +166,7 @@ case "$GPU" in
 esac
 
 # --- the mini engine: KittenTTS mini through ONNX Runtime, with espeak-ng ---------
-# libnewsroom_tts_mini beside native/, with ONNX Runtime's library beside it
+# libnewsroom_tts_mini in native/, with ONNX Runtime's library beside it
 # (the plugin finds it there) and espeak-ng's English data in
 # native/espeak-ng-data. NEWSROOM_TTS_MINI=0 leaves it out
 if [ "${NEWSROOM_TTS_MINI:-1}" != 0 ]; then
