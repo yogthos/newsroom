@@ -92,7 +92,7 @@ jobs:
           path: |
             native/llama.cpp
             native/lame
-          key: tts-${{ matrix.target }}-${{ hashFiles('deps.edn', 'native/build_tts.sh') }}
+          key: tts-${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('deps.edn', 'native/build_tts.sh') }}
 
       # the Vulkan SDK, for the speech engine's GPU plugin: the shader
       # compiler and the headers. The SDK has no loader to link against, so
