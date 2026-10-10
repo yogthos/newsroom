@@ -24,6 +24,10 @@
             [newsroom.trends :as trends]
             [newsroom.tts :as tts]))
 
+(defonce ^{:doc "The settings the pages are drawn with, which core keeps to the ones
+  it runs with: what a page offers, like recording a podcast, follows them."}
+  config (atom {}))
+
 ;; --- sidebar -----------------------------------------------------------------------
 
 (def ^:private asset-version
@@ -398,7 +402,8 @@
   "The day's podcast, a player with its transcript, under the dateline.
   The player keeps its id, so the article drawn again while it plays
   leaves it playing. With no podcast yet, what the narration is doing on
-  the day, or a button to record one when speech can be made; how far it
+  the day, or a button to record one when podcasts are on and speech can
+  be made; how far it
   has got is the desk's to show, since the article is drawn again only as
   the work moves on (see `fragment`)."
   [st day]
@@ -420,7 +425,7 @@
         [:p#podcast.podcast.muted "The podcast of this briefing is being recorded…"]
         (= day pending)
         [:p#podcast.podcast.muted "The podcast of this briefing will be recorded next."]
-        (tts/available?)
+        (and (not (false? (:podcast @config))) (tts/available?))
         [:p#podcast.podcast
          [:button.quiet {"data-on:click" (str "@post('/podcast?day=" day "')")} "Record a podcast of this briefing"]]))))
 

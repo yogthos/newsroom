@@ -29,7 +29,8 @@
     POST /digest?kind=week&period=YYYY-Www
                             write a digest (kind week or month)
     POST /cancel            cancel the run in flight
-    POST /podcast?day=...   write and record a stored day's podcast again
+    POST /podcast?day=...   write and record a stored day's podcast again,
+                            when :podcast is on
     POST /ask               a report on the reader's topics, or an answer
                             in a conversation about them, streamed as
                             server-sent events (see newsroom.ask)"
@@ -81,6 +82,7 @@
   (let [{old :config :keys [file schedule]} @system
         cfg (config/effective file stored)]
     (swap! system assoc :config cfg)
+    (reset! ui/config cfg)
     (plugin/set-config! cfg)
     (when (not= (select-keys old [:run-at :run-every-hours]) (select-keys cfg [:run-at :run-every-hours]))
       (when schedule (schedule))
@@ -255,10 +257,11 @@
 
 (defn- start-podcast [{:keys [params]}]
   (let [day (get params "day")]
-    (if (and day (news/valid-day? day))
-      (do (pipeline/narrate! (ctx) day)
-          (ds/patch-signals {}))
-      {:status 400 :body "bad day\n"})))
+    (cond
+      (not (and day (news/valid-day? day))) {:status 400 :body "bad day\n"}
+      (false? (get-in @system [:config :podcast])) {:status 409 :body "podcasts are turned off\n"}
+      :else (do (pipeline/narrate! (ctx) day)
+                (ds/patch-signals {})))))
 
 (defn- start-digest [{:keys [params]}]
   (let [kind (some-> (get params "kind") keyword)
@@ -368,6 +371,7 @@
         cfg (config/effective file (settings/stored st))
         plugins (plugin/load-all! (config/path "plugins") cfg)
         _ (reset! system {:config cfg :store st :file (select-keys file config/static-keys)})
+        _ (reset! ui/config cfg)
         pruned (pipeline/prune-days! (ctx))
         schedule (start-schedule!)
         handler (ds/wrap-datastar app {:rate-limit-ms 200})

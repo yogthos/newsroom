@@ -18,3 +18,6 @@ native/*.dylib
 native/*.so
 native/*.dll
 native/frameworks/
+# release archives downloaded to try
+/newsroom-*.tar.gz
+/newsroom-*.zip

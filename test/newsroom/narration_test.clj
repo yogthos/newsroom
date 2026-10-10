@@ -252,7 +252,11 @@
           (with-redefs [narration/enqueue! (fn [_ day] (reset! asked day) true)]
             (is (= 200 (:status (core/app {:uri "/podcast" :query-string "day=2026-09-30" :request-method :post}))))
             (is (= "2026-09-30" @asked))
-            (is (= 400 (:status (core/app {:uri "/podcast" :query-string "day=soon" :request-method :post})))))))
+            (is (= 400 (:status (core/app {:uri "/podcast" :query-string "day=soon" :request-method :post}))))
+            (reset! asked nil)
+            (swap! core/system assoc-in [:config :podcast] false)
+            (is (= 409 (:status (core/app {:uri "/podcast" :query-string "day=2026-09-30" :request-method :post}))))
+            (is (nil? @asked) ":podcast off, none is made"))))
       (finally
         (reset! core/system nil)
         (store/close st)))))
@@ -266,7 +270,12 @@
           (is (str/includes? (article) "@post(&apos;/podcast?day=2026-09-30&apos;)"))
           (is (str/includes? (article) "Record a podcast of this briefing")))
         (with-redefs [tts/available? (constantly false)]
-          (is (not (str/includes? (article) "Record a podcast")))))
+          (is (not (str/includes? (article) "Record a podcast"))))
+        (with-redefs [tts/available? (constantly true)]
+          (try
+            (reset! ui/config {:podcast false})
+            (is (not (str/includes? (article) "Record a podcast")) ":podcast off, no button")
+            (finally (reset! ui/config {})))))
       (testing "while it's made, the article says so and the desk shows how far it has got"
         (reset! narration/status {:state :speaking :day "2026-09-30" :done 3 :total 40})
         (let [page (article)]
