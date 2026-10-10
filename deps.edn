@@ -95,7 +95,9 @@
                 :optional true
                 :darwin ["native/libnewsroom_tts.dylib"]
                 :linux ["native/libnewsroom_tts.so"]
-                :static {:archive "native/libnewsroom_tts.a"}}
+                ;; by platform, so Windows, which has no engine, links none
+                :static {:darwin {:archive "native/libnewsroom_tts.a"}
+                         :linux {:archive "native/libnewsroom_tts.a"}}}
                {:name "cxx"
                 :optional true
                 :darwin ["libc++.1.dylib"]

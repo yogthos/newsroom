@@ -74,9 +74,10 @@ std::map<std::string, tensor> read(const std::string & path, Keep keep) {
     for (auto & [name, info] : j.items()) {
         if (name == "__metadata__" || !keep(name)) continue;
         tensor t;
-        t.dtype = info.at("dtype").get<std::string>();
-        t.shape = info.at("shape").get<std::vector<int64_t>>();
-        auto off = info.at("data_offsets").get<std::vector<uint64_t>>();
+        // `info` is a dependent type here, which GCC 11 wants spelled out
+        t.dtype = info.at("dtype").template get<std::string>();
+        t.shape = info.at("shape").template get<std::vector<int64_t>>();
+        auto off = info.at("data_offsets").template get<std::vector<uint64_t>>();
         t.data.resize(off[1] - off[0]);
         if (seek(f, base + (int64_t) off[0]) != 0 ||
             std::fread(t.data.data(), 1, t.data.size(), f) != t.data.size()) {
