@@ -86,6 +86,41 @@
 
  :jolt/build {:embed ["resources"]}
 
+ ;; the speech engine behind newsroom.tts: llama.cpp, the S3 decoder on ggml
+ ;; and LAME, built by `jolt tts` into native/. Optional at runtime: without
+ ;; it there are no podcasts. `jolt build` links the archive in, with the C++
+ ;; runtime and, on macOS, the Metal frameworks it needs. A GPU plugin for
+ ;; CUDA, HIP or Vulkan is loaded by newsroom.tts itself, when it's there
+ :jolt/native [{:name "newsroom_tts"
+                :optional true
+                :darwin ["native/libnewsroom_tts.dylib"]
+                :linux ["native/libnewsroom_tts.so"]
+                ;; by platform, so Windows, which has no engine, links none
+                :static {:darwin {:archive "native/libnewsroom_tts.a"}
+                         :linux {:archive "native/libnewsroom_tts.a"}}}
+               {:name "cxx"
+                :optional true
+                :darwin ["libc++.1.dylib"]
+                :linux ["libstdc++.so.6"]
+                :static {:darwin {:lib "c++"} :linux {:lib "stdc++"}}}
+               ;; Metal, on macOS: the frameworks are linked by their stubs,
+               ;; which native/build_tts.sh links into native/frameworks
+               {:name "metal"
+                :optional true
+                :darwin ["/System/Library/Frameworks/Metal.framework/Metal"]
+                :linux []
+                :static {:darwin {:lib "Metal" :libdir "native/frameworks"}}}
+               {:name "foundation"
+                :optional true
+                :darwin ["/System/Library/Frameworks/Foundation.framework/Foundation"]
+                :linux []
+                :static {:darwin {:lib "Foundation" :libdir "native/frameworks"}}}
+               {:name "metalkit"
+                :optional true
+                :darwin ["/System/Library/Frameworks/MetalKit.framework/MetalKit"]
+                :linux []
+                :static {:darwin {:lib "MetalKit" :libdir "native/frameworks"}}}]
+
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {jlt-commons/writ
                                {:git/url "https://github.com/jlt-commons/writ"
@@ -93,5 +128,42 @@
                                 :git/sha "4055b495575e5ddd806b155e25a6678b31153761"}}
                   :main-opts ["-m" "newsroom.test-runner"]}}
 
- :tasks {serve {:doc "run the newsroom server" :main-opts ["-m" "newsroom.core"]}
-         test  "jolt -M:test"}}
+ :tasks {:requires ([babashka.fs :as fs])
+
+         serve {:doc "run the newsroom server" :main-opts ["-m" "newsroom.core"]}
+         test  "jolt -M:test"
+
+         tts
+         {:doc "fetch llama.cpp at the pinned commit into native/llama.cpp and build the speech engine around it, native/build_tts.sh: the engine newsroom links, on the CPU and on macOS on Metal, and with NEWSROOM_TTS_GPU=cuda|hip|vulkan a GPU plugin beside it (LLAMA_CPP_SRC=path fetches from a local checkout holding that commit)"
+          :task (let [rev "0bb496dbd3af0add77ff82c406a915b41e839d56" ; b11400
+                      src (or (System/getenv "LLAMA_CPP_SRC") "https://github.com/ggml-org/llama.cpp")
+                      dir "native/llama.cpp"
+                      head (str dir "/.git/HEAD")]
+                  (when-not (and (fs/exists? head) (= rev (.trim (slurp head))))
+                    (fs/delete-tree dir)
+                    (fs/create-dirs dir)
+                    (shell "git" "-C" dir "init" "--quiet")
+                    (shell "git" "-C" dir "fetch" "--quiet" "--depth" "1" src rev)
+                    (shell "git" "-C" dir "checkout" "--quiet" "FETCH_HEAD"))
+                  (shell "sh" "native/build_tts.sh"))}
+
+         tts-test
+         {:doc "check the speech engine against test/golden/tts: the decoder stage by stage, then the prompt, the speech model's first logits and a spoken line, written to native/build/golden.mp3. Needs `jolt tts` and the model's converted files, in NEWSROOM_TTS_DIR or ~/.config/newsroom/tts, which the first podcast fetches"
+          :depends [tts]
+          :task (let [dir (or (System/getenv "NEWSROOM_TTS_DIR")
+                              (str (or (System/getenv "NEWSROOM_HOME")
+                                       (str (System/getProperty "user.home") "/.config/newsroom"))
+                                   "/tts"))]
+                  (when-not (fs/exists? (str dir "/s3gen.gguf"))
+                    (throw (ex-info (str "no converted model files in " dir) {})))
+                  (shell "native/build/test-s3gen" (str dir "/s3gen.gguf") "test/golden/tts")
+                  (shell "native/build/test-tts" (str dir "/model-q4_0.gguf") (str dir "/s3gen.gguf")
+                         (str dir "/voices.gguf") "test/golden/tts" "native/build/golden.mp3"))}
+
+         tts-golden
+         {:doc "regenerate test/golden/tts from the upstream kittenml package (dev/tts_golden.py through uv)"
+          :task (shell "uv" "run" "--no-project" "--python" "3.12"
+                       "--with" "kittenml==0.9.4" "--with" "torch==2.14.1" "--with" "torchaudio==2.11.0"
+                       "--with" "transformers==5.19.0" "--with" "numpy==2.5.3" "--with" "safetensors==0.8.0"
+                       "--with" "soundfile==0.14.0"
+                       "python" "dev/tts_golden.py" "test/golden/tts")}}}

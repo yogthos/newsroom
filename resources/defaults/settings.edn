@@ -101,6 +101,29 @@
  ;; turns it off
  :retrospective true
 
+ ;; the model writes a podcast of a briefing, two hosts talking it through
+ ;; in :podcast-segments segments, and the speech engine records it, for
+ ;; the day's page to play. :podcast-auto records it as soon as each
+ ;; briefing is filed, on its own since recording takes minutes; off, it is
+ ;; recorded from the day's page. Both need the speech engine. Each host has a :name, one of the engine's voices as
+ ;; :voice, a :backstory and a :personality, which the script plays to. A
+ ;; :podcast role in :roles can give the script its own model; its prompts
+ ;; are :podcast-outline-prompt and :podcast-transcript-prompt. false turns
+ ;; it off
+ :podcast true
+ :podcast-auto true
+ ;; what the speech engine records on: :auto, the GPU when the engine was
+ ;; built for one and it comes up, else the CPU, or :cpu
+ :podcast-device :auto
+ :podcast-segments 5
+ :podcast-hosts
+ [{:name "Hugo" :voice "Hugo"
+   :backstory "A former trade economist who spent years on the road between ports, central banks and factory floors before swapping spreadsheets for a microphone."
+   :personality "Dry wit and endless curiosity. Follows the money and the supply chains, loves a good historical parallel, and asks the question everyone else forgot to."}
+  {:name "Martha" :voice "Martha"
+   :backstory "A science and technology reporter turned systems thinker, who has covered elections, chip wars and climate talks on four continents."
+   :personality "Quick, playful and sharp. Turns a dense story into a vivid picture, cheers a good surprise, and pushes back hard when a claim doesn't add up."}]
+
  ;; how long one source may take, retries and all, before the run goes on
  ;; without it; how many times a request that failed for a passing reason
  ;; (a rate limit, an overloaded server, a dropped connection) is tried
@@ -186,7 +209,8 @@
  ;; the :analyst role writes the briefing and the digests, keeps the
  ;; story notes unless a :notes role is given, and does the desk's work
  ;; unless a :desk role is given, checks the briefing unless a :critic
- ;; role is given, and keeps the track record unless a :retrospective
- ;; role is given; with no :roles, the first
+ ;; role is given, keeps the track record unless a :retrospective role
+ ;; is given, and writes the podcast unless a :podcast role is given;
+ ;; with no :roles, the first
  ;; built-in whose key is in the environment serves, else a local endpoint
  :roles {:analyst :deepseek}}

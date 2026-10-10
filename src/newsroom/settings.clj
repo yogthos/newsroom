@@ -30,7 +30,8 @@
             [newsroom.plugin :as plugin]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
-            [newsroom.template :as template]))
+            [newsroom.template :as template]
+            [newsroom.tts :as tts]))
 
 ;; --- what there is to set ----------------------------------------------------------
 
@@ -135,6 +136,30 @@
                         "and why, and lessons are kept from them. The briefings and digests are told the lessons, "
                         "and every outlet is ranked within each subject by how its calls went, shown on the track "
                         "record page. A model call a briefing, and a few a digest.")}]}
+   {:title "Podcast"
+    :fields [{:key :podcast :type :boolean :default true
+              :doc (str "The model writes a podcast of a briefing, the two hosts below talking it through, "
+                        "and the speech engine records it, for the day's page to play. It needs the speech "
+                        "engine, and runs on its own, since recording takes minutes. Two model calls and one "
+                        "for each segment. Off, there are no podcasts.")}
+             {:key :podcast-auto :type :boolean :default true
+              :doc (str "Record the podcast as soon as each briefing is filed, so it's ready by the time "
+                        "you read it. Off, a podcast is recorded only from the day's page.")}
+             {:key :podcast-device :type :keyword :options [:auto :cpu] :default :auto
+              :doc (str "What the speech engine records on. auto is the GPU when the engine was built for "
+                        "one and it comes up, Metal on a Mac, or the CUDA, ROCm or Vulkan plugin beside "
+                        "newsroom, and the CPU otherwise. cpu keeps it to the CPU.")}
+             {:key :podcast-segments :type :int :min 2 :max 12 :default 5
+              :doc (str "How many segments an episode is planned in, an introduction and a wrap-up among "
+                        "them. Each is written with a model call of its own.")}
+             {:key :podcast-hosts :type :records
+              :fields [{:key :name :type :string :required? true :doc "What the other host calls them."}
+                       {:key :voice :type :string :required? true
+                        :doc (str "The speech engine's voice they speak in, one of "
+                                  (str/join ", " (tts/voices)) ".")}
+                       {:key :backstory :type :text :rows 2 :doc "Who they are, which the script plays to."}
+                       {:key :personality :type :text :rows 2 :doc "How they talk."}]
+              :doc "The podcast's hosts. The first two with a name and a voice the engine has are used."}]}
    {:title "Archive"
     :fields [{:key :keep-days :type :int :min -1 :default 100
               :doc (str "How many days of briefings to keep; older ones go with their sources and markdown "
@@ -170,6 +195,20 @@
                         "the day, {{briefing}} the analyst's draft, {{sources}} the numbered sources and "
                         "{{analysis}} the desk's dossiers and map. Its answer is read as JSON, "
                         "{\"issues\": [{\"quote\", \"kind\", \"problem\", \"fix\"}]}, so keep the "
+                        "default's shape in it. Blank is the default.")}
+             {:key :podcast-outline-prompt :type :text :rows 12 :template? true
+              :doc (str "What the model is told when it plans the podcast, a Selmer template: {{date}} is the "
+                        "day, {{briefing}} the briefing's text, {{hosts}} the hosts, each with its name, "
+                        "backstory and personality, and {{segments}} how many segments to plan. Its answer is "
+                        "read as JSON, {\"segments\": [{\"name\", \"description\", \"size\"}]}, so keep the "
+                        "default's shape in it. Blank is the default.")}
+             {:key :podcast-transcript-prompt :type :text :rows 12 :template? true
+              :doc (str "What the model is told when it writes a segment of the podcast, a Selmer template: "
+                        "{{date}}, {{briefing}} and {{hosts}} as for the outline, {{names}} the hosts' names, "
+                        "{{first}} and {{second}} each as a JSON string, {{outline}} the episode's segments, "
+                        "{{transcript}} the conversation so far, {{segment}} the one to write, {{final}} true "
+                        "for the last, and {{turns}} how many turns it should have at least. Its answer is "
+                        "read as JSON, {\"transcript\": [{\"speaker\", \"dialogue\"}]}, so keep the "
                         "default's shape in it. Blank is the default.")}]}])
 
 (def source-name-field
@@ -208,6 +247,7 @@
    {:key :retrospective :type :keyword
     :doc (str "Records the projections, checks how they turned out and keeps the lessons; the analyst "
               "when blank.")}
+   {:key :podcast :type :keyword :doc "Writes the podcast's script; the analyst when blank."}
    {:key :default :type :keyword :doc "Any role that names no provider of its own."}])
 
 (def scalar-keys

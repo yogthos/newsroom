@@ -109,7 +109,9 @@
   {:prompt "prompt.md"
    :digest-prompt "digest.md"
    :precedent-prompt "precedents.md"
-   :critic-prompt "critic.md"})
+   :critic-prompt "critic.md"
+   :podcast-outline-prompt "podcast-outline.md"
+   :podcast-transcript-prompt "podcast-transcript.md"})
 
 (defn sha-256
   "The sha-256 of `s`, in hex."
@@ -189,6 +191,18 @@
   blank."
   [config]
   (template config :critic-prompt))
+
+(defn podcast-outline-template
+  "The prompt for the podcast's outline: the config's
+  :podcast-outline-prompt, the default when blank."
+  [config]
+  (template config :podcast-outline-prompt))
+
+(defn podcast-transcript-template
+  "The prompt for the podcast's dialogue, a segment at a time: the
+  config's :podcast-transcript-prompt, the default when blank."
+  [config]
+  (template config :podcast-transcript-prompt))
 
 (defn db-file [config]
   (or (:db config) (path "newsroom.sqlite3")))

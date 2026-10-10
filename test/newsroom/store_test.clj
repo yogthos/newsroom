@@ -307,3 +307,41 @@
       (is (= "Rewritten." (:summary (store/retrospective db :week "2026-W40"))) "writing it again replaces it")
       (is (= "2026-W40" (:period (store/latest-retrospective db))))
       (finally (store/close db)))))
+
+(deftest a-narration-round-trips
+  (let [db (fresh)
+        mp3 (byte-array [73 68 51 0 -1 0 65])
+        transcript [{:speaker "Hugo" :text "Hello."} {:speaker "Kiki" :text "[excited] Hi!"}]]
+    (try
+      (store/save-day! db {:day "2026-09-30" :sources sources :cited [1] :markdown "# Brief" :model "m" :provider "p"})
+      (is (nil? (store/narration db "2026-09-30")))
+      (is (nil? (store/narration-audio db "2026-09-30")))
+      (store/save-narration! db {:day "2026-09-30" :mp3 mp3 :transcript transcript :seconds 61.5
+                                 :model "m" :provider "p"})
+      (let [n (store/narration db "2026-09-30")]
+        (is (= {:day "2026-09-30" :transcript transcript :seconds 61.5 :model "m" :provider "p"}
+               (dissoc n :created-at)))
+        (is (string? (:created-at n)))
+        (is (not (contains? n :mp3)) "the audio is read on its own"))
+      (is (= (vec mp3) (vec (store/narration-audio db "2026-09-30"))) "the bytes come back as they went in")
+      (testing "recording it again replaces it"
+        (store/save-narration! db {:day "2026-09-30" :mp3 (byte-array [1 2]) :transcript [] :seconds 1.0
+                                   :model "m2" :provider "p"})
+        (is (= [1 2] (vec (store/narration-audio db "2026-09-30"))))
+        (is (= "m2" (:model (store/narration db "2026-09-30")))))
+      (testing "a rerun of the day drops the narration of the briefing it replaces"
+        (store/save-day! db {:day "2026-09-30" :sources sources :cited [1] :markdown "# Again" :model "m" :provider "p"})
+        (is (nil? (store/narration db "2026-09-30"))))
+      (finally (store/close db)))))
+
+(deftest narrations-go-with-their-days
+  (let [db (fresh)]
+    (try
+      (doseq [d ["2026-09-28" "2026-09-29" "2026-09-30"]]
+        (store/save-day! db {:day d :sources [] :cited [] :markdown d :model "m" :provider "p"})
+        (store/save-narration! db {:day d :mp3 (byte-array [1]) :transcript [] :seconds 1.0}))
+      (is (= ["2026-09-28"] (store/prune! db 2)))
+      (is (nil? (store/narration db "2026-09-28")) "the oldest goes with its day")
+      (is (some? (store/narration db "2026-09-29")))
+      (is (some? (store/narration-audio db "2026-09-30")))
+      (finally (store/close db)))))

@@ -51,6 +51,8 @@ a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset:
 .writing p { margin: 0; font-weight: 600; }
 .writing blockquote { margin: 6px 0 0; font: italic 13px/1.45 var(--serif); color: var(--muted);
                       max-height: 7.5em; overflow: hidden; }
+.narration { margin-top: 10px; padding-top: 10px; border-top: 1px dotted var(--rule); font-size: 13px; }
+.narration p { margin: 0 0 4px; }
 .wire { list-style: none; margin: 10px 0 0; padding: 0; font-size: 12px; max-height: 320px; overflow-y: auto; }
 .wire li { display: grid; grid-template-columns: 58px 1fr; gap: 6px; padding: 3px 0; border-bottom: 1px dotted var(--rule); }
 .wire li:first-child { font-weight: 600; }
@@ -107,6 +109,15 @@ main { padding: 48px clamp(20px, 6vw, 80px) 80px; }
 .prose hr { border: 0; border-top: 1px solid var(--rule); margin: 2rem 0; }
 .meta { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule); color: var(--muted);
         font: 13px var(--sans); }
+.podcast { margin: 0 0 1.6rem; font: 14px/1.5 var(--sans); }
+.podcast-label { margin: 0 0 6px; font-weight: 700; }
+.podcast audio { display: block; width: 100%; }
+.podcast button.quiet { width: auto; margin: 0; padding: 4px 10px; background: var(--paper); color: var(--ink);
+                        border: 1px solid var(--rule); font-weight: 600; }
+.podcast button.quiet:hover { border-color: var(--accent); filter: none; }
+.transcript { margin-top: 8px; }
+.transcript summary { cursor: pointer; color: var(--muted); }
+.transcript p { margin: .45rem 0; }
 .gathered { margin-top: 1.5rem; font: 14px/1.5 var(--sans); }
 .gathered summary { cursor: pointer; color: var(--muted); }
 .gathered li { margin: .6rem 0; }

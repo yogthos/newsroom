@@ -1,0 +1,4 @@
+{
+  global: nrttsg_*;
+  local: *;
+};

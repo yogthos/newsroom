@@ -9,10 +9,12 @@
             [newsroom.feed-test]
             [newsroom.llm-stream-test]
             [newsroom.markdown-test]
+            [newsroom.narration-test]
             [newsroom.news-spec]
             [newsroom.news-test]
             [newsroom.notes-test]
             [newsroom.pipeline-test]
+            [newsroom.podcast-test]
             [newsroom.precedents-test]
             [newsroom.progress-test]
             [newsroom.retrospective-test]
@@ -23,6 +25,7 @@
             [newsroom.sources-test]
             [newsroom.store-test]
             [newsroom.trends-test]
+            [newsroom.tts-test]
             [newsroom.ui-test]))
 
 (def namespaces
@@ -37,13 +40,16 @@
     newsroom.markdown-test
     newsroom.news-test
     newsroom.notes-test
+    newsroom.podcast-test
     newsroom.precedents-test
     newsroom.progress-test
     newsroom.retrospective-test
     newsroom.search-test
     newsroom.store-test
     newsroom.trends-test
+    newsroom.tts-test
     newsroom.pipeline-test
+    newsroom.narration-test
     newsroom.plugin-test
     newsroom.secrets-test
     newsroom.settings-test

@@ -28,7 +28,9 @@ jobs:
           - os: macos-latest
             target: aarch64-macos
             shell: bash
-          - os: ubuntu-latest
+          # 22.04's glibc and libstdc++, so the binary runs there and on
+          # anything newer
+          - os: ubuntu-22.04
             target: x86_64-linux
             shell: bash
           # Windows has none of the native libraries, so the archive carries
@@ -96,11 +98,52 @@ jobs:
         if: runner.os == 'Windows'
         run: cp /ucrt64/bin/libsqlite3-0.dll "$(dirname "$(command -v jolt)")/sqlite3.dll"
 
+      # the speech engine: llama.cpp, the S3 decoder and LAME, linked into
+      # the binary. Windows goes without it, and so without podcasts
+      - name: Cache the speech engine's build
+        if: runner.os != 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: |
+            native/llama.cpp
+            native/lame
+          key: tts-${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('deps.edn', 'native/build_tts.sh') }}
+
+      # the Vulkan SDK, for the speech engine's GPU plugin: the shader
+      # compiler and the headers. The SDK has no loader to link against, so
+      # that is the distribution's; at runtime the plugin needs only the
+      # loader a GPU's driver installs
+      - name: Install the Vulkan SDK
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libvulkan-dev
+          v=1.4.357.1
+          curl -sSfL -o "$RUNNER_TEMP/vulkan.tar.xz" "https://sdk.lunarg.com/sdk/download/$v/linux/vulkansdk-linux-x86_64-$v.tar.xz"
+          mkdir -p "$RUNNER_TEMP/vulkan"
+          tar -xJf "$RUNNER_TEMP/vulkan.tar.xz" -C "$RUNNER_TEMP/vulkan"
+          echo "VULKAN_SDK=$RUNNER_TEMP/vulkan/$v/x86_64" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/vulkan/$v/x86_64/bin" >> "$GITHUB_PATH"
+
+      # Metal on macOS; on Linux the CPU, with a Vulkan plugin beside it for
+      # the GPUs whose drivers are there
+      - name: Build the speech engine
+        if: runner.os != 'Windows'
+        env:
+          NEWSROOM_TTS_GPU: ${{ runner.os == 'Linux' && 'vulkan' || '' }}
+        run: jolt tts
+
       - name: Test
         run: jolt -M:test
 
+      # jolt build loads the static archives into itself to resolve their
+      # symbols while it builds, and on Linux it has no C++ runtime of its own
+      # for the speech engine's to resolve against, so it is preloaded. The
+      # binary links libstdc++ in statically
       - name: Build binary
-        run: jolt build -m newsroom.core -o newsroom
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then export LD_PRELOAD="$(g++ -print-file-name=libstdc++.so)"; fi
+          jolt build -m newsroom.core -o newsroom
 
       # Name from the ref: a tag's build carries its version, anything else
       # gets the bare name.
@@ -114,6 +157,8 @@ jobs:
           exe=newsroom
           [ -f newsroom.exe ] && exe=newsroom.exe
           cp "$exe" README.md CHANGELOG.md "$name/"
+          # the speech engine's GPU plugin, which newsroom loads from beside itself
+          if [ -f native/libnewsroom_tts_gpu.so ]; then cp native/libnewsroom_tts_gpu.so "$name/"; fi
           cp examples/config.edn "$name/config.example.edn"
           cp -r plugins "$name/plugins"
           # Windows looks beside the exe first, for a library and for the DLLs

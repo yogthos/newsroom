@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A podcast of each briefing.** Once a day is filed, two hosts talk its
+  briefing through, written by the model in the way open-notebook writes
+  its podcasts, an outline of the episode's segments and then the dialogue
+  of each in turn, and recorded by the speech engine. The day's page plays
+  it, with its transcript, and can record one for any day. It is made on
+  its own after the run, since recording takes minutes, and the sidebar
+  shows how far it has got. The hosts, their voices and the prompts are on
+  the config page, and a `:podcast` role can give the script its own
+  model. `:podcast` turns it off.
+- **A speech engine of its own.** The podcasts are spoken by KittenTTS 2,
+  run on the CPU inside newsroom: its speech model through llama.cpp, the
+  S3 decoder it writes for ported to ggml, and LAME for the MP3. The first
+  podcast downloads the model, about 2 GB. `jolt tts` builds the engine
+  from a checkout, and the macOS and Linux releases carry it.
+- **The GPU, when there's one.** The engine records on Metal on a Mac, and
+  on Linux through a Vulkan plugin beside the binary, for NVIDIA, AMD and
+  Intel GPUs, falling back to the CPU when there's no GPU or driver, or
+  when the GPU gets the decoder wrong. CUDA and ROCm plugins build from a
+  checkout. `:podcast-device` keeps it to the CPU.
+- `:podcast-auto` decides whether a podcast is recorded as each briefing
+  is filed; off, one is recorded from the day's page.
+
+### Changed
+
+- The Linux release is built on Ubuntu 22.04, so it runs there and on
+  anything newer.
+- Newsroom is licensed under the AGPL 3.0.
+
 ## v0.10.1 — 9 October 2026
 
 ### Changed

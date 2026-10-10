@@ -14,6 +14,7 @@
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.template :as template]
+            [newsroom.tts :as tts]
             [newsroom.ui :as ui]))
 
 (def ^:private flat settings/form-params)
@@ -196,7 +197,8 @@
   (let [st (store/open "sqlite::memory:")]
     (try
       (store/save-settings! st {:max-items 50 :prompt "Mine: {{sources}}"})
-      (is (= #{:digest-prompt :precedent-prompt :critic-prompt} (set (settings/seed-prompts! st))))
+      (is (= #{:digest-prompt :precedent-prompt :critic-prompt :podcast-outline-prompt :podcast-transcript-prompt}
+             (set (settings/seed-prompts! st))))
       (let [stored (settings/stored st)]
         (is (= "Mine: {{sources}}" (:prompt stored)) "a prompt of the user's own is left alone")
         (is (= (config/default-text "digest.md") (:digest-prompt stored)))
@@ -212,7 +214,8 @@
       (with-redefs [config/shipped-prompts (fn [] {:prompt #{(config/sha-256 "Old default: {{sources}}")}})]
         (store/save-settings! st {:prompt "Old default: {{sources}}" :critic-prompt "Old default: {{sources}}"
                                   :digest-prompt "Mine"})
-        (is (= #{:prompt :precedent-prompt} (set (settings/seed-prompts! st))))
+        (is (= #{:prompt :precedent-prompt :podcast-outline-prompt :podcast-transcript-prompt}
+               (set (settings/seed-prompts! st))))
         (let [stored (settings/stored st)]
           (is (= (config/default-text "prompt.md") (:prompt stored)))
           (is (= "Old default: {{sources}}" (:critic-prompt stored)) "only another prompt's old default")
@@ -395,6 +398,44 @@
                       (finally (store/close st)))]
         (is (str/includes? page "data-cfg-test=\"sources.0\""))
         (is (str/includes? page "data-cfg-test=\"sources.__0__\""))))))
+
+(deftest the-podcast-has-its-settings
+  (let [d (defaults)]
+    (is (true? (:podcast d)))
+    (is (true? (:podcast-auto d)))
+    (is (= :auto (:podcast-device d)))
+    (is (= 5 (:podcast-segments d)))
+    (testing "two hosts, each in a voice the speech engine has"
+      (is (= 2 (count (:podcast-hosts d))))
+      (is (every? (set (tts/voices)) (map :voice (:podcast-hosts d))))
+      (is (every? #(every? (comp not str/blank?) ((juxt :name :backstory :personality) %)) (:podcast-hosts d)))))
+  (testing "the hosts are read from the form as a list of records"
+    (let [{:keys [settings errors]}
+          (settings/from-form {"podcast-hosts.3.name" "Bo" "podcast-hosts.3.voice" "Leo"
+                               "podcast-hosts.1.name" "Ann" "podcast-hosts.1.voice" "Bella"
+                               "podcast-hosts.1.backstory" "A reporter.\r\nOf note."
+                               "podcast-hosts.2.name" "" "podcast-hosts.2.voice" ""
+                               "podcast-hosts.5.name" "Cy"
+                               "podcast-segments" "13" "roles.podcast" "deepseek"
+                               "providers.0._alias" "deepseek"})]
+      (is (= [{:name "Ann" :voice "Bella" :backstory "A reporter.\nOf note."} {:name "Bo" :voice "Leo"}
+              {:name "Cy"}]
+             (:podcast-hosts settings)))
+      (is (= {"podcast-hosts.5.voice" "is needed" "podcast-segments" "has to be at most 12"} errors))
+      (is (= :deepseek (get-in settings [:roles :podcast])))))
+  (testing "and checked by the schema on import"
+    (let [errors #(:errors (settings/from-edn %))]
+      (is (= {} (errors "{:podcast false :podcast-hosts [{:name \"A\" :voice \"Hugo\"}] :roles {:podcast :deepseek}}")))
+      (is (= {":podcast-hosts 0 :voice" "missing required key"} (errors "{:podcast-hosts [{:name \"A\"}]}")))
+      (is (= {":podcast-segments" "should be at most 12"} (errors "{:podcast-segments 20}")))))
+  (testing "the page shows them, with the prompts and the role"
+    (let [page (str (h/html (config-page/article {:tree (settings/to-form (defaults))})))]
+      (is (str/includes? page "<h2>Podcast</h2>"))
+      (is (str/includes? page "name=\"podcast-hosts.1.voice\" type=\"text\" value=\"Martha\""))
+      (is (str/includes? page "name=\"podcast-hosts.__0__.backstory\"") "a template for a new host")
+      (is (str/includes? page "data-cfg-reset=\"podcast-outline-prompt\""))
+      (is (str/includes? page "data-cfg-reset=\"podcast-transcript-prompt\""))
+      (is (str/includes? page "name=\"roles.podcast\"")))))
 
 (deftest a-prompt-can-be-reset-to-the-default
   (let [page (fn [tree] (str (h/html (config-page/article {:tree tree}))))
