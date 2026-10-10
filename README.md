@@ -25,6 +25,8 @@ jolt build -m newsroom.core -o newsroom
 ./newsroom
 ```
 
+On Linux, with the speech engine built (`jolt tts`, below), the build needs the C++ runtime preloaded: `LD_PRELOAD=$(g++ -print-file-name=libstdc++.so) jolt build -m newsroom.core -o newsroom`.
+
 Or grab a release binary.
 
 Open http://127.0.0.1:3000 and you'll get a page for today with the archive in the sidebar. On the first start it writes a default setup to `~/.config/newsroom`, with an empty `secrets.edn` for API keys. If the day's scheduled time has already passed and there's no briefing for today, it goes and gathers one right away, and you can watch that happen, since the sidebar shows each feed it reads and each search it runs while the model thinks and writes. After that it runs every morning at the time set in `:run-at`, 07:00 by default, and the button in the sidebar gets you a fresh one whenever you want. `:run-every-hours` sets how far apart the runs are, a day by default, so something like 6 refreshes the day's briefing through the day.

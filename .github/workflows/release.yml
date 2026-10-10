@@ -136,8 +136,14 @@ jobs:
       - name: Test
         run: jolt -M:test
 
+      # jolt build loads the static archives into itself to resolve their
+      # symbols while it builds, and on Linux it has no C++ runtime of its own
+      # for the speech engine's to resolve against, so it is preloaded. The
+      # binary links libstdc++ in statically
       - name: Build binary
-        run: jolt build -m newsroom.core -o newsroom
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then export LD_PRELOAD="$(g++ -print-file-name=libstdc++.so)"; fi
+          jolt build -m newsroom.core -o newsroom
 
       # Name from the ref: a tag's build carries its version, anything else
       # gets the bare name.
