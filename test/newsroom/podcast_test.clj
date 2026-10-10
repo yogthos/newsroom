@@ -84,7 +84,7 @@
 
 (deftest the-transcript-is-read-from-the-answer
   (is (= [{:speaker "Hugo" :text "Good morning."}
-          {:speaker "Kiki" :text "[excited] Big day, <laugh> really."}
+          {:speaker "Kiki" :text "[excited] Big day, really."}
           {:speaker "Hugo" :text "It (((really))) was."}]
          (podcast/parse-transcript
           (str "Here: {\"transcript\": ["
@@ -105,14 +105,15 @@
            (podcast/speakable "The **bank** said [rates](https://e.com/x) would _hold_ [1], as the `report` put it [2, 3].")))
     (is (= "See it online." (podcast/speakable "See it online https://e.com/a?b=1 [[4]](https://e.com/4).")))
     (is (= "Prices rose." (podcast/speakable "## Prices rose."))))
-  (testing "the engine's own tags are kept, anything else in brackets goes"
-    (is (= "[surprised] Wait, <gasp> they did (((what)))?"
+  (testing "a leading emotion and emphasis are kept, anything else in brackets goes"
+    (is (= "[surprised] Wait, they did (((what)))?"
            (podcast/speakable "[Surprised] Wait, <GASP> they did (((what)))? [music swells] <break time=\"1s\"/>")))
     (is (= "Well, here we are." (podcast/speakable "Well, [excited] here we are.")) "an emotion only leads a line")
     (is (= "Fine." (podcast/speakable "[narrator] Fine. <whisper>"))))
-  (testing "stage directions become the engine's vocal events"
-    (is (= "<laugh> That's rich. <sigh> Fine."
-           (podcast/speakable "(laughs) That's rich. *sighs* Fine."))))
+  (testing "vocal events and stage directions go: the engine speaks them as words"
+    (is (= "That's rich. Fine."
+           (podcast/speakable "(laughs) That's rich. *sighs* Fine.")))
+    (is (= "Big day, really." (podcast/speakable "<laugh> Big day, <um> really."))))
   (testing "placeholders and stray ellipses go"
     (is (= "And then it ended." (podcast/speakable "And then … it ended. [...]")))
     (is (= "" (podcast/speakable "...")))

@@ -1060,7 +1060,7 @@
                                    (if (= 1 (count gone)) "day" "days")
                                    " past the limit of " (:keep-days config default-keep-days))}))
         ;; the podcast takes minutes, so it is recorded once the run is over
-        (when (and (:podcast config) (tts/available?))
+        (when (and (:podcast config) (:podcast-auto config) (tts/available?))
           (log! run-id {:text "The podcast of the briefing will be written and recorded next"})
           (narrate! ctx day))
         (swap! stored inc)

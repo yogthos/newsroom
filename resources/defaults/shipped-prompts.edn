@@ -24,4 +24,5 @@
                   "cbe65ae362afee73d3e4b4518637c8a8f5a9c3175f17982d07c8444ca94c893e"
                   "d13cdd01a359bb2a2b98c592c6ac39ae8e62d62fe2db69d6d3fb4a087bf7540e"}
  :podcast-outline-prompt #{"3160b5a6f683d1526bc54c72b77d2ffa5bf59d8ee7b7796970632e372c45cdc4"}
- :podcast-transcript-prompt #{"92e4b07cfdc5db4347935ed4891a1bfa2859f900e4c7d32a706cf8002e96801b"}}
+ :podcast-transcript-prompt #{"92e4b07cfdc5db4347935ed4891a1bfa2859f900e4c7d32a706cf8002e96801b"
+                              "801895d6024d0a82cd64c055d46fe2229a666541b6a2b286cb11490b22b0d1af"}}

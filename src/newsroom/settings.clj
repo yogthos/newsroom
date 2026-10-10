@@ -138,10 +138,13 @@
                         "record page. A model call a briefing, and a few a digest.")}]}
    {:title "Podcast"
     :fields [{:key :podcast :type :boolean :default true
-              :doc (str "After each briefing is filed, the model writes a podcast of it, the two hosts below "
-                        "talking it through, and the speech engine records it, for the day's page to play. "
-                        "It needs the speech engine, and runs on its own after the briefing, since recording "
-                        "takes minutes. Two model calls and one for each segment.")}
+              :doc (str "The model writes a podcast of a briefing, the two hosts below talking it through, "
+                        "and the speech engine records it, for the day's page to play. It needs the speech "
+                        "engine, and runs on its own, since recording takes minutes. Two model calls and one "
+                        "for each segment. Off, there are no podcasts.")}
+             {:key :podcast-auto :type :boolean :default true
+              :doc (str "Record the podcast as soon as each briefing is filed, so it's ready by the time "
+                        "you read it. Off, a podcast is recorded only from the day's page.")}
              {:key :podcast-segments :type :int :min 2 :max 12 :default 5
               :doc (str "How many segments an episode is planned in, an introduction and a wrap-up among "
                         "them. Each is written with a model call of its own.")}

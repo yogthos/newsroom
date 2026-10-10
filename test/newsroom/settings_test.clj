@@ -402,6 +402,7 @@
 (deftest the-podcast-has-its-settings
   (let [d (defaults)]
     (is (true? (:podcast d)))
+    (is (true? (:podcast-auto d)))
     (is (= 5 (:podcast-segments d)))
     (testing "two hosts, each in a voice the speech engine has"
       (is (= 2 (count (:podcast-hosts d))))
@@ -429,7 +430,7 @@
   (testing "the page shows them, with the prompts and the role"
     (let [page (str (h/html (config-page/article {:tree (settings/to-form (defaults))})))]
       (is (str/includes? page "<h2>Podcast</h2>"))
-      (is (str/includes? page "name=\"podcast-hosts.1.voice\" type=\"text\" value=\"Kiki\""))
+      (is (str/includes? page "name=\"podcast-hosts.1.voice\" type=\"text\" value=\"Martha\""))
       (is (str/includes? page "name=\"podcast-hosts.__0__.backstory\"") "a template for a new host")
       (is (str/includes? page "data-cfg-reset=\"podcast-outline-prompt\""))
       (is (str/includes? page "data-cfg-reset=\"podcast-transcript-prompt\""))

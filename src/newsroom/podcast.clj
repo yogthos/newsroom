@@ -24,10 +24,6 @@
   "The emotion tags the speech engine reads at the start of a line."
   #{"angry" "contemplative" "excited" "joyful" "mundane" "nervous" "sad" "stern" "surprised" "tender"})
 
-(def vocal-events
-  "The vocal events the speech engine makes of a tag inside a line."
-  #{"gasp" "giggle" "growl" "gulp" "laugh" "pause" "scoff" "sigh" "sob" "um"})
-
 (def default-segments 5)
 
 (defn segment-count
@@ -133,26 +129,11 @@
                              :final (= i (dec (count outline)))
                              :turns (turns size 10)})))
 
-(def ^:private stage-directions
-  "The stage directions a model writes in spite of being told not to, and
-  the vocal event each one is."
-  {"laugh" "laugh" "laughs" "laugh" "laughing" "laugh" "chuckle" "laugh" "chuckles" "laugh"
-   "chuckling" "laugh" "giggle" "giggle" "giggles" "giggle" "giggling" "giggle" "sigh" "sigh"
-   "sighs" "sigh" "sighing" "sigh" "gasp" "gasp" "gasps" "gasp" "gulp" "gulp" "gulps" "gulp"
-   "scoff" "scoff" "scoffs" "scoff" "sob" "sob" "sobs" "sob" "pause" "pause" "pauses" "pause"
-   "growl" "growl" "growls" "growl"})
-
-(defn- vocal-tag [tag]
-  (let [t (str/lower-case tag)]
-    (when (contains? vocal-events t) (str "<" t ">"))))
-
 (defn- directions [s]
-  ;; (laughs), *laughs* or [laughs], but not the (((emphasis))) around a word
-  (str/replace s #"(^|[^(])[(*\[]\s*([A-Za-z]+)\s*[)*\]]"
-               (fn [[whole pre word]]
-                 (if-let [event (get stage-directions (str/lower-case word))]
-                   (str pre "<" event ">")
-                   whole))))
+  ;; (laughs), *laughs* or [laughs], but not the (((emphasis))) around a word:
+  ;; the engine says a vocal event as a word, so there is none to make of it
+  (str/replace s #"(?i)(^|[^(])[(*\[]\s*(?:laugh|laughs|laughing|chuckles?|chuckling|giggles?|giggling|sighs?|sighing|gasps?|gulps?|scoffs?|sobs?|pauses?|growls?)\s*[)*\]]"
+               "$1"))
 
 (defn- leading-emotion
   "[the emotion tag a line starts with, the rest], the tag nil when the
@@ -164,9 +145,9 @@
 
 (defn speakable
   "A line of dialogue as the speech engine is to say it: no markdown, no
-  citations, no addresses, no stage directions save those it can voice, no
-  tag it doesn't know and no ellipsis standing in for words. A leading
-  emotion tag, the vocal events and (((emphasis))) are kept."
+  citations, no addresses, no stage directions, no tag but a leading
+  emotion and (((emphasis))), and no ellipsis standing in for words. The
+  engine says a vocal event like <laugh> as a word, so those go too."
   [line]
   (let [[emotion rest] (-> (str line)
                            (str/replace #"\[\[\d+\]\]\([^)]*\)" "")
@@ -177,9 +158,7 @@
                            leading-emotion)
         body (-> rest
                  (str/replace #"\[[^\]]*\]" "")
-                 (str/replace #"</?\s*([A-Za-z]+)[^>]*>"
-                              (fn [[whole tag]]
-                                (or (when (re-matches #"<\s*[A-Za-z]+\s*>" whole) (vocal-tag tag)) "")))
+                 (str/replace #"</?\s*[A-Za-z]+[^>]*>" "")
                  (str/replace #"(?m)^\s*(?:#{1,6}|>|[-+•]|\d+\.)\s+" "")
                  (str/replace #"[*_`#]" "")
                  (str/replace #"(^|\s)(?:\.\.\.|…)(?=\s|$)" "$1")
@@ -226,8 +205,8 @@
 
 (defn readable
   "A line of dialogue as a reader sees it in the transcript, without the
-  speech engine's tags: the emotion and the vocal events dropped, the
-  emphasis left as plain words."
+  speech engine's tags: the emotion dropped, the emphasis left as plain
+  words."
   [line]
   (-> (str line)
       (str/replace #"^\s*\[[a-z]+\]\s*" "")

@@ -49,9 +49,8 @@ Every line is spoken aloud by the speech engine, so write only the words the hos
 - No markdown, no lists, no URLs, no citation numbers like [3], no stage directions like (laughs) or *sighs*, and no notes about the audio.
 - The engine understands a few expression tags, which the hosts may use sparingly to sound lively, a few times in a segment at most:
   - one optional emotion tag at the very start of a line, one of [angry] [contemplative] [excited] [joyful] [mundane] [nervous] [sad] [stern] [surprised] [tender]
-  - vocal events inside a line: <gasp> <giggle> <growl> <gulp> <laugh> <pause> <scoff> <sigh> <sob> <um>
   - (((emphasis))) around a word or a short phrase to stress it
-- Nothing else in brackets of any kind.
+- Nothing else in brackets of any kind, and no sound effects like <laugh> or <sigh>: the engine would say the word. Let the words carry the laugh or the sigh.
 
 Answer with exactly one JSON object with a single key "transcript", whose value is a list of at least {{turns}} entries. Each entry has exactly two keys, "speaker" and "dialogue", both strings. The line below is a two-entry excerpt showing that shape with sample dialogue. Keep the shape, write your own words for this segment, and give at least {{turns}} entries rather than the two shown:
 

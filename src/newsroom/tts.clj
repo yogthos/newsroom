@@ -15,8 +15,9 @@
   them in turn, in one loaded model, and returns the episode as MP3. A line
   is written out the way it is spoken first (`spoken`) and split at its
   sentences into chunks the model reads well (`chunks`), as the upstream
-  kittenml package does; the model's own markup, a leading [emotion], an
-  <event> and (((emphasis))), passes through."
+  kittenml package does; the model's own markup, a leading [emotion] and
+  (((emphasis))), passes through. Its vocal events, <laugh> and the like,
+  are dropped: this checkpoint says them as words."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [jolt.ffi :as ffi]
@@ -203,7 +204,10 @@
     (if (str/blank? frac) w (str w " point " (digits-words frac)))))
 
 (def ^:private tag-re
-  #"\[(?:mundane|nervous|tender|angry|excited|stern|sad|contemplative|surprised|joyful)\]|<(?:pause|sigh|gasp|laugh|giggle|sob|scoff|growl|um|gulp)>|\(\(\([^()\n]{1,80}\)\)\)")
+  #"\[(?:mundane|nervous|tender|angry|excited|stern|sad|contemplative|surprised|joyful)\]|\(\(\([^()\n]{1,80}\)\)\)")
+
+(def ^:private vocal-event-re
+  #"(?i)\s*<(?:pause|sigh|gasp|laugh|giggle|sob|scoff|growl|um|gulp)>")
 
 (defn expression?
   "Whether `text` uses the model's expression markup, which turns on its
@@ -237,9 +241,10 @@
   "`text` written out the way it is spoken, for the model: numbers, money,
   percentages and years in words, dashes and ellipses as commas, a bracket
   that isn't one of the model's tags as an aside, the first letter
-  capitalized and a closing mark at the end."
+  capitalized and a closing mark at the end. A vocal event like <laugh>
+  goes, since the model would say it."
   [text]
-  (let [[s tags] (protect (str text))
+  (let [[s tags] (protect (str/replace (str text) vocal-event-re ""))
         s (-> s
               (str/replace #"\s*\n+\s*" " ")
               (str/replace #"(?:\.\s+){2,}\.|…|\.\.\." ", ")

@@ -181,10 +181,11 @@
 (deftest a-filed-briefing-is-narrated-when-speech-is-there
   (let [st (store/open "sqlite::memory:")
         queued (atom [])
-        ctx (fn [podcast?]
+        ctx (fn [podcast? & [auto?]]
               {:config {:sources [{:type ::fixture :name "A"}] :source-timeout-ms 500 :lookback-days 1
                         :max-items-per-source 2 :max-items 10 :dupe-threshold nil
-                        :providers {} :roles {:analyst :local} :podcast podcast?}
+                        :providers {} :roles {:analyst :local} :podcast podcast?
+                        :podcast-auto (if (some? auto?) auto? true)}
                :store st
                :template "Brief {{date}}.\n\n{{sources}}"
                :chat (fn [_ _] {:content "# Today\n\nOne [1]."})})]
@@ -195,7 +196,9 @@
           (is (= [["2026-09-30" true]] @queued) "queued once it's filed, with the pages to tell")
           (reset! queued [])
           (m/? (pipeline/run-task (ctx false) "2026-09-30"))
-          (is (= [] @queued) ":podcast turns it off"))
+          (is (= [] @queued) ":podcast turns it off")
+          (m/? (pipeline/run-task (ctx true false) "2026-09-30"))
+          (is (= [] @queued) ":podcast-auto off leaves it to be recorded from the day's page"))
         (with-redefs [tts/available? (constantly false)]
           (m/? (pipeline/run-task (ctx true) "2026-09-30"))
           (is (= [] @queued) "and without the speech engine there's nothing to do")))

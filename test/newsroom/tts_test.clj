@@ -24,8 +24,9 @@
     (is (= "Tariffs, as expected, went up." (tts/spoken "Tariffs — as expected — went up.")))
     (is (= "Well, maybe." (tts/spoken "Well… maybe")))
     (is (= "The bank, the central one, held." (tts/spoken "The bank (the central one) held."))))
-  (testing "the engine's own tags pass through untouched"
-    (is (= "[excited] That's (((huge))) <laugh> right?" (tts/spoken "[excited] that's (((huge))) <laugh> right?")))
+  (testing "the emotion and emphasis tags pass through, and a vocal event, spoken as a word, goes"
+    (is (= "[excited] That's (((huge))) right?" (tts/spoken "[excited] that's (((huge))) <laugh> right?")))
+    (is (not (tts/expression? "Ha <laugh> ha.")))
     (is (tts/expression? "[joyful] Hello."))
     (is (tts/expression? "It's (((big))) news."))
     (is (not (tts/expression? "A plain line [3] about x < 5.")))))

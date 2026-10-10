@@ -101,22 +101,23 @@
  ;; turns it off
  :retrospective true
 
- ;; after each briefing is filed, the model writes a podcast of it, two
- ;; hosts talking it through in :podcast-segments segments, and the speech
- ;; engine records it, for the day's page to play. It runs on its own after
- ;; the briefing, since recording takes minutes, and only when the speech
- ;; engine is there. Each host has a :name, one of the engine's voices as
+ ;; the model writes a podcast of a briefing, two hosts talking it through
+ ;; in :podcast-segments segments, and the speech engine records it, for
+ ;; the day's page to play. :podcast-auto records it as soon as each
+ ;; briefing is filed, on its own since recording takes minutes; off, it is
+ ;; recorded from the day's page. Both need the speech engine. Each host has a :name, one of the engine's voices as
  ;; :voice, a :backstory and a :personality, which the script plays to. A
  ;; :podcast role in :roles can give the script its own model; its prompts
  ;; are :podcast-outline-prompt and :podcast-transcript-prompt. false turns
  ;; it off
  :podcast true
+ :podcast-auto true
  :podcast-segments 5
  :podcast-hosts
  [{:name "Hugo" :voice "Hugo"
    :backstory "A former trade economist who spent years on the road between ports, central banks and factory floors before swapping spreadsheets for a microphone."
    :personality "Dry wit and endless curiosity. Follows the money and the supply chains, loves a good historical parallel, and asks the question everyone else forgot to."}
-  {:name "Kiki" :voice "Kiki"
+  {:name "Martha" :voice "Martha"
    :backstory "A science and technology reporter turned systems thinker, who has covered elections, chip wars and climate talks on four continents."
    :personality "Quick, playful and sharp. Turns a dense story into a vivid picture, cheers a good surprise, and pushes back hard when a claim doesn't add up."}]
 
