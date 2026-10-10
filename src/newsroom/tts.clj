@@ -204,12 +204,15 @@
    (and (native?) (or (not= :kitten-mini engine) (boolean @mini)))))
 
 (defn engines-line
-  "What startup says of the speech engines it can record with."
-  []
-  (let [engines (cond-> []
-                  (native?) (conj (if @plugin "KittenTTS 2 (with the GPU plugin)" "KittenTTS 2"))
-                  (available? :kitten-mini) (conj "KittenTTS mini"))]
-    (str "speech engines: " (if (seq engines) (str/join ", " engines) "none, so no podcasts"))))
+  "What startup says of the speech engines it can record with, and, when
+  `config` turns podcasts off, that they are."
+  ([] (engines-line {}))
+  ([config]
+   (let [engines (cond-> []
+                   (native?) (conj (if @plugin "KittenTTS 2 (with the GPU plugin)" "KittenTTS 2"))
+                   (available? :kitten-mini) (conj "KittenTTS mini"))]
+     (str "speech engines: " (if (seq engines) (str/join ", " engines) "none, so no podcasts")
+          (when (false? (:podcast config)) " (podcasts are off)")))))
 
 (defn- download!
   "Fetch `name`, as `downloads` has it, into the model's directory unless it

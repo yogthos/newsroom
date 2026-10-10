@@ -68,7 +68,10 @@
 ;; what startup says, which the release's smoke test reads
 (deftest the-engines-there-are-said
   (is (re-find #"^speech engines: " (tts/engines-line)))
-  (is (= (tts/available? :kitten-mini) (boolean (re-find #"KittenTTS mini" (tts/engines-line))))))
+  (is (= (tts/available? :kitten-mini) (boolean (re-find #"KittenTTS mini" (tts/engines-line)))))
+  (testing "said whether podcasts are on or off, and which"
+    (is (not (str/includes? (tts/engines-line {}) "podcasts are off")))
+    (is (str/ends-with? (tts/engines-line {:podcast false}) " (podcasts are off)"))))
 
 ;; --- the mini engine ------------------------------------------------------------
 

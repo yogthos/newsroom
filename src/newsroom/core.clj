@@ -388,8 +388,7 @@
                "(the folder is kept as briefings.bak)"))
     (doseq [{:keys [plugin ok]} plugins :when ok]
       (println "loaded plugin" plugin))
-    (when-not (false? (:podcast cfg))
-      (println (tts/engines-line)))
+    (println (tts/engines-line cfg))
     (when (seq pruned)
       (println "dropped" (count pruned) "days past :keep-days" (:keep-days cfg)))
     @system))
