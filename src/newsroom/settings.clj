@@ -145,6 +145,12 @@
              {:key :podcast-auto :type :boolean :default true
               :doc (str "Record the podcast as soon as each briefing is filed, so it's ready by the time "
                         "you read it. Off, a podcast is recorded only from the day's page.")}
+             {:key :podcast-engine :type :keyword :options [:kitten-2 :kitten-mini] :default :kitten-2
+              :doc (str "The speech engine that records it. kitten-2 is KittenTTS 2, the most natural, "
+                        "which wants a GPU or a fast CPU and fetches about 2 GB the first time. kitten-mini "
+                        "is KittenTTS mini, smaller and much faster, on the CPU only, for a modest machine; "
+                        "it fetches about 80 MB, reads no emotion or emphasis, and speaks a host whose voice "
+                        "it lacks in its deepest of the same sex, Luna or Bruno.")}
              {:key :podcast-device :type :keyword :options [:auto :cpu] :default :auto
               :doc (str "What the speech engine records on. auto is the GPU when the engine was built for "
                         "one and it comes up, Metal on a Mac, or the CUDA, ROCm or Vulkan plugin beside "

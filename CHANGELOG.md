@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A small speech engine, for modest machines.** `:podcast-engine
+  :kitten-mini` records the podcast with KittenTTS mini 0.8 instead of
+  KittenTTS 2: a small model on the CPU, many times faster, through ONNX
+  Runtime with espeak-ng for its phonemes, in a plugin the macOS and Linux
+  releases carry beside the binary. It reads no emotion or emphasis, and a
+  host whose voice it lacks speaks in its deepest of the same sex. Its
+  first podcast downloads about 80 MB. Startup says which speech engines
+  newsroom found.
+
 ## v0.11.0 — 9 October 2026
 
 ### Added

@@ -988,9 +988,14 @@ static std::vector<float> trimmed(const std::vector<float> & wav, int sr) {
 }
 
 int nrtts_mp3_add_speech(nrtts_mp3 * e, nrtts * h, int gap_ms) {
-    if (!e || !h) return -1;
-    if (h->audio.empty()) return 0;
-    auto w = trimmed(h->audio, e->sample_rate);
+    if (!h) return -1;
+    return nrtts_mp3_add_pcm(e, h->audio.data(), (int) h->audio.size(), gap_ms);
+}
+
+int nrtts_mp3_add_pcm(nrtts_mp3 * e, const float * pcm, int n, int gap_ms) {
+    if (!e || n < 0) return -1;
+    if (n == 0) return 0;
+    auto w = trimmed(std::vector<float>(pcm, pcm + n), e->sample_rate);
     if (nrtts_mp3_add(e, w.data(), (int) w.size()) < 0) return -1;
     if (gap_ms > 0) {
         std::vector<float> silence((size_t) e->sample_rate * gap_ms / 1000, 0.0f);

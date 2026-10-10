@@ -160,6 +160,25 @@
                   (shell "native/build/test-tts" (str dir "/model-q4_0.gguf") (str dir "/s3gen.gguf")
                          (str dir "/voices.gguf") "test/golden/tts" "native/build/golden.mp3"))}
 
+         mini-test
+         {:doc "check the small engine, KittenTTS mini, against test/golden/mini: the phonemes and token ids each sentence gets and the durations the model gives them, the first sentence's audio written to native/build/mini.raw. Needs `jolt tts` and the model's files in NEWSROOM_TTS_DIR/mini or ~/.config/newsroom/tts/mini, which its first podcast fetches"
+          :depends [tts]
+          :task (let [dir (str (or (System/getenv "NEWSROOM_TTS_DIR")
+                                   (str (or (System/getenv "NEWSROOM_HOME")
+                                            (str (System/getProperty "user.home") "/.config/newsroom"))
+                                        "/tts"))
+                               "/mini")]
+                  (when-not (fs/exists? (str dir "/kitten_tts_mini_v0_8.onnx"))
+                    (throw (ex-info (str "no model files in " dir) {})))
+                  (shell "native/build/test-mini" (str dir "/kitten_tts_mini_v0_8.onnx") (str dir "/voices.npz")
+                         (str dir "/config.json") "native/espeak-ng-data" "test/golden/mini" "native/build/mini.raw"))}
+
+         mini-golden
+         {:doc "regenerate test/golden/mini from the upstream kittenml package (dev/mini_golden.py through uv), with ESPEAK_LIBRARY and ESPEAK_DATA_PATH naming an espeak-ng 1.52.0 when the wheel's can't find its data, as on macOS"
+          :task (shell "uv" "run" "--no-project" "--python" "3.12"
+                       "--with" "kittenml==0.9.4" "--with" "onnxruntime==1.31.0" "--with" "phonemizer==3.4.0"
+                       "python" "dev/mini_golden.py" "test/golden/mini")}
+
          tts-golden
          {:doc "regenerate test/golden/tts from the upstream kittenml package (dev/tts_golden.py through uv)"
           :task (shell "uv" "run" "--no-project" "--python" "3.12"

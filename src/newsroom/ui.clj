@@ -425,7 +425,7 @@
         [:p#podcast.podcast.muted "The podcast of this briefing is being recorded…"]
         (= day pending)
         [:p#podcast.podcast.muted "The podcast of this briefing will be recorded next."]
-        (and (not (false? (:podcast @config))) (tts/available?))
+        (and (not (false? (:podcast @config))) (tts/available? (:podcast-engine @config :kitten-2)))
         [:p#podcast.podcast
          [:button.quiet {"data-on:click" (str "@post('/podcast?day=" day "')")} "Record a podcast of this briefing"]]))))
 

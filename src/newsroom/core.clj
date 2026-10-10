@@ -49,6 +49,7 @@
             [newsroom.config :as config]
             [newsroom.config-page :as config-page]
             [newsroom.narration :as narration]
+            [newsroom.tts :as tts]
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
             [newsroom.plugin :as plugin]
@@ -387,6 +388,8 @@
                "(the folder is kept as briefings.bak)"))
     (doseq [{:keys [plugin ok]} plugins :when ok]
       (println "loaded plugin" plugin))
+    (when-not (false? (:podcast cfg))
+      (println (tts/engines-line)))
     (when (seq pruned)
       (println "dropped" (count pruned) "days past :keep-days" (:keep-days cfg)))
     @system))

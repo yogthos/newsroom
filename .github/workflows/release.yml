@@ -99,7 +99,8 @@ jobs:
         run: cp /ucrt64/bin/libsqlite3-0.dll "$(dirname "$(command -v jolt)")/sqlite3.dll"
 
       # the speech engine: llama.cpp, the S3 decoder and LAME, linked into
-      # the binary. Windows goes without it, and so without podcasts
+      # the binary, and the small engine's plugin, espeak-ng and ONNX
+      # Runtime. Windows goes without them, and so without podcasts
       - name: Cache the speech engine's build
         if: runner.os != 'Windows'
         uses: actions/cache@v6
@@ -107,6 +108,8 @@ jobs:
           path: |
             native/llama.cpp
             native/lame
+            native/espeak-ng
+            native/onnxruntime
           key: tts-${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('deps.edn', 'native/build_tts.sh') }}
 
       # the Vulkan SDK, for the speech engine's GPU plugin: the shader
@@ -159,6 +162,14 @@ jobs:
           cp "$exe" README.md CHANGELOG.md "$name/"
           # the speech engine's GPU plugin, which newsroom loads from beside itself
           if [ -f native/libnewsroom_tts_gpu.so ]; then cp native/libnewsroom_tts_gpu.so "$name/"; fi
+          # the small engine's plugin, with ONNX Runtime under the name it
+          # links and espeak-ng's English data
+          for m in native/libnewsroom_tts_mini.so native/libnewsroom_tts_mini.dylib; do
+            [ -f "$m" ] && cp "$m" "$name/"
+          done
+          if [ -f native/libonnxruntime.so.1 ]; then cp -L native/libonnxruntime.so.1 "$name/"; fi
+          if [ -f native/libonnxruntime.1.dylib ]; then cp -L native/libonnxruntime.1.dylib "$name/"; fi
+          if [ -d native/espeak-ng-data ]; then cp -r native/espeak-ng-data "$name/"; fi
           cp examples/config.edn "$name/config.example.edn"
           cp -r plugins "$name/plugins"
           # Windows looks beside the exe first, for a library and for the DLLs
@@ -230,7 +241,7 @@ jobs:
 
           Runtime libraries: Linux needs sqlite3, libxml2 and OpenSSL 3, which most distributions have. macOS needs OpenSSL 3 (\`brew install openssl@3\`). The Windows archive carries its own, beside \`newsroom.exe\`.
 
-          The macOS binary is unsigned, so clear the quarantine flag before the first run: \`xattr -d com.apple.quarantine ./newsroom\`." \
+          The macOS binary is unsigned, so clear the quarantine flag in the unpacked folder before the first run: \`xattr -dr com.apple.quarantine .\`." \
             || echo "release already exists, uploading asset"
           gh release upload "${GITHUB_REF_NAME}" "${PKG}" --clobber
 

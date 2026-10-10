@@ -14,6 +14,7 @@
 #define nrtts_free nrttsg_free
 #define nrtts_mp3_add nrttsg_mp3_add
 #define nrtts_mp3_add_speech nrttsg_mp3_add_speech
+#define nrtts_mp3_add_pcm nrttsg_mp3_add_pcm
 #define nrtts_mp3_bytes nrttsg_mp3_bytes
 #define nrtts_mp3_close nrttsg_mp3_close
 #define nrtts_mp3_finish nrttsg_mp3_finish

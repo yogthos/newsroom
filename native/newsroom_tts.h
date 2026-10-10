@@ -84,6 +84,9 @@ nrtts_mp3 *nrtts_mp3_open(int sample_rate, int kbps);
  * edges faded so chunks join without a seam, then `gap_ms` of silence */
 int nrtts_mp3_add_speech(nrtts_mp3 *e, nrtts *h, int gap_ms);
 int nrtts_mp3_add(nrtts_mp3 *e, const float *pcm, int n);
+/* appends `n` samples of speech from elsewhere, the mini engine's, trimmed,
+ * faded and followed by `gap_ms` of silence as nrtts_mp3_add_speech's are */
+int nrtts_mp3_add_pcm(nrtts_mp3 *e, const float *pcm, int n, int gap_ms);
 /* finishes the stream; its bytes stay valid until nrtts_mp3_close */
 int nrtts_mp3_finish(nrtts_mp3 *e);
 const uint8_t *nrtts_mp3_bytes(nrtts_mp3 *e);

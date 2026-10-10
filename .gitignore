@@ -21,3 +21,6 @@ native/frameworks/
 # release archives downloaded to try
 /newsroom-*.tar.gz
 /newsroom-*.zip
+native/espeak-ng/
+native/espeak-ng-data/
+native/onnxruntime/
