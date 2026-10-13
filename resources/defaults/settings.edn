@@ -17,6 +17,10 @@
  ;; sources and markdown files, after each new briefing. -1 keeps them all.
  :keep-days 100
 
+ ;; how long the models' answers are kept, in hours, for a run that asks
+ ;; the same thing to reuse, as running a day again does; 0 asks every time
+ :reply-cache-hours 48
+
  ;; the most reports the analyst is given, cut a story at a time once
  ;; every report of the day is sorted into its story, the heaviest kept;
  ;; the most reports one story brings, the rest credited to it; and how

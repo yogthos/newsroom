@@ -67,6 +67,7 @@ button { margin-top: 10px; width: 100%; font: 600 13px var(--sans); padding: 8px
          border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
          border-radius: 4px; cursor: pointer; }
 button:hover { filter: brightness(1.1); }
+button.secondary { margin-top: 6px; background: var(--paper); color: var(--accent); }
 main { padding: 48px clamp(20px, 6vw, 80px) 80px; }
 .briefing { max-width: 44rem; margin: 0 auto; }
 .dateline { font: 700 12px var(--sans); text-transform: uppercase; letter-spacing: .16em;

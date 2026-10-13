@@ -9,6 +9,7 @@
             [newsroom.embed-test]
             [newsroom.entities-test]
             [newsroom.feed-test]
+            [newsroom.llm-cache-test]
             [newsroom.json-test]
             [newsroom.llm-provider-test]
             [newsroom.llm-stream-test]
@@ -42,6 +43,7 @@
     newsroom.critique-test
     newsroom.embed-test
     newsroom.feed-test
+    newsroom.llm-cache-test
     newsroom.llm-stream-test
     newsroom.markdown-test
     newsroom.news-test
