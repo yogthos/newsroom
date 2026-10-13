@@ -45,11 +45,21 @@
   registry, the built-ins included, and `plugin/defprovider` adds one. The
   config page lists them with the key each reads and whether it's found,
   and each role is picked from a dropdown of them and the aliases declared.
+- **A provider can be tried before it's saved.** A test button on each
+  built-in and each entry under Your providers asks it a one-word question
+  as a run would, and says which model answered, or why it couldn't, a
+  key that isn't set named before anything is sent.
 - **`:reports-per-story`**, the most reports one story brings to the
   analyst, 6 by default.
 
 ### Changed
 
+- **The config page says which providers are ready to use.** The
+  built-ins are listed as such, an entry of your own is explained as only
+  needed to change one or add another, and a blank field in it shows what
+  its type fills in. A role's dropdown lists yours, then the built-ins,
+  each with the model it asks for and a built-in marked when its key isn't
+  set.
 - **The day is cut by story.** Every report in the window is sorted into
   its story before anything is cut, and `:max-items` is filled a story at
   a time, heaviest first. `:max-items-per-source` is gone: it kept the

@@ -477,10 +477,24 @@
         role (fn [r] (re-find (re-pattern (str "(?s)<select[^>]*name=\"roles\\." r "\"[^>]*>.*?</select>")) page))]
     (testing "a role is a choice of the providers there are, the ones declared on the page among them"
       (is (re-find #"data-cfg-role" (role "analyst")))
-      (is (str/includes? (role "analyst") "<option selected=\"selected\" value=\"fast\">fast</option>")
-          "an alias declared on the page")
+      (is (str/includes? (role "analyst") "<option selected=\"selected\" value=\"fast\">fast — z-ai/glm-5.3</option>")
+          "an alias declared on the page, with the model it asks for")
       (is (str/includes? (role "analyst") "value=\"openrouter\""))
       (is (str/includes? (role "analyst") "value=\"zai\"")))
+    (testing "the reader's own come first, then the built-ins, each with its model and whether it has a key"
+      (is (re-find #"(?s)<optgroup label=\"Your providers\">.*fast.*</optgroup>.*<optgroup label=\"Built-in\">"
+                   (role "analyst")))
+      (with-redefs [config/secret (constantly nil)]
+        (let [page (str (h/html (config-page/article {:tree tree :config {}})))]
+          (is (str/includes? page ">openai — gpt-4o (no key)</option>"))
+          (is (str/includes? page ">local — local-model</option>") "one that needs no key isn't marked"))))
+    (testing "a built-in the reader changed is theirs, under the model they gave it"
+      (let [tree (settings/to-form (assoc (defaults) :providers {:deepseek {:model "deepseek-v4-pro"}}))
+            page (str (h/html (config-page/article {:tree tree})))
+            built-in (re-find #"(?s)<optgroup label=\"Built-in\">.*?</optgroup>" page)]
+        (is (str/includes? page ">deepseek — deepseek-v4-pro</option>"))
+        (is (str/includes? page "(yours changes it, below)") "and the table says it's changed")
+        (is (not (str/includes? built-in "value=\"deepseek\"")))))
     (testing "a role naming a provider that's gone keeps it, to be seen and changed"
       (is (str/includes? (role "desk") "value=\"retired\"")))
     (testing "the registered providers are listed with what each needs"
@@ -493,3 +507,71 @@
           (is (str/includes? (shown {:single-user false}) "<code>DEEPSEEK_API_KEY</code> (not set)"))
           (is (str/includes? (shown {:single-user false :shared-secrets ["DEEPSEEK_API_KEY"]})
                              "<code>DEEPSEEK_API_KEY</code> (set)")))))))
+
+(deftest a-provider-entry-says-what-it-needs-and-what-its-type-fills-in
+  (let [tree (settings/to-form (assoc (defaults) :providers {:fast {:type :openrouter}}))
+        page (str (h/html (config-page/article {:tree tree})))
+        entry (re-find #"(?s)<details class=\"entry provider\".*?</details>" page)]
+    (is (str/includes? entry "Only the alias is needed"))
+    (is (str/includes? entry "placeholder=\"deepseek/deepseek-v4-flash\"") "the model its type asks for")
+    (is (str/includes? entry "placeholder=\"https://openrouter.ai/api/v1\"") "its type's endpoint")
+    (is (str/includes? entry "placeholder=\"OPENROUTER_API_KEY\"") "where its type reads the key")
+    (is (str/includes? page "data-cfg-provider-types=") "the types' defaults, for a type picked on the page")
+    (testing "and can be tried, as can each built-in"
+      (is (str/includes? page "data-cfg-test-provider=\"providers.0\""))
+      (is (str/includes? page "data-cfg-test-provider=\"providers.__0__\""))
+      (is (str/includes? page "data-cfg-test-provider=\"openrouter\"")))))
+
+(deftest a-provider-entry-is-read-from-the-form
+  (is (= {:alias :fast :entry {:type :openrouter :model "x"} :errors {}}
+         (settings/provider-at {"providers.3._alias" ":fast" "providers.3.type" "openrouter"
+                                "providers.3.model" "x" "providers.4._alias" "other"}
+                               "providers.3")))
+  (is (= {"providers.3._alias" "is needed"} (:errors (settings/provider-at {"providers.3.model" "x"} "providers.3"))))
+  (is (= {"providers.3.max-tokens" "has to be a whole number"}
+         (:errors (settings/provider-at {"providers.3._alias" "a" "providers.3.max-tokens" "lots"} "providers.3")))))
+
+(deftest a-provider-can-be-tried-before-it-is-saved
+  (let [asked (atom nil)
+        chat (fn [llm request] (reset! asked [llm request]) {:content "ready" :model "glm-5.3-0901"})
+        try-it (fn [params prefix & [f]] (core/test-provider {} params prefix (or f chat)))]
+    (testing "an entry on the page is asked a short question as a run would ask it"
+      (let [result (try-it {"providers.2._alias" "mine" "providers.2.type" "openai"
+                            "providers.2.base-url" "http://gpu:8000/v1" "providers.2.api-key" "sk-typed"
+                            "providers.2.model" "qwen"} "providers.2")
+            [llm request] @asked]
+        (is (= "http://gpu:8000/v1" (:base-url llm)))
+        (is (= "sk-typed" (:api-key llm)))
+        (is (= "qwen" (:model llm)))
+        (is (<= (:max-tokens request) 1024) "a short answer")
+        (is (<= (:timeout-ms llm) 60000) "and not waited on for a run's ten minutes")
+        (is (= {:alias :mine :model "glm-5.3-0901" :base-url "http://gpu:8000/v1" :reply "ready"}
+               (dissoc result :ms)))
+        (is (not (str/includes? (pr-str result) "sk-typed")) "the key doesn't come back")))
+    (testing "a built-in is tried as it is"
+      (with-redefs [config/secret (fn [k] (when (= k "ZAI_API_KEY") "sk-zai"))]
+        (try-it {} "zai")
+        (is (= "https://api.z.ai/api/paas/v4" (:base-url (first @asked))))
+        (is (= "sk-zai" (:api-key (first @asked))))))
+    (testing "what's wrong is said"
+      (is (= {:errors {"providers.1._alias" "is needed"}} (try-it {"providers.1.model" "m"} "providers.1")))
+      (is (str/includes? (:error (try-it {"providers.1._alias" "x"} "providers.1")) "needs a :type"))
+      (is (= "HTTP 401: bad key" (:error (try-it {"providers.1._alias" "o" "providers.1.type" "openai"
+                                                  "providers.1.api-key" "sk-x"}
+                                                 "providers.1" (fn [_ _] (throw (ex-info "HTTP 401: bad key" {})))))))
+      (with-redefs [config/secret (constantly nil)]
+        (reset! asked nil)
+        (is (= "it has no key: set OPENAI_API_KEY in the environment or secrets.edn, or type one in"
+               (:error (try-it {} "openai"))))
+        (is (= "it has no key: set MY_KEY in the environment or secrets.edn, or type one in"
+               (:error (try-it {"providers.1._alias" "o" "providers.1.type" "openai" "providers.1.api-key-env" "MY_KEY"}
+                               "providers.1"))))
+        (is (nil? @asked) "and isn't asked without one")
+        (is (:reply (try-it {} "local")) "one that needs no key is asked")))
+    (testing "and drawn under the entry"
+      (let [html (fn [r] (str (h/html (config-page/provider-test-result r))))]
+        (is (str/includes? (html {:alias :mine :model "qwen" :base-url "http://gpu:8000/v1" :reply "ready" :ms 1200})
+                           "qwen answered in 1.2s"))
+        (is (str/includes? (html {:alias :mine :model "qwen" :base-url "u" :reply "" :ms 10}) "no text"))
+        (is (str/includes? (html {:error "HTTP 401: bad key"}) "HTTP 401: bad key"))
+        (is (str/includes? (html {:errors {"providers.1._alias" "is needed"}}) "Alias is needed"))))))
