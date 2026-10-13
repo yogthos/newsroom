@@ -232,13 +232,15 @@
 
  ;; --- models ---------------------------------------------------------------
  ;; Endpoints are declared under :providers by alias. An alias named after a
- ;; built-in (:deepseek, :glm, :openai, :local, :ollama) takes that provider's
- ;; defaults and only overrides what it sets; any other alias needs a :type
- ;; saying which built-in it works like.
+ ;; built-in (:deepseek, :glm, :zai, :zai-coding, :openrouter, :openai,
+ ;; :local, :ollama, or one a plugin adds) takes that provider's defaults and
+ ;; only overrides what it sets; any other alias needs a :type saying which
+ ;; provider it works like.
  ;;
  ;; A key comes from :api-key-env, the name of an environment variable, or
  ;; from :api-key, either written out or as "${VAR}". Each built-in already
- ;; knows its usual variable: DEEPSEEK_API_KEY, ZHIPU_API_KEY, OPENAI_API_KEY.
+ ;; knows its usual variable: DEEPSEEK_API_KEY, ZHIPU_API_KEY, ZAI_API_KEY,
+ ;; OPENROUTER_API_KEY, OPENAI_API_KEY.
  :providers
  {;; DeepSeek, with a bigger model than the default flash one
   :deepseek {:model "deepseek-v4-pro"}
@@ -246,16 +248,25 @@
   ;; Zhipu's GLM through the coding plan endpoint
   :glm {:model "glm-5.3"}
 
+  ;; GLM through Z.ai, Zhipu's international endpoint; :zai-coding is its
+  ;; coding plan's
+  :zai {:model "glm-5.3"}
+
   ;; OpenAI
   :openai {:model "gpt-4o"}
 
-  ;; any OpenAI-compatible service, here OpenRouter
-  :openrouter {:type :openai
-               :base-url "https://openrouter.ai/api/v1"
-               :api-key-env "OPENROUTER_API_KEY"
-               :model "qwen/qwen3-235b-a22b"
-               ;; extra headers some gateways want
-               :headers {"HTTP-Referer" "https://github.com/yogthos/newsroom"}}
+  ;; OpenRouter, any model by its id there, deepseek/deepseek-v4-flash by
+  ;; default; a second alias can serve another job with another model
+  :openrouter {}
+  :openrouter-glm {:type :openrouter :model "z-ai/glm-5.3"}
+
+  ;; any other OpenAI-compatible service
+  :gateway {:type :openai
+            :base-url "https://llm.example.com/v1"
+            :api-key-env "GATEWAY_API_KEY"
+            :model "some-model"
+            ;; extra headers some gateways want
+            :headers {"X-Team" "news"}}
 
   ;; a local llama.cpp server, vLLM or LM Studio
   :llama {:type :local

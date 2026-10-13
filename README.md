@@ -51,7 +51,7 @@ Once a week is over, and once a month is, newsroom writes a digest of it. It doe
 
 Newsroom also keeps score of its own projections. Once a briefing is filed, the model lists the projections it makes, each a claim that can later turn out true or false, with its subject, the storyline it's about and the day by which it should be known. The dossiers do the same for the outlets: when a report puts forward its own expectation of how a story will go, in its own voice or through the analysts it chooses to quote, that's recorded and credited to the outlet. A wire story counts for the agency, however many outlets reprint it. A digest's projections are recorded too. After each weekly and monthly digest, a retrospective takes the projections that have fallen due and checks each one against what happened since: the facts in its storyline's notes, the digest and the days' standfirsts. Each is judged held, partly or failed, with how close the outcome came on a scale from 0 to 1 and the reason it held or missed. One the evidence doesn't settle yet gets another period. From the verdicts the model keeps a short list of lessons, each one a rule for the next projection tied to a subject, like a kind of actor whose announcements keep outrunning what it can do. The briefings and digests are given the lessons, newsroom's own record and the forecasts still open, so each briefing says which way the day moved the forecasts it bears on, and `{{record}}` marks where they go in an edited prompt. Every outlet is ranked within each subject by how close its calls came, so an outlet that reads technology well can still sit at the bottom on geopolitics, and the analyst sees an outlet's record on a subject next to anything that outlet expects on it. The rankings, the lessons and every verdict with its reason are at `/record`, and a digest's page shows the projections its retrospective judged. `:retrospective` turns this off, and a `:retrospective` role can give the job its own model.
 
-The model needs an API key. DeepSeek is the default and reads `DEEPSEEK_API_KEY`, though GLM, OpenAI, Ollama and a local llama.cpp server work just as well. The key can be exported in the shell that starts newsroom, or kept in `secrets.edn` in the config directory, as described under [Making it yours](#making-it-yours).
+The model needs an API key. DeepSeek is the default and reads `DEEPSEEK_API_KEY`, though GLM (`ZHIPU_API_KEY`, or `ZAI_API_KEY` through Z.ai), OpenAI, Ollama and a local llama.cpp server work just as well, and [OpenRouter](https://openrouter.ai) (`OPENROUTER_API_KEY`) reaches almost any model with one key, each by its id there, like `z-ai/glm-5.3`, which helps where a provider's own endpoint is slow or blocked. With no roles set, the first of DeepSeek, GLM, Z.ai, OpenRouter and OpenAI whose key is found serves. The config page lists every provider with the key it reads and whether it's found, and each job's model is picked from them. The key can be exported in the shell that starts newsroom, or kept in `secrets.edn` in the config directory, as described under [Making it yours](#making-it-yours).
 
 ## The podcast
 
@@ -166,6 +166,14 @@ A source type is a function from the source map and the run's context to a list 
                                         {:headers {"Authorization" (str "Bearer " token)}
                                          :query-params {"channel" (:channel source)}}))]
       (plugin/item source {:title (:text m) :url "..." :summary (:text m)}))))
+```
+
+A plugin can add a model provider too, which roles can then be given and a provider entry can take as its `:type`. An OpenAI-compatible endpoint needs only where it is, its key and a model; how it differs from OpenAI's, like where its reasoning comes back or how it's told to think less, says the rest (see [`newsroom.llm.provider`](src/newsroom/llm/provider.clj), where the built-ins are registered the same way):
+
+```clojure
+(plugin/defprovider :acme
+  {:label "Acme" :base-url "https://llm.acme.example/v1" :key-env "ACME_API_KEY"
+   :model "acme-large" :features #{:reasoning-effort :stream}})
 ```
 
 `emit!` shows what the plugin is doing in the sidebar while a run goes, and `defname` says what a source is called when it has no `:name`, which matters because the sidebar tracks sources by name, so two sources of one type need different ones.
