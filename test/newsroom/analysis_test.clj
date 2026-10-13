@@ -41,6 +41,34 @@
                      "{\"stories\": [{\"title\": \"Big\", \"reports\": [1, 12345678901234567890, \"99999999999999999999\"],
                        \"importance\": 1e300}]}" 2))))))
 
+(deftest the-reports-are-sorted-in-batches-of-neighbours
+  (let [at (fn [i v] (item i :vector v))
+        a [0.9 0.1 0.0] b [0.0 0.2 0.9]
+        items [(at 1 a) (at 2 b) (at 3 a) (at 4 a) (at 5 b) (at 6 a)]
+        batches (analysis/sorting-batches items 3)
+        n-of #(parse-long (subs (:title %) 7))]
+    (is (every? #(<= (count %) 3) batches))
+    (is (= (set (range 1 7)) (set (map n-of (apply concat batches)))) "every report in one batch")
+    (is (some #(= #{2 5} (set (map n-of %))) (map #(filter (fn [i] (#{2 5} (n-of i))) %) batches))
+        "the reports on one subject are sorted together")
+    (is (= 1 (count (filter #(some (comp #{2 5} n-of) %) batches))))
+    (testing "without embeddings the reports are batched in order"
+      (is (= [[1 2] [3]] (map #(map n-of %) (analysis/sorting-batches [(item 1) (item 2) (item 3)] 2)))))))
+
+(deftest a-sorting-accounts-for-every-report
+  (let [parsed (analysis/parse-grouping "{\"stories\": [{\"title\": \"A\", \"reports\": [1, 3]}], \"junk\": [4]}" 5)]
+    (is (= [2 5] (analysis/unplaced parsed 5)) "neither in a story nor junk")
+    (is (= [] (analysis/unplaced (update parsed :junk conj 2 5) 5)))))
+
+(deftest the-batches-sortings-are-joined
+  (is (= {:groups [{:title "A" :members [1 2]} {:title "B" :members [5]} {:title "C" :members [4]}]
+          :junk #{3 6}}
+         (analysis/join-groupings [[3 {:groups [{:title "A" :members [1 2]}] :junk #{3}}]
+                                   [3 {:groups [{:title "B" :members [2]} {:title "C" :members [1]}] :junk #{3}}]])))
+  (testing "a batch that couldn't be sorted adds nothing, its reports left to be stories of their own"
+    (is (= {:groups [{:title "B" :members [3]}] :junk #{}}
+           (analysis/join-groupings [[2 nil] [2 {:groups [{:title "B" :members [1]}] :junk #{}}]])))))
+
 (deftest grouping-sorts-the-items-into-stories
   (let [items [(item 1 :story "fed") (item 2) (item 3 :story "old") (item 4 :story "fed") (item 5)]
         grouped (analysis/apply-grouping items {:groups [{:title "The Fed" :members [2 1 4] :importance 8

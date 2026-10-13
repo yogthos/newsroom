@@ -28,6 +28,7 @@
   fails leaves the briefing to be written from what there is."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [newsroom.embed :as embed]
             [newsroom.news :as news]
             [newsroom.notes :as notes]
             [newsroom.retrospective :as retrospective]))
@@ -154,6 +155,71 @@
         (when (seq groups)
           {:groups groups
            :junk (set (remove placed (filter in-range? (numbers (get m "junk")))))})))))
+
+(defn unplaced
+  "The reports, by number from 1 to `n`, a sorting `parsed` neither put in
+  a story nor called junk."
+  [{:keys [groups junk]} n]
+  (let [placed (into (set junk) (mapcat :members groups))]
+    (vec (remove placed (range 1 (inc n))))))
+
+(def sorting-batch
+  "How many reports one sorting call sorts: few enough that the answer,
+  a line a story, comes back whole and the model reads every report, enough
+  that a story's reports mostly meet in one call."
+  40)
+
+(def ^:private neighbours
+  "How close (cosine similarity) a report has to sit to the reports of a
+  subject to be sorted with them: looser than the storylines', so that
+  reports one call ought to see together, a market's fall and the shares
+  behind it, meet."
+  0.5)
+
+(defn sorting-batches
+  "`items` in batches of at most `size` for the sorting calls, the reports
+  on one subject together: grouped by their :vector, each joining the
+  closest group whose mean it sits `neighbours` close to, and the groups
+  packed into the first batch with room, a group too big for one split.
+  Without embeddings, in order."
+  [items size]
+  (if-not (every? :vector items)
+    (mapv vec (partition-all size items))
+    (let [groups (reduce (fn [groups item]
+                           (let [v (:vector item)
+                                 best (some->> (map-indexed vector groups)
+                                               (map (fn [[i g]] [(embed/cosine v (:sum g)) i]))
+                                               seq
+                                               (apply max-key first))]
+                             (if (and best (>= (first best) neighbours))
+                               (update groups (second best)
+                                       #(-> % (update :items conj item) (update :sum (partial mapv +) v)))
+                               (conj groups {:items [item] :sum v}))))
+                         []
+                         items)
+          pieces (mapcat #(partition-all size (:items %)) groups)]
+      (reduce (fn [batches piece]
+                (if-let [i (first (keep-indexed (fn [i b] (when (<= (+ (count b) (count piece)) size) i))
+                                                batches))]
+                  (update batches i into piece)
+                  (conj batches (vec piece))))
+              []
+              pieces))))
+
+(defn join-groupings
+  "The sortings of consecutive batches as one, [[size parsed]] in order,
+  each batch's reports numbered after the batches before it. A batch with
+  no sorting adds nothing, so its reports are stories of their own."
+  [batches]
+  (first
+   (reduce (fn [[out offset] [size parsed]]
+             (let [shift #(+ offset %)]
+               [(-> out
+                    (update :groups into (map #(update % :members (partial mapv shift)) (:groups parsed)))
+                    (update :junk into (map shift (:junk parsed))))
+                (+ offset size)]))
+           [{:groups [] :junk #{}} 0]
+           batches)))
 
 (defn- shared-story
   "The storyline most of `members` continue, the first of them on a tie,

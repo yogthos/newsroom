@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [ebb.core :as m]
+            [newsroom.analysis :as analysis]
             [newsroom.embed :as embed]
             [newsroom.pipeline :as pipeline]
             [newsroom.plugin :as plugin]
@@ -193,6 +194,59 @@
       (is (< (str/index-of brief "Kospi plunges") (str/index-of brief "Routine report"))
           "ahead of the routine reports")
       (is (>= 10 (count (re-seq #"(?m)^\[\d+\] " brief))) "and the day is still cut to :max-items"))))
+
+(defn- sorting-run
+  "Run the busy day with the desk sorting through `sort`, a fn of the
+  sorting prompt and how many times the desk has been asked; the prompts
+  sent, in order."
+  [sort]
+  (let [prompts (atom [])
+        asked (atom 0)
+        c (-> (ctx [{:type ::busy :name "Economic Times"}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (swap! prompts conj p)
+                       {:content (if (str/includes? p "You sort the reports")
+                                   (sort p (swap! asked inc))
+                                   "# Today\n\nMarkets [1].")
+                        :model "fake"})))
+              (update :config merge {:group-stories true :max-items 50}))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    @prompts))
+
+(defn- sorts [prompts] (filter #(str/includes? % "You sort the reports") prompts))
+
+(defn- kospi-first? [prompts]
+  (let [brief (last prompts)]
+    (< (str/index-of brief "Kospi plunges") (str/index-of brief "Routine report"))))
+
+(deftest the-sorting-goes-a-batch-at-a-time
+  (with-redefs [analysis/sorting-batch 15]
+    (let [prompts (sorting-run (fn [p _] (sorting-answer p #(if (str/includes? % "Kospi") 9 2))))]
+      (is (= 3 (count (sorts prompts))) "40 reports, 15 a call")
+      (is (every? #(<= (count (re-seq #"(?m)^\[\d+\] " %)) 15) (sorts prompts)))
+      (is (= 40 (count (re-seq #"(?m)^\[\d+\] " (last prompts)))) "every report reaches the analyst")
+      (is (kospi-first? prompts)))))
+
+(deftest a-cut-off-sorting-is-asked-again
+  (with-redefs [analysis/sorting-batch 15]
+    (let [prompts (sorting-run (fn [p n]
+                                 (if (= 1 n)
+                                   "{\"stories\": [{\"title\": \"Rou"
+                                   (sorting-answer p #(if (str/includes? % "Kospi") 9 2)))))]
+      (is (= 4 (count (sorts prompts))) "the batch whose answer was cut off is asked once more")
+      (is (kospi-first? prompts))
+      (is (some #(str/includes? (:text %) "asked again") (:events @pipeline/status))))))
+
+(deftest reports-a-sorting-leaves-out-are-asked-about-again
+  (let [prompts (sorting-run (fn [p n]
+                               (if (= 1 n)
+                                 (sorting-answer (str/replace p #"(?m)^\[\d+\] S Korea.*$" "") (constantly 2))
+                                 (sorting-answer p #(if (str/includes? % "Kospi") 9 2)))))
+        [_ again] (sorts prompts)]
+    (is (= 1 (count (re-seq #"(?m)^\[\d+\] " again))) "only the report left out is asked about")
+    (is (str/includes? again "Kospi plunges"))
+    (is (kospi-first? prompts))))
 
 (deftest the-window-runs-from-the-lookback-to-the-next-day
   (let [dated (fn [n day] (assoc (item n day) :published (str day "T08:00:00Z")))

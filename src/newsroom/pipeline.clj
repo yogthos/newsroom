@@ -621,22 +621,72 @@
 
 (defn- dated [day] (str (sources/long-date day) " (" day ")"))
 
+(def ^:private sorting-wave
+  "How many sorting calls go at once."
+  6)
+
+(defn- sort-once
+  "Task: the desk's sorting of `items`, parsed, asked once more when the
+  answer is cut off or can't be read; nil when it still can't be."
+  [{:keys [run-id] :as ctx} llm-config day items notes]
+  (m/sp
+    (let [prompt (analysis/grouping-prompt (dated day) items notes)
+          try! #(m/? (softly run-id "Sorting the reports into stories" (ask ctx llm-config prompt)))
+          parsed (some-> (try!) (analysis/parse-grouping (count items)))]
+      (or parsed
+          (do (log! run-id {:text (str "The sorting of " (counted (count items) "report" "reports")
+                                       " came back cut off or unreadable, so it was asked again")})
+              (some-> (try!) (analysis/parse-grouping (count items))))))))
+
+(defn- sort-batch
+  "Task: the desk's sorting of one batch of `items`, {:groups :junk} by
+  their numbers in it, every report accounted for: those the answer left
+  out are sorted again on their own, and any still left out become
+  stories of their own. nil when the batch couldn't be sorted at all."
+  [{:keys [run-id] :as ctx} llm-config day items notes]
+  (m/sp
+    (when-let [parsed (m/? (sort-once ctx llm-config day items notes))]
+      (let [missing (analysis/unplaced parsed (count items))]
+        (if (empty? missing)
+          parsed
+          (let [_ (log! run-id {:text (str "The sorting left out " (counted (count missing) "report" "reports")
+                                           ", so they were sorted again on their own")})
+                again (m/? (sort-once ctx llm-config day (mapv #(nth items (dec %)) missing) notes))
+                back #(nth missing (dec %))]
+            (cond-> parsed
+              again (-> (update :groups into (map #(update % :members (partial mapv back)) (:groups again)))
+                        (update :junk into (map back (:junk again)))))))))))
+
 (defn- group-task
   "Task: the day's `items` sorted into stories by the desk (see
   analysis/apply-grouping), or nil when :group-stories is off, or the
-  sorting fails or says nothing."
+  sorting fails or says nothing. The items go in batches of
+  analysis/sorting-batch, the reports on one subject together, a few calls
+  at once, and a batch that can't be sorted costs only its own sorting."
   [{:keys [config store run-id] :as ctx} day items]
   (m/sp
     (when (and (:group-stories config) (seq items))
       (let [llm-config (desk-llm config)
+            batches (analysis/sorting-batches items analysis/sorting-batch)
             _ (update-status! run-id assoc :state :sorting :items (count items))
             _ (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
-                                       ") to sort " (count items) " reports into stories")})
+                                       ") to sort " (count items) " reports into stories"
+                                       (when (< 1 (count batches)) (str ", in " (count batches) " calls")))})
             notes (store/notes store (keep :story items))
-            answer (m/? (softly run-id "Sorting the reports into stories"
-                                (ask ctx llm-config (analysis/grouping-prompt (dated day) items notes))))
-            parsed (some-> answer (analysis/parse-grouping (count items)))
-            grouped (some->> parsed (analysis/apply-grouping items))]
+            sorted (loop [waves (partition-all sorting-wave batches) out []]
+                     (if-let [wave (first waves)]
+                       (recur (rest waves)
+                              (into out (m/? (apply m/join vector
+                                                    (map #(sort-batch ctx llm-config day % notes) wave)))))
+                       out))
+            failed (count (remove some? sorted))
+            _ (when (pos? failed)
+                (log! run-id {:text (str (counted failed "batch" "batches") " of reports couldn't be sorted, "
+                                         "so each of their reports is a story of its own")
+                              :level :error}))
+            joined (analysis/join-groupings (map (fn [b p] [(count b) p]) batches sorted))
+            grouped (when (seq (:groups joined))
+                      (analysis/apply-grouping (into [] cat batches) joined))]
         (if (seq grouped)
           (let [junk (- (count items) (count grouped))]
             (log! run-id {:text (str "Sorted " (count grouped) " reports into "
@@ -644,9 +694,8 @@
                                      (when (pos? junk) (str ", leaving out " junk " that weren't news")))
                           :level :ok})
             grouped)
-          (do (when answer
-                (log! run-id {:text "The sorting's answer held no stories, so the reports stay as they are"
-                              :level :error}))
+          (do (log! run-id {:text "The sorting held no stories, so the reports stay as they are"
+                            :level :error})
               nil))))))
 
 (def ^:private article-timeout-ms 20000)
