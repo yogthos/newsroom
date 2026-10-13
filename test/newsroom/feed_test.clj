@@ -178,3 +178,9 @@
          (feed/page-meta "<meta content=\"Plain one.\" name=\"description\">"))
       "attribute order doesn't matter")
   (is (= {:title nil :description nil :published nil} (feed/page-meta "<p>nothing</p>"))))
+
+(deftest html-entities-are-decoded
+  ;; Thanh Nien's titles spell their accents as HTML entities
+  (is (= "5 tính năng nên thử: có À ç ß € ©" 
+         (feed/plain-text "5 t&iacute;nh năng n&ecirc;n thử: c&oacute; &Agrave; &ccedil; &szlig; &euro; &copy;")))
+  (is (= "&bogus; stays" (feed/plain-text "&bogus; stays"))))

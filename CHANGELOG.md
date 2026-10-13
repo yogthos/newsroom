@@ -51,6 +51,11 @@
 
 ### Fixed
 
+- **A feed with a raw `&` is read whole.** libxml2 stopped at the first
+  one, so Rest of World's feed, which has them in its image URLs, gave a
+  single item of its twelve.
+- **HTML's accented letters are decoded**, so Thanh Nien's titles read
+  "có", not "c&oacute;".
 - **A source's timeout fires again.** jolt 0.8.21 moved its timers to the
   monotonic clock, which ebb 0.1.3 didn't know, so a slow feed held the
   run for as long as it took. ebb is now 0.1.4.

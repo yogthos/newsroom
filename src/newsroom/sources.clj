@@ -213,11 +213,23 @@
 
 ;; --- rss ---------------------------------------------------------------------------
 
+(defn- escape-bare-ampersands
+  "`text` with every & that starts no entity XML knows escaped, outside
+  CDATA, whose text is read as it is: a feed with a raw & in an image's
+  URL, or an HTML entity like &eacute;, stops libxml2 there. An HTML
+  entity escaped this way is decoded with the rest of the text."
+  [text]
+  (let [fix #(str/replace % #"&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);)" "&amp;")
+        cdata #"(?s)<!\[CDATA\[.*?\]\]>"
+        kept (re-seq cdata text)
+        between (str/split text cdata -1)]
+    (apply str (fix (first between)) (mapcat (fn [c b] [c (fix b)]) kept (rest between)))))
+
 (defn parse-xml
   "An XML document's text as a clojure.xml tree."
   [text]
   ;; libxml2 refuses a document with anything before the prolog
-  (xml/parse (subs text (or (str/index-of text "<") 0))))
+  (xml/parse (escape-bare-ampersands (subs text (or (str/index-of text "<") 0)))))
 
 (def ^:private user-agent-field
   {:key :user-agent :type :string
