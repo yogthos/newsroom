@@ -3,6 +3,7 @@
   (:require [clojure.test :as t]
             [newsroom.analysis-test]
             [newsroom.ask-test]
+            [newsroom.auth-test]
             [newsroom.config-test]
             [newsroom.critique-test]
             [newsroom.embed-test]
@@ -17,6 +18,7 @@
             [newsroom.podcast-test]
             [newsroom.precedents-test]
             [newsroom.progress-test]
+            [newsroom.readers-test]
             [newsroom.retrospective-test]
             [newsroom.settings-test]
             [newsroom.plugin-test]
@@ -32,6 +34,7 @@
   '[newsroom.news-spec
     newsroom.analysis-test
     newsroom.ask-test
+    newsroom.auth-test
     newsroom.config-test
     newsroom.critique-test
     newsroom.embed-test
@@ -54,7 +57,8 @@
     newsroom.secrets-test
     newsroom.settings-test
     newsroom.sources-test
-    newsroom.ui-test])
+    newsroom.ui-test
+    newsroom.readers-test])
 
 (defn -main [& _]
   (let [{:keys [fail error]} (apply t/run-tests namespaces)]
