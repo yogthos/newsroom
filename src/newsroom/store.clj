@@ -132,6 +132,17 @@
       summary text,
       stories text,
       primary key (user_id, day, idx))"
+   "entity_mentions" "create table if not exists entity_mentions (
+      user_id integer not null,
+      day text not null,
+      entity text not null,
+      story text not null,
+      name text not null,
+      kind text,
+      title text,
+      importance integer,
+      cited integer not null default 0,
+      primary key (user_id, day, entity, story))"
    "digests" "create table if not exists digests (
       user_id integer not null,
       kind text not null,
@@ -283,6 +294,7 @@
 (def ^:private indexes
   ["create index if not exists sources_story on sources (user_id, story)"
    "create index if not exists day_trends_thread on day_trends (user_id, thread)"
+   "create index if not exists entity_mentions_entity on entity_mentions (user_id, entity, day)"
    "create index if not exists coverage_story on coverage (user_id, story)"
    "create index if not exists projections_due on projections (user_id, status, due)"
    "create index if not exists projections_ref on projections (user_id, origin, ref)"
@@ -917,6 +929,7 @@
                        ;; what outlives the days goes with the coverage
                        (jdbc/execute! conn [(str "delete from standfirsts where user_id = ? and day < " oldest) uid uid])
                        (jdbc/execute! conn [(str "delete from day_trends where user_id = ? and day < " oldest) uid uid])
+                       (jdbc/execute! conn [(str "delete from entity_mentions where user_id = ? and day < " oldest) uid uid])
                        (jdbc/execute! conn [(str "delete from search_docs where user_id = ? and kind in ('story', 'fact')
                                                   and ref in (select story from story_notes
                                                               where user_id = ? and last_day < " oldest ")")
@@ -991,6 +1004,33 @@
                    :direction (:direction r)
                    :summary (:summary r) :stories (some-> (:stories r) edn/read-string)})
           (jdbc/fetch conn ["select * from day_trends where user_id = ? and day >= ? and day <= ? order by day, idx"
+                            (user-id store) from to]))))
+
+(defn save-mentions!
+  "Store the entities of the day's stories, `mentions` {:day :entity :name
+  :kind :story :title :importance :cited}, in place of the day's last."
+  [store day mentions]
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (jdbc/atomic conn
+        (jdbc/execute! conn ["delete from entity_mentions where user_id = ? and day = ?" uid day])
+        (doseq [{:keys [entity story name kind title importance cited]}
+                (vals (into {} (map (juxt (juxt :entity :story) identity)) mentions))]
+          (jdbc/execute! conn ["insert into entity_mentions (user_id, day, entity, story, name, kind, title, importance, cited)
+                                values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                               uid day entity story name kind title importance (if cited 1 0)])))))
+  nil)
+
+(defn mentions-between
+  "The entities of the stories of the days from `from` to `to`, both
+  inclusive, by day and entity: {:day :entity :name :kind :story :title
+  :importance :cited}. They are kept as long as the coverage."
+  [store from to]
+  (with-db [conn store]
+    (mapv (fn [r] {:day (:day r) :entity (:entity r) :name (:name r) :kind (:kind r) :story (:story r)
+                   :title (:title r) :importance (:importance r) :cited (= 1 (:cited r))})
+          (jdbc/fetch conn ["select * from entity_mentions where user_id = ? and day >= ? and day <= ?
+                             order by day, entity, story"
                             (user-id store) from to]))))
 
 ;; --- digests -----------------------------------------------------------------------

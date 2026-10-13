@@ -41,6 +41,27 @@
                      "{\"stories\": [{\"title\": \"Big\", \"reports\": [1, 12345678901234567890, \"99999999999999999999\"],
                        \"importance\": 1e300}]}" 2))))))
 
+(deftest a-sorting-names-each-storys-entities
+  (let [answer (str "{\"stories\": [{\"title\": \"Kospi falls\", \"reports\": [1, 2], \"importance\": 9,"
+                    " \"entities\": [{\"name\": \"Kospi\", \"kind\": \"market\"},"
+                    " {\"name\": \" Samsung Electronics \", \"kind\": \"Organization\"},"
+                    " {\"name\": \"\", \"kind\": \"person\"}, \"South Korea\","
+                    " {\"name\": \"Bank of Korea\", \"kind\": \"bank\"}]}]}")
+        [g] (:groups (analysis/parse-grouping answer 2))]
+    (is (= [{:name "Kospi" :kind "market"} {:name "Samsung Electronics" :kind "organisation"}
+            {:name "South Korea" :kind nil} {:name "Bank of Korea" :kind nil}]
+           (:entities g))
+        "names trimmed, a nameless one dropped, a bare name taken, a kind it doesn't know left out")
+    (is (= (:entities g) (:entities (first (analysis/apply-grouping [(item 1) (item 2)] {:groups [g] :junk #{}}))))
+        "and each report of the story carries them"))
+  (is (str/includes? (analysis/grouping-prompt "30 September 2026" [(item 1)] {}) "\"entities\"")))
+
+(deftest a-merged-story-keeps-the-entities-of-its-parts
+  (let [e (fn [& ns] (mapv (fn [n] {:name n :kind "organisation"}) ns))
+        items [(item 1 :group "G1" :entities (e "Samsung")) (item 2 :group "G2" :entities (e "SK Hynix" "samsung"))]
+        merged (analysis/apply-review items {:same [["G1" "G2"]] :importance {}})]
+    (is (= [["Samsung" "SK Hynix"] ["Samsung" "SK Hynix"]] (map #(map :name (:entities %)) merged)))))
+
 (deftest the-reports-are-sorted-in-batches-of-neighbours
   (let [at (fn [i v] (item i :vector v))
         a [0.9 0.1 0.0] b [0.0 0.2 0.9]

@@ -58,6 +58,7 @@
             [newsroom.config :as config]
             [newsroom.critique :as critique]
             [newsroom.embed :as embed]
+            [newsroom.entities :as entities]
             [newsroom.feed :as feed]
             [newsroom.llm.client :as llm]
             [newsroom.llm.providers :as providers]
@@ -1202,6 +1203,18 @@
   (let [{:keys [stored]} (lane-of ctx)]
     (narration/enqueue! (assoc (select-keys ctx [:config :store :chat]) :on-saved #(swap! stored inc)) day)))
 
+(defn- web-block
+  "What the analyst is told of the entities that tie the day's `stories`
+  together, and of what changed since the briefing of `previous-day`, from
+  the mentions kept for the :trend-days before; nil when there's nothing."
+  [store config day stories previous-day]
+  (let [today (entities/mentions day stories #{})
+        window (store/mentions-between store (minus-days day (:trend-days config 7)) (minus-days day 1))
+        previous (when previous-day (filterv #(= previous-day (:day %)) window))]
+    (entities/web-block (entities/day-web today stories)
+                        (if (seq previous) (entities/changes today previous window) {})
+                        (when (seq previous) (sources/long-date previous-day)))))
+
 (defn run-task
   "Task: gather, analyse and store `day`. Completes with the stored day's
   summary; fails when nothing was gathered or the model call fails.
@@ -1260,6 +1273,8 @@
             ranked (if (and grouped (< analysis/sorting-batch (count grouped)))
                      (trends/rank-groups (m/? (review-task ctx day ranked)) lines day half-life)
                      ranked)
+            ;; every story of the day, the ones cut for space too, for the graph
+            whole-day ranked
             _ (when-let [followed (seq (filter #(> (:days %) 1) ranked))]
                 (log! run-id {:text (str "Followed " (count followed) " stories from earlier days, the longest"
                                          " in the news for " (apply max (map :days followed)) " days")}))
@@ -1284,6 +1299,8 @@
             max-facts (:story-notes config)
             kept (when max-facts (store/notes store (map :story ranked)))
             stories (analysis/stories ranked)
+            day-stories (entities/day-stories day whole-day ranked)
+            web (web-block store config day day-stories (:day earlier))
             desk (when (seq stories)
                    (m/? (softly run-id "The desk's work" (desk-task ctx day stories kept ranked))))
             {:keys [dossiers found] the-map :map} desk
@@ -1329,7 +1346,8 @@
                                                 (remove nil?)
                                                 seq
                                                 (str/join "\n\n"))
-                                       {:analysis analysed :graph? (some? graph) :record (:block record)})
+                                       {:analysis analysed :graph? (some? graph) :record (:block record)
+                                        :web web})
             _ (update-status! run-id assoc :state :analysing :items (count numbered)
                               :provider (name (:alias llm-config)) :model (:model llm-config))
             {:keys [answer reply]} (m/? (critique-task ctx day numbered analysed llm-config prompt
@@ -1348,6 +1366,7 @@
                                 :tldr (news/tldr doc)
                                 :model (or (:model reply) (:model llm-config))
                                 :provider (name (:alias llm-config))})
+        (store/save-mentions! store day (entities/mentions day day-stories cited))
         ;; in place of a rerun's, even when this run found none
         (let [by-key (into {} (map (juxt :key identity)) stories)]
           (store/save-trends! store day (map (fn [t] (update t :stories #(vec (distinct (keep (comp :story by-key) %)))))
@@ -1466,6 +1485,14 @@
                       "edges, so keep to what happened within it. Their citations belong to those digests' "
                       "sources, so cite only the numbered sources below.\n\n"))))))
 
+(defn- period-web
+  "What a digest is told of its period's entities, from `from` to `to`,
+  against the period before it."
+  [store kind from to]
+  (let [[before-from before-to] (trends/period-range kind (trends/previous-period kind from))]
+    (entities/period-block (store/mentions-between store from to)
+                           (store/mentions-between store before-from before-to))))
+
 (defn digest-task
   "Task: write and store the digest of `kind` (:week or :month) for
   `period` from what is kept of its days: their coverage, which ranks the
@@ -1534,7 +1561,8 @@
                     (some->> established (previous-digest-context kind last-period))
                     (trends/trends-block threads sources/long-date)
                     built-on
-                    (:block record))
+                    (:block record)
+                    (period-web store kind from to))
             llm-config (providers/role-llm config :analyst)
             _ (update-status! run-id assoc :state :analysing :items (count lines)
                               :provider (name (:alias llm-config)) :model (:model llm-config))

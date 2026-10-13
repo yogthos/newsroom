@@ -29,6 +29,7 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [newsroom.embed :as embed]
+            [newsroom.entities :as entities]
             [newsroom.news :as news]
             [newsroom.notes :as notes]
             [newsroom.retrospective :as retrospective]))
@@ -96,6 +97,31 @@
        (when-let [t (:title (get notes story))]
          (str "\n    Continues the storyline: " t))))
 
+(def entity-kinds
+  "The kinds of entity a story is about."
+  ["person" "organisation" "country" "place" "market"])
+
+(def ^:private max-entities
+  "The most entities the sorting names for one story."
+  5)
+
+(defn- entity-kind [v]
+  (let [k (some-> v str str/trim str/lower-case (str/replace "organization" "organisation"))]
+    (some #{k} entity-kinds)))
+
+(defn- read-entities
+  "The entities a story's answer names, {:name :kind}: a bare name taken
+  as one of no kind, a nameless one dropped, at most max-entities."
+  [v]
+  (->> (if (sequential? v) v [])
+       (keep (fn [e]
+               (let [[n k] (if (map? e) [(get e "name") (get e "kind")] [e nil])
+                     n (some-> n str str/trim (str/replace #"\s+" " "))]
+                 (when-not (str/blank? n)
+                   {:name (clip n 80) :kind (entity-kind k)}))))
+       (take max-entities)
+       vec))
+
 (defn grouping-prompt
   "The prompt that has the desk sort `items`, numbered from 1 in order,
   into stories. `notes` are the notes on the storylines the items
@@ -119,13 +145,18 @@
        "lifestyle item with no wider consequence. A market or currency moving several percent in a day, a "
        "central bank's surprise, a default, a war's escalation, a coup or a major election result is 8 or "
        "more however few reports carry it;\n"
-       "- its status: " (str/join ", " statuses) ".\n\n"
+       "- its status: " (str/join ", " statuses) ";\n"
+       "- its entities: the main people, organisations, countries, places and markets (an index, a "
+       "currency, a commodity) it is about, at most " max-entities ", each by its full common name in "
+       "English, the same way every time (\"United States\", not \"US\"; \"Federal Reserve\", not "
+       "\"the Fed\"), with its kind: " (str/join ", " entity-kinds) ".\n\n"
        "Leave out as junk only the reports that aren't news at all: a section or index page, an advert, "
        "a login or error page, a quiz, a list of links, a headline with nothing behind it. Put every "
        "other report in exactly one story.\n\n"
        "Answer with JSON only, in this shape:\n"
        "{\"stories\": [{\"title\": \"...\", \"reports\": [3, 7, 12], \"importance\": 7, "
-       "\"status\": \"escalating\"}], \"junk\": [5]}\n\n"
+       "\"status\": \"escalating\", \"entities\": [{\"name\": \"Bank of Korea\", \"kind\": \"organisation\"}]}], "
+       "\"junk\": [5]}\n\n"
        "Reports:\n\n"
        (str/join "\n\n" (map-indexed (fn [i item] (grouping-line (inc i) item notes)) items))))
 
@@ -146,10 +177,12 @@
                                          (remove placed)
                                          vec)]
                         (if (seq members)
-                          [(conj groups {:title (text (get g "title") 160)
-                                         :members members
-                                         :importance (importance-of (get g "importance"))
-                                         :status (status-of (get g "status"))})
+                          [(conj groups (let [ents (read-entities (get g "entities"))]
+                                          (cond-> {:title (text (get g "title") 160)
+                                                   :members members
+                                                   :importance (importance-of (get g "importance"))
+                                                   :status (status-of (get g "status"))}
+                                            (seq ents) (assoc :entities ents))))
                            (into placed members)]
                           [groups placed])))
                     [[] #{}]
@@ -247,7 +280,7 @@
     (->> groups
          (remove (fn [g] (every? junk (:members g))))
          (map-indexed
-          (fn [k {:keys [title members importance status]}]
+          (fn [k {:keys [title members importance status entities]}]
             (let [members (mapv #(nth items (dec %)) (remove junk members))
                   story (shared-story members)
                   key (str "G" (inc k))]
@@ -255,6 +288,7 @@
                       (cond-> (assoc item :group key :group-title (or title (:title (first members))))
                         importance (assoc :importance importance)
                         status (assoc :status status)
+                        (seq entities) (assoc :entities entities)
                         story (assoc :story story)))
                     members))))
          (apply concat)
@@ -333,13 +367,20 @@
                                         (cond-> m r (update k #(if % (max % r) r)))))
                                     {}
                                     (map (fn [g] [g (get into-key g g)]) (distinct (map :group items))))]
-      (mapv (fn [{:keys [group] :as item}]
-              (let [k (get into-key group group)
-                    head (lead-of k)
-                    imp (get merged-importance k)]
-                (cond-> (assoc item :group k :group-title (:group-title head))
-                  imp (assoc :importance imp))))
-            items))))
+      (let [entities (reduce (fn [m g]
+                               (let [k (get into-key g g)]
+                                 (update m k #(entities/union % (:entities (lead-of g))))))
+                             {}
+                             (distinct (map :group items)))]
+        (mapv (fn [{:keys [group] :as item}]
+                (let [k (get into-key group group)
+                      head (lead-of k)
+                      imp (get merged-importance k)
+                      ents (get entities k)]
+                  (cond-> (assoc item :group k :group-title (:group-title head))
+                    imp (assoc :importance imp)
+                    (seq ents) (assoc :entities ents))))
+              items)))))
 
 (defn story-ids
   "The day's numbered `sources` with a storyline each: the one it

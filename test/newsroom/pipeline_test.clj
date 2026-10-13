@@ -1356,3 +1356,52 @@
   (let [[md _] (coverage-run "Sorry, I can't.")]
     (is (str/includes? md "Routine [[2]]") "the draft stands")
     (is (str/includes? md "## Also today\n\n- S Korea's Kospi plunges over 7% as chip stocks tumble [[1]]"))))
+
+(defn- entity-run
+  "Run `day` from fixture reports `ns`, sorted as `stories` say: [title
+  [report] importance [entity]] each. The analyst's prompt."
+  [c day ns stories]
+  (let [prompts (atom [])
+        answer (str "{\"stories\": ["
+                    (str/join ", " (for [[title reports imp ents] stories]
+                                     (str "{\"title\": \"" title "\", \"reports\": " (pr-str reports)
+                                          ", \"importance\": " imp ", \"entities\": ["
+                                          (str/join ", " (map #(str "{\"name\": \"" % "\", \"kind\": \"organisation\"}") ents))
+                                          "]}")))
+                    "]}")
+        c (-> c
+              (assoc-in [:config :sources] [{:type ::fixture :name "A" :ns ns}])
+              (assoc :chat (fn [_ req]
+                             (let [p (-> req :messages first :content)]
+                               (swap! prompts conj p)
+                               {:content (if (str/includes? p "You sort the reports") answer "# Today\n\nOne [1].")
+                                :model "fake"}))))]
+    (m/? (pipeline/run-task c day))
+    (last @prompts)))
+
+(deftest the-analyst-reads-the-days-web-and-how-it-changed
+  (let [c (-> (ctx [] nil) (update :config merge {:group-stories true}))
+        first-day (entity-run c "2026-09-30" [1 2 3] [["Kospi plunges" [1] 9 ["Samsung" "Kospi"]]
+                                                       ["Chip shares sell off" [2] 8 ["Samsung" "SK Hynix"]]
+                                                       ["Fed holds" [3] 5 ["Federal Reserve"]]])]
+    (is (str/includes? first-day "- **Samsung** (organisation): Kospi plunges [1]; Chip shares sell off [2]"))
+    (is (= #{"samsung" "kospi" "sk hynix" "federal reserve"}
+           (set (map :entity (store/mentions-between (:store c) "2026-09-30" "2026-09-30")))))
+    (is (= #{1} (set (keep #(when (:cited %) (count [%])) (store/mentions-between (:store c) "2026-09-30" "2026-09-30"))))
+        "what the briefing cited is marked")
+    (let [next-day (entity-run c "2026-10-01" [4 5] [["Fed cuts" [1] 9 ["Federal Reserve"]]
+                                                      ["Rates fall" [2] 7 ["Federal Reserve" "Treasury"]]])]
+      (is (str/includes? next-day "Since 30 September 2026"))
+      (is (str/includes? next-day "Gone quiet: Samsung"))
+      (is (str/includes? next-day "- **Federal Reserve** (organisation): Fed cuts [1]; Rates fall [2]")))))
+
+(deftest a-digest-reads-the-period-through-its-entities
+  (let [prompts (atom [])
+        c (digest-ctx (fn [_ req] (swap! prompts conj (-> req :messages first :content))
+                        {:content "# The week\n\n> Rates held [1].\n\n## Overview\n\nSteady [1]." :model "fake"}))
+        st (:store c)]
+    (store-week! st)
+    (store/save-mentions! st "2026-09-29" [{:day "2026-09-29" :entity "kospi" :name "Kospi" :kind "market"
+                                            :story "s1" :title "Kospi plunges" :importance 9 :cited true}])
+    (m/? (pipeline/digest-task c :week "2026-W40"))
+    (is (str/includes? (first @prompts) "- **Kospi** (market): 1 day, new; Kospi plunges"))))

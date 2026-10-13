@@ -383,18 +383,21 @@
 (defn render-desk-prompt
   "The briefing's prompt as render-prompt fills it, with the desk's work
   before the briefing too, `desk`: {{analysis}}, its dossiers and map,
-  and {{record}}, how earlier projections turned out, each placed just
-  before the sources when the template has no place for it, and
+  {{record}}, how earlier projections turned out, and {{web}}, the
+  entities that tie the day's stories together and what changed since the
+  last briefing, each placed just before the sources when the template has
+  no place for it, and
   {{graph}}, true when the graph is drawn for the analyst."
-  [template day sources previous {:keys [analysis graph? record]}]
+  [template day sources previous {:keys [analysis graph? record web]}]
   (template/fill (place-vars template (cond-> []
                                         previous (conj "previous")
                                         record (conj "record")
                                         analysis (conj "analysis")
+                                        web (conj "web")
                                         true (conj "sources"))
                              "sources")
                  {:date day :sources (source-block sources) :previous previous
-                  :analysis analysis :graph (boolean graph?) :record record}))
+                  :analysis analysis :graph (boolean graph?) :record record :web web}))
 
 (defn render-prompt
   "The briefing's prompt: the Selmer `template` with {{date}}, {{sources}}

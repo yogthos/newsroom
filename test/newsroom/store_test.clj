@@ -1,5 +1,6 @@
 (ns newsroom.store-test
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [jdbc.core :as jdbc]
             [newsroom.store :as store]))
@@ -190,6 +191,24 @@
         (is (= 3 (count (:sources (store/day db "2026-09-28"))))))
       (testing "nothing more to drop"
         (is (= [] (store/prune! db 3))))
+      (finally (store/close db)))))
+
+(deftest the-entities-of-each-day-are-kept-for-each-reader
+  (let [db (fresh)
+        row (fn [day entity story & {:as more}]
+              (merge {:day day :entity entity :name (str/capitalize entity) :kind "organisation" :story story
+                      :title (str "Story " story) :importance 7 :cited true}
+                     more))]
+    (try
+      (store/save-mentions! db "2026-09-29" [(row "2026-09-29" "samsung" "a") (row "2026-09-29" "kospi" "a")])
+      (store/save-mentions! db "2026-09-30" [(row "2026-09-30" "samsung" "b" :cited false :kind nil)])
+      (is (= [(row "2026-09-29" "kospi" "a") (row "2026-09-29" "samsung" "a")
+              (row "2026-09-30" "samsung" "b" :cited false :kind nil)]
+             (store/mentions-between db "2026-09-01" "2026-09-30")))
+      (store/save-mentions! db "2026-09-29" [(row "2026-09-29" "fed" "c")])
+      (is (= ["fed"] (map :entity (store/mentions-between db "2026-09-29" "2026-09-29"))) "a rerun replaces the day's")
+      (let [theirs (store/for-user db (store/ensure-user! db {:issuer "i" :subject "t"}))]
+        (is (= [] (store/mentions-between theirs "2026-09-01" "2026-09-30")) "another reader's are their own"))
       (finally (store/close db)))))
 
 (deftest the-desks-trends-are-kept-with-the-coverage

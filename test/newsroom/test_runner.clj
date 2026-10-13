@@ -7,6 +7,7 @@
             [newsroom.config-test]
             [newsroom.critique-test]
             [newsroom.embed-test]
+            [newsroom.entities-test]
             [newsroom.feed-test]
             [newsroom.llm-stream-test]
             [newsroom.markdown-test]
