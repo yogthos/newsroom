@@ -345,3 +345,152 @@
       (is (some? (store/narration db "2026-09-29")))
       (is (some? (store/narration-audio db "2026-09-30")))
       (finally (store/close db)))))
+
+;; --- readers ---------------------------------------------------------------------
+
+(deftest the-local-reader-is-there-from-the-start
+  (let [db (fresh)]
+    (try
+      (is (= store/local-user-id (store/user-id db)) "a store opened plain is the local reader's")
+      (is (= "local" (:subject (store/user db store/local-user-id))))
+      (finally (store/close db)))))
+
+(deftest a-reader-is-found-by-issuer-and-subject
+  (let [db (fresh)]
+    (try
+      (let [a (store/ensure-user! db {:issuer "https://auth.example" :subject "abc" :name "Ann" :email "a@x"})
+            again (store/ensure-user! db {:issuer "https://auth.example" :subject "abc" :name "Ann B" :email "a@x"})
+            other (store/ensure-user! db {:issuer "https://other.example" :subject "abc"})]
+        (is (= a again) "the same reader signing in again")
+        (is (not= a other) "the same subject at another issuer is someone else")
+        (is (not= store/local-user-id a))
+        (is (= "Ann B" (:name (store/user db a))) "the name is kept up to date")
+        (is (= #{store/local-user-id a other} (set (map :id (store/users db))))))
+      (finally (store/close db)))))
+
+(deftest each-reader-keeps-their-own-newsroom
+  (let [db (fresh)
+        uid (store/ensure-user! db {:issuer "https://auth.example" :subject "bob"})
+        mine (store/for-user db store/local-user-id)
+        theirs (store/for-user db uid)]
+    (try
+      (store/save-day! mine {:day "2026-09-30" :sources sources :cited [1] :markdown "# Mine\n\nwalrus [1]"
+                             :model "m" :provider "p" :tldr "mine"})
+      (store/save-settings! mine {:run-at "07:00"})
+      (store/save-notes! mine {"s1" {:title "Note" :summary "walrus" :facts [] :last-day "2026-09-30"}})
+      (store/save-digest! mine {:kind :week :period "2026-W40" :sources [] :cited [] :markdown "# Week" :model "m" :provider "p"})
+      (store/save-projections! mine "day" "2026-09-30" [{:made-on "2026-09-30" :claim "c" :subject "s" :due "2026-10-01"}])
+      (store/record-source-health! mine [{:source "Wire" :error nil}])
+      (store/save-narration! mine {:day "2026-09-30" :mp3 (byte-array [1]) :transcript [] :seconds 1.0})
+      (testing "another reader sees none of it"
+        (is (nil? (store/day theirs "2026-09-30")))
+        (is (empty? (store/days theirs)))
+        (is (empty? (store/archive theirs)))
+        (is (= {} (store/settings theirs)))
+        (is (empty? (store/all-notes theirs)))
+        (is (empty? (store/digests theirs)))
+        (is (empty? (store/open-projections theirs "2026-10-02")))
+        (is (empty? (store/source-health theirs)))
+        (is (nil? (store/narration theirs "2026-09-30")))
+        (is (empty? (store/coverage-between theirs "2026-09-01" "2026-10-30")))
+        (is (empty? (store/search theirs "walrus" {}))))
+      (testing "and keeps their own day under the same date"
+        (store/save-day! theirs {:day "2026-09-30" :sources [] :cited [] :markdown "# Theirs" :model "m" :provider "p"})
+        (is (= "# Theirs" (:markdown (store/day theirs "2026-09-30"))))
+        (is (= "# Mine\n\nwalrus [1]" (:markdown (store/day mine "2026-09-30"))))
+        (is (some? (store/narration mine "2026-09-30")) "a day saved by one reader leaves the other's podcast"))
+      (testing "the reader's own search finds their own"
+        (is (= #{:day :story} (set (map :kind (store/search mine "walrus" {}))))))
+      (testing "pruning one reader's days leaves the other's"
+        (store/save-day! theirs {:day "2026-09-29" :sources [] :cited [] :markdown "# Earlier" :model "m" :provider "p"})
+        (is (= ["2026-09-29"] (store/prune! theirs 1)))
+        (is (some? (store/day mine "2026-09-30"))))
+      (finally (store/close db)))))
+
+(def ^:private legacy-schema
+  "The tables of a database from before there were readers, as v0.12 made
+  them."
+  ["create table briefings (day text primary key, markdown text not null, model text, provider text,
+      tldr text, created_at text not null)"
+   "create table sources (day text not null, n integer not null, title text not null, url text not null,
+      source text, summary text, published text, also text, vector text, story text, weight real,
+      precedent integer not null default 0, note text, informs text, gap text,
+      cited integer not null default 0, primary key (day, n))"
+   "create table settings (key text primary key, value text not null)"
+   "create table story_notes (story text primary key, title text, summary text, facts text not null,
+      first_day text, last_day text not null, updated_at text not null, status text)"
+   "create table projections (id integer primary key, origin text not null, ref text not null,
+      made_on text not null, claim text not null, subject text not null, story text, source text,
+      outlet text, url text, by_whom text, due text not null, status text not null default 'open',
+      closeness real, reason text, checked_kind text, checked_period text, checked_at text)"
+   "create index projections_due on projections (status, due)"
+   "create table search_docs (id integer primary key, kind text not null, ref text not null, day text,
+      href text not null, url text, cited integer not null default 0, title text, body text)"
+   "insert into briefings values ('2026-09-30', '# Old day\n\nwalrus', 'm', 'p', 'old', '2026-09-30T07:00:00Z')"
+   "insert into sources (day, n, title, url, source, summary, cited) values
+      ('2026-09-30', 1, 'Old report', 'https://e.com/old', 'Wire', 'walrus', 1)"
+   "insert into settings values ('run-at', '\"06:00\"')"
+   "insert into projections (origin, ref, made_on, claim, subject, due) values
+      ('day', '2026-09-30', '2026-09-30', 'Rates hold', 'economy', '2026-10-30')"])
+
+(deftest a-database-from-before-readers-is-the-local-readers
+  (let [f (str (System/getProperty "java.io.tmpdir") "/newsroom-legacy-" (System/currentTimeMillis) ".sqlite3")]
+    (try
+      (let [conn (jdbc/connection (str "sqlite:" f))]
+        (doseq [stmt legacy-schema] (jdbc/execute! conn stmt))
+        (.close conn))
+      (let [db (store/open f)
+            other (store/for-user db (store/ensure-user! db {:issuer "https://auth.example" :subject "new"}))]
+        (try
+          (is (= "# Old day\n\nwalrus" (:markdown (store/day db "2026-09-30"))))
+          (is (= ["Old report"] (map :title (:sources (store/day db "2026-09-30")))))
+          (is (= {:run-at "06:00"} (store/settings db)))
+          (is (= ["Rates hold"] (map :claim (store/open-projections db "2026-10-01"))))
+          (is (seq (store/search db "walrus" {})) "the old day is indexed again")
+          (is (nil? (store/day other "2026-09-30")) "a new reader starts with nothing")
+          (is (empty? (store/search other "walrus" {})))
+          (finally (store/close db))))
+      (testing "and opening it again changes nothing"
+        (let [db (store/open f)]
+          (try
+            (is (= ["2026-09-30"] (store/days db)))
+            (is (= 1 (count (store/search db "walrus" {:kind :day}))))
+            (finally (store/close db)))))
+      (finally (io/delete-file f true)))))
+
+(deftest a-session-is-kept-until-it-expires
+  (let [db (fresh)
+        uid (store/ensure-user! db {:issuer "https://auth.example" :subject "s"})
+        now (System/currentTimeMillis)]
+    (try
+      (store/save-session! db {:id "h1" :user-id uid :id-token "tok" :expires-at (+ now 60000)})
+      (store/save-session! db {:id "h2" :user-id uid :expires-at (- now 1)})
+      (is (= {:id "h1" :user-id uid :id-token "tok"} (select-keys (store/session db "h1") [:id :user-id :id-token])))
+      (is (nil? (store/session db "h2")) "an expired session is no session")
+      (is (nil? (store/session db "nope")))
+      (store/delete-session! db "h1")
+      (is (nil? (store/session db "h1")))
+      (finally (store/close db)))))
+
+(deftest what-one-reader-fetched-is-shared-for-a-while
+  (let [db (fresh)
+        items [{:title "A" :url "https://e.com/a" :source "Wire" :summary "s" :published nil}]
+        theirs (store/for-user db (store/ensure-user! db {:issuer "i" :subject "t"}))]
+    (try
+      (is (nil? (store/shared-fetch db "k" 60000)))
+      (store/save-shared-fetch! db "k" "Wire" items)
+      (is (= {:name "Wire" :items items} (select-keys (store/shared-fetch theirs "k" 60000) [:name :items]))
+          "any reader's store reads it")
+      (is (integer? (:fetched-at (store/shared-fetch db "k" 60000))))
+      (is (nil? (store/shared-fetch db "k" -1)) "too old to use")
+      (testing "articles and embeddings are shared the same way"
+        (store/save-shared-article! db "https://e.com/a" "The text")
+        (is (= "The text" (store/shared-article theirs "https://e.com/a" 60000)))
+        (is (nil? (store/shared-article db "https://e.com/b" 60000)))
+        (store/save-shared-vectors! db {"h1" [0.5 0.25]})
+        (is (= {"h1" [0.5 0.25]} (update-vals (store/shared-vectors theirs ["h1" "h2"]) vec))))
+      (testing "and dropped once old"
+        (store/prune-shared! db -1)
+        (is (nil? (store/shared-fetch db "k" 60000)))
+        (is (nil? (store/shared-article db "https://e.com/a" 60000))))
+      (finally (store/close db)))))

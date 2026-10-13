@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Several readers.** With `:single-user false` in `config.edn`, readers
+  sign in with an OpenID Connect server, TODAQ's central-auth by default,
+  and each has a newsroom of their own: settings, schedule, runs,
+  briefings, digests, storylines, track record, podcasts and search. A
+  browser signs in with the code flow and PKCE; a program can send the
+  server's access token as a bearer token instead. Running for one person
+  stays the default and needs no sign-in, and what it held is the local
+  reader's, a database from before given to them when it's opened.
+- **Readers share the reading.** When two readers follow the same source,
+  what one run read for a day serves the other's for
+  `:shared-fetch-minutes`, and a run that finds the source being read
+  waits for that read. The articles read in full and the items'
+  embeddings are shared too.
+- **`:shared-secrets`.** With several readers, a reader's settings read
+  only these secrets, and a model's key only with its own provider.
+
+### Fixed
+
+- **A source's timeout fires again.** jolt 0.8.21 moved its timers to the
+  monotonic clock, which ebb 0.1.3 didn't know, so a slow feed held the
+  run for as long as it took. ebb is now 0.1.4.
+
 ## v0.12.0 — 10 October 2026
 
 ### Added

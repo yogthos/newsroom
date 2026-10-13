@@ -153,6 +153,37 @@
           (is (= 2 (count @spoken)))))
       (finally (store/close st)))))
 
+(deftest each-readers-podcast-waits-its-turn
+  (let [st (fresh-store)
+        a (store/for-user st (store/ensure-user! st {:issuer "i" :subject "a"}))
+        b (store/for-user st (store/ensure-user! st {:issuer "i" :subject "b"}))
+        status-of #(deref (:status (narration/lane (store/user-id %))))
+        gate (promise)]
+    (doseq [s [a b]]
+      (store/save-day! s {:day "2026-09-30" :sources [] :cited [] :markdown briefing :model "m" :provider "p"}))
+    (try
+      (with-redefs [tts/synthesize (fn [_ _] @gate {:mp3 (byte-array [1]) :seconds 1.0})]
+        (let [ctx {:config (config) :chat (scripted (atom []))}]
+          (narration/enqueue! (assoc ctx :store st) "2026-09-30")
+          (wait-for #(= :speaking (:state @narration/status)))
+          (narration/enqueue! (assoc ctx :store a) "2026-09-30")
+          (narration/enqueue! (assoc ctx :store b) "2026-09-30")
+          (is (= "2026-09-30" (:pending (status-of a))))
+          (is (= "2026-09-30" (:pending (status-of b))) "another reader's request doesn't take the first's place")
+          (is (nil? (:pending @narration/status)))
+          (is (not= :speaking (:state (status-of a))) "a reader's status shows only their own podcast")
+          (testing "a reader's cancel is only theirs"
+            (is (narration/cancel! (store/user-id b)))
+            (is (nil? (:pending (status-of b))))
+            (is (= :speaking (:state @narration/status))))
+          (deliver gate true)
+          (wait-for #(not (narration/busy?)))
+          (is (= :done (:state (status-of a))))
+          (is (some? (store/narration st "2026-09-30")))
+          (is (some? (store/narration a "2026-09-30")))
+          (is (nil? (store/narration b "2026-09-30")) "the one cancelled never ran")))
+      (finally (store/close st)))))
+
 (deftest a-podcast-can-be-cancelled
   (let [st (fresh-store)]
     (try

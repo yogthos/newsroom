@@ -5,6 +5,7 @@
             [ebb.core :as m]
             [newsroom.embed :as embed]
             [newsroom.pipeline :as pipeline]
+            [newsroom.plugin :as plugin]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.ui :as ui]))
@@ -1094,6 +1095,109 @@
     (is (= ["open"] (map :status (store/projections-due st "2026-10-04" :week "2026-W40"))) "still to be judged")
     (is (nil? (store/retrospective st :week "2026-W40")))
     (is (some #(str/includes? (:text %) "judge down") (:events @pipeline/status)))))
+
+;; --- several readers --------------------------------------------------------------
+
+(def ^:private fetches (atom []))
+
+(defmethod sources/fetch-items ::counted [{:keys [name ns wait]} {:keys [day] :as ctx}]
+  (swap! fetches conj name)
+  (when wait (Thread/sleep wait))
+  (sources/emit! ctx (str "Reading counted " name))
+  (mapv #(assoc (item % day) :source name) ns))
+
+(defn- reader-ctx
+  "The ctx of a reader of `st`, newsroom running for several, with
+  `sources`."
+  [st uid sources]
+  (-> (ctx sources (fn [_ _] {:content "# Today\n\nOne [1]." :model "fake"}))
+      (assoc :store (store/for-user st uid))
+      ;; the fixtures' stories are the same every day, which would be told already
+      (update :config assoc :single-user false :seen-days 0)))
+
+(defn- wait-idle [uid]
+  (loop [i 0] (when (and (pipeline/running? uid) (< i 200)) (Thread/sleep 25) (recur (inc i)))))
+
+(deftest each-reader-runs-on-their-own
+  (reset! fetches [])
+  (let [st (store/open "sqlite::memory:")
+        a (store/ensure-user! st {:issuer "i" :subject "a"})
+        b (store/ensure-user! st {:issuer "i" :subject "b"})
+        ca (reader-ctx st a [{:type ::counted :name "A's wire" :ns [1 2] :wait 300}])
+        cb (reader-ctx st b [{:type ::counted :name "B's feed" :ns [5] :wait 300}])]
+    (is (pipeline/start-run! ca "2026-09-30"))
+    (is (pipeline/start-run! cb "2026-09-30") "another reader's run isn't held up by the first")
+    (is (not (pipeline/start-run! ca "2026-09-30")) "but a reader still runs one at a time")
+    (wait-idle a)
+    (wait-idle b)
+    (is (= :done (:state @(:status (pipeline/lane a)))))
+    (is (= :done (:state @(:status (pipeline/lane b)))))
+    (is (= {"A's wire" {:state :ok :count 2}} (:sources @(:status (pipeline/lane a)))) "each status tells its own run")
+    (is (= ["https://e.com/1" "https://e.com/2"] (map :url (:sources (store/day (store/for-user st a) "2026-09-30")))))
+    (is (= ["https://e.com/5"] (map :url (:sources (store/day (store/for-user st b) "2026-09-30")))))
+    (is (nil? (store/day st "2026-09-30")) "and the local reader has neither")
+    (is (pos? @(:stored (pipeline/lane a))) "the reader's pages are told the day is stored")))
+
+(deftest a-source-two-readers-follow-is-read-once
+  (reset! fetches [])
+  (let [st (store/open "sqlite::memory:")
+        a (store/ensure-user! st {:issuer "i" :subject "a"})
+        b (store/ensure-user! st {:issuer "i" :subject "b"})
+        source {:type ::counted :ns [1 2] :wait 300}
+        ca (reader-ctx st a [(assoc source :name "Wire")])
+        cb (reader-ctx st b [(assoc source :name "The wire" :timeout-ms 9000)])]
+    (testing "at once, the second waits for the first's read"
+      (is (pipeline/start-run! ca "2026-09-30"))
+      (Thread/sleep 50)
+      (is (pipeline/start-run! cb "2026-09-30"))
+      (wait-idle a)
+      (wait-idle b)
+      (is (= 1 (count @fetches)) (pr-str @fetches)))
+    (testing "and each reader's items are credited to their own name for it"
+      (is (= ["Wire" "Wire"] (map :source (:sources (store/day (store/for-user st a) "2026-09-30")))))
+      (is (= ["The wire" "The wire"] (map :source (:sources (store/day (store/for-user st b) "2026-09-30"))))))
+    (testing "later, a run reads what was kept"
+      (m/? (pipeline/run-task cb "2026-09-30"))
+      (is (= 1 (count @fetches)))
+      (is (some #(str/includes? (:text %) "as read by a run") (:events @(:status (pipeline/lane b))))))
+    (testing "another day, or a source that asks for something else, is read again"
+      (m/? (pipeline/run-task cb "2026-10-01"))
+      (m/? (pipeline/run-task (reader-ctx st b [(assoc source :name "Wire" :ns [1 2 3])]) "2026-09-30"))
+      (is (= 3 (count @fetches))))))
+
+(deftest a-reader-on-their-own-reads-everything-fresh
+  (reset! fetches [])
+  (let [c (-> (ctx [{:type ::counted :name "Wire" :ns [1]}] (fn [_ _] {:content "x [1]" :model "fake"}))
+              (assoc-in [:config :seen-days] 0))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (= 2 (count @fetches)) "nothing is shared when there is no one to share with")
+    (testing "unless config.edn says to keep it"
+      (let [c (assoc-in c [:config :shared-fetch-minutes] 30)]
+        (m/? (pipeline/run-task c "2026-10-01"))
+        (m/? (pipeline/run-task c "2026-10-01"))
+        (is (= 3 (count @fetches)))))))
+
+(defmethod sources/fetch-items ::private [{:keys [name]} {:keys [day]}]
+  (swap! fetches conj name)
+  [(item (count (:token (plugin/config "zeta"))) day)])
+
+(deftest a-plugins-source-is-shared-only-by-readers-with-its-settings
+  (reset! fetches [])
+  (binding [plugin/*plugin* {:name "zeta"}] (plugin/add-source-type! ::private))
+  (let [st (store/open "sqlite::memory:")
+        a (store/ensure-user! st {:issuer "i" :subject "a"})
+        b (store/ensure-user! st {:issuer "i" :subject "b"})
+        run! (fn [uid token]
+               (m/? (pipeline/run-task (-> (reader-ctx st uid [{:type ::private :name "Channel"}])
+                                           (assoc-in [:config :plugins :zeta :token] token))
+                                       "2026-09-30")))]
+    (run! a "one")
+    (run! b "three")
+    (is (= 2 (count @fetches)) "the settings may hold credentials, so they are part of what is asked for")
+    (is (= ["https://e.com/5"] (map :url (:sources (store/day (store/for-user st b) "2026-09-30")))))
+    (run! b "three")
+    (is (= 2 (count @fetches)))))
 
 ;; --- the old markdown files --------------------------------------------------------
 

@@ -1,14 +1,43 @@
 ;; Every setting newsroom has, as EDN. Settings are edited on the config page
-;; at /config and kept in the database, but any key here other than :host,
-;; :port and :db is moved into the database when newsroom starts, so this
-;; file can be dropped in as ~/.config/newsroom/config.edn to start from it.
-;; Keys you leave out keep the settings they have.
+;; at /config and kept in the database, but any key here other than the
+;; static ones, :host, :port, :db and those for several readers below, is
+;; moved into the database when newsroom starts, so this file can be dropped
+;; in as ~/.config/newsroom/config.edn to start from it. Keys you leave out
+;; keep the settings they have.
 {;; The interface the page is served on, as an IPv4 address. The default is
  ;; loopback, so only this machine can reach it; "0.0.0.0" listens on every
- ;; interface. There's no login, so anyone who can reach the port can read the
- ;; briefings and start or cancel a run.
+ ;; interface. There's no login unless :single-user is false, so anyone who
+ ;; can reach the port can read the briefings and start or cancel a run.
  :host "127.0.0.1"
  :port 3000
+
+ ;; Several readers. newsroom runs for one person unless :single-user is
+ ;; false; then each reader signs in with the OpenID Connect server :oauth
+ ;; names, TODAQ's central-auth by default, and has a newsroom of their own,
+ ;; every setting below theirs to change. :client-secret is optional, and
+ ;; without it newsroom is a public client relying on PKCE. :groups keeps
+ ;; the readers to the members of those groups, and :local-subject names
+ ;; the subject whose sign-in is the local reader, who owns whatever newsroom
+ ;; held when it ran for one person. :session-days is how long a sign-in
+ ;; lasts.
+ ;; :single-user false
+ ;; :oauth {:issuer "https://auth.biz.todaq.net"
+ ;;         :client-id "newsroom"
+ ;;         :client-secret "${NEWSROOM_OAUTH_CLIENT_SECRET}"
+ ;;         :redirect-uri "https://news.example.com/oauth/callback"
+ ;;         :post-logout-redirect-uri "https://news.example.com/"
+ ;;         :groups ["newsroom"]
+ ;;         :local-subject "the-sub-you-sign-in-as"
+ ;;         :session-days 30}
+ ;;
+ ;; A reader's settings can read only these secrets from the environment or
+ ;; secrets.edn, and a model's key only with its own provider.
+ ;; :shared-secrets ["DEEPSEEK_API_KEY"]
+ ;;
+ ;; How long what one reader's run read from a source serves another's that
+ ;; reads the same source for the same day; 30 with several readers, and 0,
+ ;; nothing kept, with one.
+ ;; :shared-fetch-minutes 30
 
  ;; When the briefing is gathered, local time, and how many hours apart after
  ;; that. A wake re-gathers the day only when its briefing is at least that

@@ -28,6 +28,18 @@
   it runs with: what a page offers, like recording a podcast, follows them."}
   config (atom {}))
 
+(def ^:dynamic *config*
+  "The settings of the reader a page is drawn for, when newsroom has
+  several; `config`, the local reader's, when it is unbound."
+  nil)
+
+(def ^:dynamic *reader*
+  "The reader a page is drawn for, {:name :email}, when newsroom has
+  several, for the sidebar to say who is signed in; nil with one."
+  nil)
+
+(defn- current-config [] (or *config* @config))
+
 ;; --- sidebar -----------------------------------------------------------------------
 
 (def ^:private asset-version
@@ -247,14 +259,26 @@
        (if prev [:a {:href (href prev)} "← Earlier"] [:span.muted "← Earlier"])
        (if next [:a {:href (href next)} "Later →"] [:span.muted "Later →"])])))
 
+(defn- reader-line
+  "Who is signed in, and a button to sign out, when newsroom has several
+  readers."
+  []
+  (when-let [{:keys [name email]} *reader*]
+    [:form.reader {:method "post" :action "/logout"}
+     [:span (or (not-empty name) (not-empty email) "Signed in")]
+     " · "
+     [:button.link {:type "submit"} "Sign out"]]))
+
 (defn- sidebar
   "What goes inside the sidebar. `current` is the page's {:day}, {:kind
-  :period}, {:story}, {:stories true}, {:record true} or {:search}."
-  [archive digests stories current health]
+  :period}, {:story}, {:stories true}, {:record true} or {:search}; `uid`
+  the reader it is drawn for, whose runs and podcasts it shows."
+  [archive digests stories current health uid]
   (list
    [:header.masthead
     [:a {:href "/"} [:h1 "The Newsroom"]]
-    [:p.tagline "Daily briefing & analysis"]]
+    [:p.tagline "Daily briefing & analysis"]
+    (reader-line)]
    [:p.config-link [:a {:href "/config" :class (when (:config current) "current")} "Config"]
     " · " [:a {:href "/record" :class (when (:record current) "current")} "Track record"]]
    [:form.search-box {:action "/search" :method "get" :role "search"}
@@ -265,8 +289,8 @@
     [:input {:type "date" :value (:day current)
              "data-on:change" "evt.target.value && (window.location = '/day/' + evt.target.value)"}]]
    (stepper archive digests current)
-   (run-panel @pipeline/status (pipeline/today))
-   (narration-panel @narration/status)
+   (run-panel @(:status (pipeline/lane uid)) (pipeline/today))
+   (narration-panel @(:status (narration/lane uid)))
    (feed-health health)
    (story-list stories current)
    (digest-list :month "Monthly" digests current)
@@ -417,7 +441,7 @@
         [:summary "Transcript"]
         (for [{:keys [speaker text]} transcript]
           [:p [:strong speaker] " " (podcast/readable text)])])]
-    (let [{:keys [state pending] :as now} @narration/phase]
+    (let [{:keys [state pending] :as now} @(:phase (narration/lane (store/user-id st)))]
       (cond
         (and (= day (:day now)) (= :writing state))
         [:p#podcast.podcast.muted "The podcast of this briefing is being written…"]
@@ -425,7 +449,7 @@
         [:p#podcast.podcast.muted "The podcast of this briefing is being recorded…"]
         (= day pending)
         [:p#podcast.podcast.muted "The podcast of this briefing will be recorded next."]
-        (and (not (false? (:podcast @config))) (tts/available? (:podcast-engine @config :kitten-2)))
+        (and (not (false? (:podcast (current-config)))) (tts/available? (:podcast-engine (current-config) :kitten-2)))
         [:p#podcast.podcast
          [:button.quiet {"data-on:click" (str "@post('/podcast?day=" day "')")} "Record a podcast of this briefing"]]))))
 
@@ -633,11 +657,11 @@
   stay still until a day or a podcast is written."
   [st current selector]
   ;; stored changes when a day is written, so both re-read the store
-  @pipeline/stored
+  @(:stored (pipeline/lane (store/user-id st)))
   (let [current (if (string? current) {:day current} current)]
     (cond
       (not= "#article" selector) (sidebar (store/archive st) (store/digests st) (store/recent-stories st 6)
-                                          current (store/source-health st))
+                                          current (store/source-health st) (store/user-id st))
       (:day current) (article st (:day current))
       (:story current) (story-article st (:story current))
       (:stories current) (stories-article st)

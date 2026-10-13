@@ -75,7 +75,7 @@ Everything you'd want to change is on the config page, at http://127.0.0.1:3000/
 
 A source that fails for a passing reason, like a rate limit, an overloaded server or a dropped connection, is tried again, after the wait the server asked for or a doubling wait of its own, as long as that still fits in the source's time. How long a source gets and how many retries it has are set for every source under Gathering, and any source can set its own `:timeout-ms`, `:retries` and `:retry-wait-ms`. A plugin can give its type defaults of its own: reddit, which wants a minute between feeds, gives its sources 90 seconds and a retry. To follow a source newsroom doesn't know about, like a Slack or Telegram channel, add a plugin.
 
-The settings are kept in the database. Only what newsroom needs before it can open the database stays in `~/.config/newsroom/config.edn`: `:host`, `:port`, and `:db` if the database should live somewhere else. Any other key found in `config.edn` at startup is moved into the database, and so are `prompt.md` and `digest.md`, with the old files kept as `.bak`. A config from an older newsroom carries over that way. The config page can also export the settings as EDN in that same form, and import them back, or import a whole `config.edn`, like [`examples/config.edn`](examples/config.edn), which walks through every kind of source and every model provider. An import is checked against a [malli](https://github.com/metosin/malli) schema made from the same fields the page shows, sources by their type's shape and plugins by what they declared, and each problem is reported by where it is, like `:sources 3 :url missing required key`. It replaces the settings it names and keeps the rest.
+The settings are kept in the database. Only what newsroom needs before it can open the database stays in `~/.config/newsroom/config.edn`: `:host`, `:port`, and `:db` if the database should live somewhere else, along with what's the server's to decide when it has [several readers](#several-readers). Any other key found in `config.edn` at startup is moved into the database, and so are `prompt.md` and `digest.md`, with the old files kept as `.bak`. A config from an older newsroom carries over that way. The config page can also export the settings as EDN in that same form, and import them back, or import a whole `config.edn`, like [`examples/config.edn`](examples/config.edn), which walks through every kind of source and every model provider. An import is checked against a [malli](https://github.com/metosin/malli) schema made from the same fields the page shows, sources by their type's shape and plugins by what they declared, and each problem is reported by where it is, like `:sources 3 :url missing required key`. It replaces the settings it names and keeps the rest.
 
 Each day goes into a sqlite database, and `/day/2026-10-05.md` gives you any day's briefing as markdown. Older versions also wrote every briefing out as a file in `briefings/`. Those files are moved into the database on the first start, any the database is missing included, and the folder is kept as `briefings.bak`. Only the last 100 days are kept, which stops a long-running server from slowly eating the disk, and you can set `:keep-days` to -1 if you'd rather keep everything.
 
@@ -100,6 +100,34 @@ Keys can also live in `secrets.edn` in the config directory, next to `config.edn
 ```
 
 Anything that names a key, a provider's `:api-key-env`, a `"${VAR}"` in a provider or a plugin's settings, or the built-in names like `DEEPSEEK_API_KEY` and `EXA_API_KEY`, finds it there when the environment doesn't have it. The environment wins when both do. The first start writes an empty one, readable only by you, with comments on what goes in it. After that newsroom only reads it, once at startup, and keeps its values out of the database and the export. It won't start if anyone but the file's owner can read it, so if you make the file yourself, `chmod 600 secrets.edn` after writing it. [`examples/secrets.edn`](examples/secrets.edn) has the usual names.
+
+## Several readers
+
+Newsroom runs for one person by default, with no sign-in, and that's all most setups need. Set `:single-user false` in `config.edn` and it takes readers instead, each signing in and each with a newsroom of their own: their own sources, schedule, models, prompts and plugin settings on the config page, and their own briefings, digests, storylines, track record, podcasts and searches. One reader's run doesn't wait for another's, and the sidebar shows only the reader's own. Running for one person is just the case where there's one reader, the local one, and no one has to sign in.
+
+Readers sign in with an OpenID Connect server, TODAQ's central-auth at `https://auth.biz.todaq.net` unless `:oauth` names another. Register newsroom there as a client with its callback address, then tell newsroom about it:
+
+```clojure
+{:single-user false
+ :oauth {:issuer "https://auth.biz.todaq.net"
+         :client-id "newsroom"
+         ;; optional; without it newsroom is a public client and relies on PKCE
+         :client-secret "${NEWSROOM_OAUTH_CLIENT_SECRET}"
+         :redirect-uri "https://news.example.com/oauth/callback"
+         ;; optional: only members of these groups may read
+         ;; :groups ["newsroom"]
+         ;; optional: where the server sends the browser after signing out
+         ;; :post-logout-redirect-uri "https://news.example.com/"
+         }}
+```
+
+The server's endpoints come from its discovery document. A browser signs in with the authorization code flow and PKCE, and gets a session cookie for `:session-days`, 30 by default. A program can skip the browser and send an access token the server issued, as `Authorization: Bearer ...`, to any page or action, and newsroom asks the server who it belongs to, by introspection when it has a client secret and by the userinfo endpoint when it doesn't, and remembers the answer for a few minutes. A reader is the server's issuer and their subject, so a reader keeps their newsroom however their name or email changes.
+
+What was there before is the local reader's, and a database from an older newsroom is given to them when it's first opened. With readers signing in, `:oauth {:local-subject "..."}` names the subject whose sign-in is the local reader, so whoever ran newsroom for themselves keeps their briefings. Without it, the local reader's newsroom is left as it is, and its schedule doesn't run.
+
+What a source gives doesn't depend on who reads it, so readers share the reading. When two readers follow the same feed or run the same search, a run takes what another's read for the same day within `:shared-fetch-minutes`, 30 by default, credited to the reader's own name for the source, and when the other is reading it right then, it waits for that read. A source a plugin reads is shared only between readers whose settings for the plugin are the same, since they may hold its credentials. The articles read in full for the dossiers and the embeddings of the day's items are shared too. With one reader nothing is kept, unless `:shared-fetch-minutes` says to. Podcasts are recorded one at a time for everyone, since the speech engine takes gigabytes, and each reader's waits its turn.
+
+A reader's settings are theirs to write, so they can't use the server's secrets as they like. `${VAR}` and `:api-key-env` read only the names `:shared-secrets` lists, and a shared key for a model goes only to its own provider's endpoint, so `:shared-secrets ["DEEPSEEK_API_KEY"]` lets every reader use the server's DeepSeek key with DeepSeek and nowhere else. A key a reader types in is theirs to use where they like. Readers can still point their sources at any address, so put newsroom where its requests can't reach anything private.
 
 ## Plugins
 

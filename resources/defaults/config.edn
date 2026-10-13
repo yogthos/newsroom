@@ -6,10 +6,22 @@
 ;; rewritten without it, the old one kept as config.edn.bak.
 {;; where the page is served; "0.0.0.0" listens on every interface, which
  ;; lets other machines reach it, refresh button and config page included,
- ;; since there's no login
+ ;; since there's no login unless :single-user is false
  :host "127.0.0.1"
  :port 3000
 
  ;; where the sqlite database lives, if not in this directory
  ;; :db "/var/lib/newsroom/newsroom.sqlite3"
+
+ ;; newsroom runs for one person, with no sign-in. false takes readers
+ ;; instead, each signing in with the OpenID Connect server :oauth names and
+ ;; each with a newsroom of their own; see "Several readers" in the README
+ ;; :single-user false
+ ;; :oauth {:issuer "https://auth.biz.todaq.net"
+ ;;         :client-id "newsroom"
+ ;;         :client-secret "${NEWSROOM_OAUTH_CLIENT_SECRET}"
+ ;;         :redirect-uri "https://news.example.com/oauth/callback"}
+ ;; the secrets readers' settings may use, by name, each only with its own
+ ;; provider
+ ;; :shared-secrets ["DEEPSEEK_API_KEY"]
  }
