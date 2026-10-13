@@ -19,6 +19,35 @@
   embeddings are shared too.
 - **`:shared-secrets`.** With several readers, a reader's settings read
   only these secrets, and a model's key only with its own provider.
+- **A knowledge graph of the news.** The sorting names each story's
+  people, organisations, countries, places and markets, and each day's
+  are kept. The analyst is told which of them tie several of the day's
+  stories together and what changed since the last briefing, and the
+  digests get the period's most prominent ones against the period before.
+  `{{web}}` places it in an edited prompt.
+- **An editor looks over the day.** After the sorting, one call weighs the
+  day's 200 heaviest stories together, merging the ones split between two
+  sorting calls and re-rating importances against the whole day.
+- **Must-cover stories.** A story rated `:must-cover-importance` (8) or
+  more is never cut for space, and a briefing that leaves one out is asked
+  to cover it, then lists what's still missing as Also today.
+- **`:reports-per-story`**, the most reports one story brings to the
+  analyst, 6 by default.
+
+### Changed
+
+- **The day is cut by story.** Every report in the window is sorted into
+  its story before anything is cut, and `:max-items` is filled a story at
+  a time, heaviest first. `:max-items-per-source` is gone: it kept the
+  first 12 items of each feed before anything weighed them, which dropped
+  most of a day's reports, a 7% fall in the Kospi among them. A stored
+  value is passed over.
+- **Importance counts for more than coverage.** A story's weight is its
+  importance times one plus the log of its outlets, so a major event one
+  outlet carried outranks a minor one several did.
+- **The sorting goes 40 reports a call.** One call over every report came
+  back cut off once the day held a few hundred, and the whole sorting was
+  dropped without a word.
 
 ### Fixed
 

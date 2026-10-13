@@ -16,7 +16,7 @@
   (:require [clojure.string :as str]
             [newsroom.news :refer [canonical-url dedupe-items unseen-items overview body cite render-prompt render-desk-prompt has-var? place-vars
                                    citations link-citations briefing collapse-similar told outlets origin tldr
-                                   valid-day? adjacent-days]]
+                                   missed-stories coverage-request also-today valid-day? adjacent-days]]
             [newsroom.template :as template]
             [writ.spec :refer [spec ann refine graph flow law calls assume]]))
 
@@ -25,6 +25,8 @@
 (assume str/trim [String -> String])
 (assume str/blank? [String -> Bool])
 (assume str/includes? [String String -> Bool])
+(assume str/starts-with? [String String -> Bool])
+(assume str/ends-with? [String String -> Bool])
 
 ;; --- the data --------------------------------------------------------------------
 
@@ -46,6 +48,10 @@
                    :summary String, :published (Opt String)}]
   true)
 
+;; a story the briefing had to cover, by its title and the numbers of its
+;; reports
+(refine Missed [m {:title String, :ns (Vec Nat)}] true)
+
 (ann canonical-url  [String -> String])
 (ann dedupe-items   [(List Item) -> (List Item)])
 (ann unseen-items   [(List Item) (List Item) -> (List Item)])
@@ -66,6 +72,9 @@
 (ann outlets        [Item -> Nat])
 (ann origin         [Copy -> (Opt String)])
 (ann tldr           [String -> (Opt String)])
+(ann missed-stories [(List Source) String (Opt Nat) -> (Vec Missed)])
+(ann coverage-request [(List Missed) -> String])
+(ann also-today     [String (List Missed) -> String])
 (ann valid-day?     [String -> Bool])
 (ann adjacent-days  [(List String) String -> (Tuple (Opt String) (Opt String))])
 
@@ -514,6 +523,41 @@
 
 (law a-briefing-without-a-standfirst-has-none
   (nil? (tldr "# Day\n\n## Overview\n\nBody.")))
+
+;; --- what the briefing has to cover --------------------------------------------------
+
+(law without-a-threshold-nothing-is-a-must
+  (forall [a String]
+    (= [] (missed-stories [(assoc (story 1 a 0) :n 1 :importance 10)] a nil))))
+
+(law a-must-cited-anywhere-is-covered
+  (forall [n Nat]
+    (let [s (assoc (story n "a" 0) :n (inc n) :importance 9)]
+      (= [] (missed-stories [s] (str "Told [" (inc n) "].") 8)))))
+
+(law a-must-not-cited-is-missed-by-its-numbers
+  (forall [n Nat]
+    (let [s (assoc (story n "a" 0) :n (inc n) :importance 9)]
+      (= [{:title (:title s) :ns [(inc n)]}] (missed-stories [s] "Nothing cited." 8)))))
+
+(law a-story-is-a-must-from-the-threshold-up
+  (forall [i Nat t Nat]
+    (let [s (assoc (story 1 "a" 0) :n 1 :importance i)]
+      (= (>= i t) (= 1 (count (missed-stories [s] "Nothing cited." t)))))))
+
+(law what-was-left-out-is-listed-under-the-briefing
+  (forall [a String n Nat]
+    (let [md (str "# Day\n\nt" (alnum a))]
+      (= (str md "\n\n## Also today\n\n- Kospi falls [" n ", " (inc n) "]")
+         (also-today (str md "\n") [{:title "Kospi falls" :ns [n (inc n)]}])))))
+
+(law the-analyst-is-told-each-story-it-left-out-and-to-answer-whole
+  (forall [a String n Nat]
+    (let [t (str "t" (alnum a))
+          r (coverage-request [{:title t :ns [n]} {:title "Other" :ns [1 2]}])]
+      (and (str/starts-with? r "Your briefing leaves out these stories")
+           (str/includes? r (str "\n- " t " [" n "]\n- Other [1, 2]\n"))
+           (str/ends-with? r "Answer with the whole briefing, rewritten, and nothing else.")))))
 
 ;; --- days --------------------------------------------------------------------------
 
