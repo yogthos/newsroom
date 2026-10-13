@@ -51,13 +51,15 @@
   jolt.http-client, clojure.data.json and the rest of what newsroom is built
   from can be required as they are; `get-json` and `post-json` cover the
   common case of a JSON API."
-  (:require [clojure.data.json :as json]
+  (:require [newsroom.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
             [jolt.http-client :as http]
             [newsroom.config :as config]
             [newsroom.feed :as feed]
+            [newsroom.llm.builtin]
+            [newsroom.llm.provider :as provider]
             [newsroom.sources :as sources]))
 
 ;; --- the API -----------------------------------------------------------------------
@@ -165,6 +167,15 @@
        ~@(when shape [`(defmethod sources/shape ~type [~'_] ~shape)])
        (add-source-type! ~type)
        (defmethod sources/fetch-items ~type [~source ~ctx] ~@body))))
+
+(defn defprovider
+  "Add a model provider, `id` a keyword, that roles can be given by its
+  name and a provider entry can take as its :type, from `spec` as
+  newsroom.llm.provider describes it: an OpenAI-compatible endpoint is
+  {:label :base-url :key-env :model :features}, and how it differs from
+  OpenAI's, like where its reasoning comes back, says the rest."
+  [id spec]
+  (provider/register! id spec))
 
 (defmacro defname
   "Say what a source of `type` is called when it has no :name, so that two

@@ -26,6 +26,7 @@
             [malli.core :as m]
             [malli.error :as me]
             [newsroom.config :as config]
+            [newsroom.llm.provider :as provider]
             [newsroom.llm.providers :as providers]
             [newsroom.plugin :as plugin]
             [newsroom.sources :as sources]
@@ -233,9 +234,11 @@
   {:key :name :type :string
    :doc "What its items are credited to, and its name in the sidebar. Two sources need different names."})
 
-(def provider-fields
-  "What a provider entry takes."
-  [{:key :type :type :keyword :options (vec (sort (keys providers/presets)))
+(defn provider-fields
+  "What a provider entry takes: its :type one of the providers there are,
+  a plugin's among them."
+  []
+  [{:key :type :type :keyword :options (vec (provider/ids))
     :doc "The built-in it works like. Needed unless the alias names a built-in."}
    {:key :model :type :string :doc "The model to ask for."}
    {:key :base-url :type :string :doc "The endpoint, when not the built-in's."}
@@ -498,7 +501,7 @@
   (reduce (fn [m [i r]]
             (let [n (field-name :providers i)
                   alias (some-> (get r "_alias") str/trim (str/replace #"^:" "") not-empty keyword)
-                  entry (read-map provider-fields r n errors)]
+                  entry (read-map (provider-fields) r n errors)]
               (cond
                 (and (nil? alias) (empty? entry)) m
                 (nil? alias) (do (swap! errors assoc (field-name n "_alias") "is needed") m)
@@ -603,7 +606,7 @@
                                                             "type" (some-> type name))]))
                           (:sources settings))
           "providers" (into {} (map-indexed (fn [i [alias entry]]
-                                              [(str i) (assoc (map-form provider-fields entry)
+                                              [(str i) (assoc (map-form (provider-fields) entry)
                                                               "_alias" (name alias))]))
                             (:providers settings))
           "roles" (map-form role-fields (:roles settings))
@@ -690,7 +693,7 @@
     (-> [:map {:closed true}]
         (into (for [f scalars] [(:key f) {:optional true} (field-schema f)]))
         (into [[:sources {:optional true} [:sequential source]]
-               [:providers {:optional true} [:map-of keyword? (map-schema provider-fields)]]
+               [:providers {:optional true} [:map-of keyword? (map-schema (provider-fields))]]
                [:roles {:optional true} (map-schema role-fields)]
                [:plugins {:optional true} [:and [:map-of keyword? map?] plugins]]])
         (into (for [k (sort config/static-keys)] [k {:optional true} any?])))))

@@ -11,7 +11,7 @@
   The notes outlive the sources they were made from, so the digests are
   written from them, and the daily briefing gets the notes of the stories
   still running as background."
-  (:require [clojure.data.json :as json]
+  (:require [newsroom.json :as json]
             [clojure.string :as str]))
 
 (def statuses

@@ -1,10 +1,11 @@
 (ns newsroom.llm.adapter.openai
   "The OpenAI chat-completions family, ported from samizdat.llm.adapter.openai.
 
-  One adapter covers OpenAI, DeepSeek, Zhipu GLM, and any local llama-server
-  or vLLM endpoint, because they all speak the same wire format. What differs
-  is carried as fields on the record: where the reasoning stream lives, and
-  what the max-tokens field is called. The tool-call, prefill and grammar
+  One adapter covers OpenAI, DeepSeek, GLM, OpenRouter, and any local
+  llama-server or vLLM endpoint, because they all speak the same wire
+  format. What differs is carried as fields on the record, from the
+  provider's spec: where the reasoning comes back, what the max-tokens field
+  is called, and how a thinking level is asked for. The tool-call, prefill and grammar
   machinery samizdat needs for an agent loop is left out; a briefing is one
   plain completion."
   (:require [clojure.string :as str]
@@ -25,19 +26,25 @@
     (and (supports? config :thinking-toggle) (not (:thinking? config)))
     (assoc :chat_template_kwargs {:enable_thinking false})))
 
-(defn- reasoning-wire
-  "The reasoning fields for `effort`. \"none\" is spelled per provider:
-  DeepSeek disables thinking outright, GLM cannot be turned off so low is the
-  least, everyone else takes reasoning_effort none."
-  [provider-id effort]
-  (if (= "none" effort)
-    (case provider-id
-      :deepseek {:thinking {:type "disabled"}}
-      :glm      {:reasoning_effort "low"}
-      {:reasoning_effort "none"})
-    {:reasoning_effort effort}))
+(defn effort-field
+  "How most endpoints take a thinking level: reasoning_effort, \"none\"
+  and all."
+  [effort]
+  {:reasoning_effort effort})
 
-(defrecord OpenAIAdapter [provider-id label reasoning-key max-tokens-key]
+(defn thinking-switch
+  "DeepSeek's and GLM's: thinking turned off outright for \"none\", else
+  reasoning_effort."
+  [effort]
+  (if (= "none" effort) {:thinking {:type "disabled"}} {:reasoning_effort effort}))
+
+(defn reasoning-object
+  "OpenRouter's: a reasoning object, which it passes on in each upstream's
+  own terms, turned off for \"none\"."
+  [effort]
+  (if (= "none" effort) {:reasoning {:enabled false}} {:reasoning {:effort effort}}))
+
+(defrecord OpenAIAdapter [provider-id label reasoning-key max-tokens-key thinking]
   adapter/Adapter
   (id [_] provider-id)
   (display-name [_] label)
@@ -57,7 +64,7 @@
       (cond-> {:model (:model config) :messages messages}
         max-tokens (assoc max-tokens-key max-tokens)
         temperature (assoc :temperature temperature)
-        (some? effort) (merge (reasoning-wire provider-id effort))
+        (some? effort) (merge (thinking effort))
         :always (merge (local-wire config)))))
 
   (parse-chat [_ body]
@@ -89,18 +96,14 @@
       (boolean (re-find usage-cap-re msg)))))
 
 (defn openai-family
-  "An adapter for an OpenAI-compatible endpoint. `reasoning-key` names the
-  field carrying a separate reasoning stream; `max-tokens-key` exists because
-  newer OpenAI models renamed max_tokens to max_completion_tokens."
-  [{:keys [id label reasoning-key max-tokens-key]
+  "An adapter for an OpenAI-compatible endpoint, from a provider's spec
+  (see newsroom.llm.provider): `reasoning-key` names the reply's field
+  carrying the reasoning, `max-tokens-key` the request's for the token cap,
+  since newer OpenAI models renamed max_tokens to max_completion_tokens,
+  and `thinking` turns a thinking level into request fields."
+  [{:keys [id label reasoning-key max-tokens-key thinking]
     :or {max-tokens-key :max_tokens}}]
   (->OpenAIAdapter id (or label (str/capitalize (name id)))
                    (or reasoning-key :__no_reasoning_field__)
-                   max-tokens-key))
-
-(def deepseek (openai-family {:id :deepseek :label "DeepSeek" :reasoning-key :reasoning_content}))
-(def glm (openai-family {:id :glm :label "GLM" :reasoning-key :reasoning_content}))
-(def openai (openai-family {:id :openai :label "OpenAI"}))
-;; a local endpoint serves a model, and llama-server hands back
-;; reasoning_content for a reasoning model exactly as DeepSeek does
-(def local (openai-family {:id :local :label "local" :reasoning-key :reasoning_content}))
+                   max-tokens-key
+                   (or thinking effort-field)))

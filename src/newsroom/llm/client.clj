@@ -5,11 +5,12 @@
   transport failure is, with backoff and whatever wait the provider asked
   for. Blocking: run it on a blocking executor (ebb's m/blk)."
   (:require [jolt.time]
-            [clojure.data.json :as json]
+            [newsroom.json :as json]
             [clojure.string :as str]
             [jolt.http-client :as http]
             [newsroom.llm.adapter :as adapter]
-            [newsroom.llm.registry :as registry]
+            [newsroom.llm.builtin]
+            [newsroom.llm.provider :as provider]
             [newsroom.llm.stream :as stream]))
 
 (def max-backoff-ms 60000)
@@ -98,7 +99,7 @@
   as they arrive; the others answer whole. Returns {:content :reasoning :finish-reason :model
   :usage}; throws when the call fails for good."
   [llm request]
-  (let [adapter (registry/adapter-for (:type llm))
+  (let [adapter (provider/adapter (:type llm))
         request (merge {:max-tokens (:max-tokens llm)
                         :temperature (:temperature llm)}
                        request)]

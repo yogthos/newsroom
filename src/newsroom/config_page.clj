@@ -9,6 +9,7 @@
   shape."
   (:require [clojure.string :as str]
             [newsroom.config :as config]
+            [newsroom.llm.provider :as provider]
             [newsroom.llm.providers :as providers]
             [newsroom.plugin :as plugin]
             [newsroom.settings :as settings]
@@ -90,7 +91,8 @@
                 [:option {:value value :selected (= value (shown v))} text])]
 
     :keyword (if-let [options (:options field)]
-               [:select {:id nm :name nm "data-cfg-type-select" (when (= :type (:key field)) "")}
+               [:select (merge {:id nm :name nm "data-cfg-type-select" (when (= :type (:key field)) "")}
+                               (:attrs field))
                 [:option {:value ""} "—"]
                 (for [o options :let [o (name o)]]
                   [:option {:value o :selected (= o (shown v))} o])
@@ -257,29 +259,48 @@
      (field-row {:key :_alias :label "Alias" :type :string :required? true
                  :doc "What roles call it by. Named after a built-in, it only overrides what it sets."}
                 alias-name (get entry "_alias") errors 1)
-     (for [f settings/provider-fields]
+     (for [f (settings/provider-fields)]
        (field-row f (settings/field-name nm (:key f)) (get entry (name (:key f))) errors 1))
      (extra-row nm entry errors)
      (remove-button "provider")]))
 
-(defn- models-section [tree errors]
-  (let [aliases (distinct (concat (map name (sort (keys providers/presets)))
+(defn- registered-providers
+  "The providers there are, built in or a plugin's, with what each needs
+  and whether the reader running with `cfg` has its key."
+  [cfg]
+  [:table.providers
+   [:thead [:tr [:th "Type"] [:th "Provider"] [:th "Key"] [:th "Default model"]]]
+   [:tbody
+    (for [id (provider/ids)
+          :let [{:keys [label key-env model]} (provider/spec id)]]
+      [:tr [:td [:code (name id)]] [:td label]
+       [:td (if key-env
+              (list [:code key-env] (if (config/secret-for cfg key-env) " (set)" " (not set)"))
+              "none needed")]
+       [:td [:code model]]])]])
+
+(defn- models-section [tree errors cfg]
+  (let [builtins (map name (provider/ids))
+        aliases (distinct (concat builtins
                                   (keep #(not-empty (get % "_alias"))
                                         (map second (settings/indexed (get tree "providers"))))))]
     (list
-     [:p.doc "The endpoints the models are reached at, by alias. The built-ins are "
-      (str/join ", " (map name (sort (keys providers/presets))))
-      "; a key comes from the built-in's usual variable, like DEEPSEEK_API_KEY, unless the entry says otherwise."]
-     [:datalist {:id "provider-names"} (for [a aliases] [:option {:value a}])]
+     [:p.doc "The endpoints the models are reached at. Each provider below can serve a role as it is, by its "
+      "type, with its key from the variable shown, in the environment or secrets.edn. An entry under "
+      "Providers registers another by an alias of your own, from one of these types: another model, "
+      "endpoint or key, like OpenRouter with a different model. A plugin can add types of its own."]
+     (registered-providers cfg)
      [:h3 "Providers"]
      (list-editor 0 "providers" (get tree "providers")
                   (fn [n entry] (provider-entry n entry errors))
                   "Add provider")
      [:h3 "Roles"]
      [:p.doc "Which provider does each job. With none given, the first built-in whose key is in the environment or secrets.edn does."]
-     (for [f settings/role-fields]
-       (field-row (assoc f :datalist "provider-names") (settings/field-name :roles (:key f))
-                  (get-in tree ["roles" (name (:key f))]) errors 0)))))
+     [:div {"data-cfg-roles" (str/join " " builtins)}
+      (for [f settings/role-fields]
+        (field-row (assoc f :options (vec aliases) :attrs {"data-cfg-role" ""})
+                   (settings/field-name :roles (:key f))
+                   (get-in tree ["roles" (name (:key f))]) errors 0))])))
 
 ;; --- plugins -----------------------------------------------------------------------
 
@@ -321,12 +342,12 @@
 
 ;; --- the page ----------------------------------------------------------------------
 
-(defn- section [{:keys [title kind fields]} tree errors]
+(defn- section [{:keys [title kind fields]} tree errors cfg]
   [:section.settings {:id (str/lower-case title)}
    [:h2 title]
    (case kind
      :sources (sources-section tree errors)
-     :models (models-section tree errors)
+     :models (models-section tree errors cfg)
      :plugins (plugins-section tree errors)
      (for [f fields]
        (field-row f (settings/field-name (:key f)) (get tree (name (:key f))) errors 0)))])
@@ -361,8 +382,9 @@
   "The config page's content: the form `tree`, as newsroom.settings/to-form
   makes or from-form reads, with `errors` {name message} from a save that
   failed, whether the last save or import went through, `saved?` and
-  `imported?`, and `import`, {:errors :text}, from an import that failed."
-  [{:keys [tree errors saved? imported?] import-result :import}]
+  `imported?`, `import`, {:errors :text}, from an import that failed, and
+  `config`, the reader's, for which keys they have."
+  [{:keys [tree errors saved? imported? config] import-result :import}]
   [:article.briefing.config
    [:p.dateline "Settings"]
    [:h1 "Config"]
@@ -378,7 +400,7 @@
                                         [:a {:href (str "#" (str/lower-case title))} title])
                                       [[:a {:href "#import-export"} "Import & export"]]))]
    [:form.settings-form {:method "post" :action "/config"}
-    (for [s settings/sections] (section s tree errors))
+    (for [s settings/sections] (section s tree errors config))
     [:div.save-bar
      [:button {:type "submit"} "Save"]
      [:a {:href "/config"} "Discard changes"]]]

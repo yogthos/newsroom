@@ -37,7 +37,7 @@
   shape's :kind, :news or :analysis, says what its sources' items are when
   a source doesn't say (see `kind`)."
   (:require [jolt.time]
-            [clojure.data.json :as json]
+            [newsroom.json :as json]
             [clojure.string :as str]
             [clojure.xml :as xml]
             [jolt.http-client :as http]

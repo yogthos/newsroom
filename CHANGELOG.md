@@ -36,6 +36,15 @@
   most `:max-analysis` (12) pieces go to the analyst, each under the story
   it argues about; dossiers record them as views, never as facts, and they
   count for no coverage. Each video is credited to its channel.
+- **OpenRouter.** `:openrouter` reaches almost any model with
+  `OPENROUTER_API_KEY`, each by its id there, deepseek/deepseek-v4-flash by
+  default (#27).
+- **Z.ai.** `:zai` serves GLM through Zhipu's international endpoint with
+  `ZAI_API_KEY`, and `:zai-coding` through its coding plan's.
+- **Providers are plugins' to add.** Every provider is a spec in one
+  registry, the built-ins included, and `plugin/defprovider` adds one. The
+  config page lists them with the key each reads and whether it's found,
+  and each role is picked from a dropdown of them and the aliases declared.
 - **`:reports-per-story`**, the most reports one story brings to the
   analyst, 6 by default.
 
@@ -60,6 +69,14 @@
   again** with less thinking, where the provider lets it be turned down.
   A dossier call lost its four stories' dossiers this way, and the notes
   call said the answer "held nothing new" when it had been cut off.
+- **Emoji survive the trip to the model and back.** jolt's characters are
+  code points, which clojure.data.json, written for UTF-16, escaped wrongly
+  past U+FFFF, so a headline's emoji reached the model as another
+  character and a letter, a streamed reply came back the same way, and a
+  reply escaping one as a surrogate pair failed to parse.
+- **GLM's thinking turns off** with `thinking: disabled`, as DeepSeek's
+  does; it was sent `reasoning_effort: low` instead. llama.cpp's template
+  toggle no longer goes to DeepSeek.
 - **A feed with a raw `&` is read whole.** libxml2 stopped at the first
   one, so Rest of World's feed, which has them in its image URLs, gave a
   single item of its twelve.

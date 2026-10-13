@@ -9,7 +9,7 @@
   The dialogue goes straight to the speech engine (see newsroom.tts), so
   every line is cleaned down to the words said aloud and the few
   expression tags the engine understands, and spoken in its host's voice."
-  (:require [clojure.data.json :as json]
+  (:require [newsroom.json :as json]
             [clojure.string :as str]
             [newsroom.analysis :as analysis]
             [newsroom.news :as news]
