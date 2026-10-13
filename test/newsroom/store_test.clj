@@ -528,3 +528,42 @@
         (is (nil? (store/shared-fetch db "k" 60000)))
         (is (nil? (store/shared-article db "https://e.com/a" 60000))))
       (finally (store/close db)))))
+
+;; --- notes as they were ------------------------------------------------------------
+
+(defn- note-on [day & facts]
+  {:title (str "As of " day) :summary (str "Summary " day) :first-day "2026-09-28" :last-day day
+   :facts (vec (for [d facts] {:day d :text (str "Fact " d) :url (str "https://e.com/" d)}))})
+
+(deftest a-run-reads-the-notes-as-they-were-before-its-day
+  (let [db (fresh)]
+    (try
+      (store/save-notes! db {"fed" (note-on "2026-09-28" "2026-09-28")})
+      (store/save-notes! db {"fed" (note-on "2026-09-29" "2026-09-28" "2026-09-29")})
+      (is (= "As of 2026-09-29" (:title (get (store/notes db ["fed"]) "fed"))) "the notes are the latest")
+      (is (= "As of 2026-09-28" (:title (get (store/notes-before db ["fed"] "2026-09-29") "fed")))
+          "a run of a day it was written on reads the one before")
+      (is (= "As of 2026-09-29" (:title (get (store/notes-before db ["fed"] "2026-09-30") "fed"))))
+      (is (= {} (store/notes-before db ["fed"] "2026-09-28")) "and none from before there was one")
+      (testing "running a day again replaces what it wrote, and still reads what was before"
+        (store/save-notes! db {"fed" (assoc (note-on "2026-09-29" "2026-09-28" "2026-09-29") :title "Again")})
+        (is (= "Again" (:title (get (store/notes db ["fed"]) "fed"))))
+        (is (= "As of 2026-09-28" (:title (get (store/notes-before db ["fed"] "2026-09-29") "fed")))))
+      (testing "an earlier day run again leaves a note that's moved on as it is"
+        (store/save-notes! db {"fed" (note-on "2026-09-28" "2026-09-28")})
+        (is (= "Again" (:title (get (store/notes db ["fed"]) "fed")))))
+      (finally (store/close db)))))
+
+(deftest a-note-kept-before-its-history-is-read-without-its-later-facts
+  (let [db (fresh)]
+    (try
+      (store/save-notes! db {"fed" (note-on "2026-09-29" "2026-09-28" "2026-09-29")})
+      (jdbc/execute! (:conn db) "delete from story_note_versions")
+      (let [before (get (store/notes-before db ["fed"] "2026-09-29") "fed")]
+        (is (= ["2026-09-28"] (map :day (:facts before))) "only the facts from before the day")
+        (is (= "2026-09-28" (:last-day before))))
+      (is (= {} (store/notes-before db ["fed"] "2026-09-28")) "and none when it had none")
+      (testing "and is kept as it was once a later day updates it"
+        (store/save-notes! db {"fed" (note-on "2026-09-30" "2026-09-28" "2026-09-29" "2026-09-30")})
+        (is (= "As of 2026-09-29" (:title (get (store/notes-before db ["fed"] "2026-09-30") "fed")))))
+      (finally (store/close db)))))

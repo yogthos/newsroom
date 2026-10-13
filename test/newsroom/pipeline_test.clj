@@ -583,7 +583,18 @@
     (let [note (get (store/notes st ["2026-09-29/1"]) "2026-09-29/1")]
       (is (= "Where 2026-09-29/1 stands." (:summary note)))
       (is (= "https://desk.example.com/fed" (:url (first (:facts note)))) "the fact keeps its report")
-      (is (= "2026-09-29" (:first-day note))))))
+      (is (= "2026-09-29" (:first-day note))))
+    (testing "running the day again hears the notes as they were before it, not as it left them"
+      (reset! prompts [])
+      (m/? (pipeline/run-task c "2026-09-30"))
+      (let [[briefing compaction] @prompts]
+        (is (str/includes? briefing "The Fed keeps holding."))
+        (is (not (str/includes? briefing "Where 2026-09-29/1 stands.")) "the first run's note isn't background")
+        (is (str/includes? compaction "Notes so far:\nTitle: The Fed's pause"))
+        (is (not (str/includes? compaction "desk.example.com/fed")) "nor are its facts kept from before"))
+      (let [note (get (store/notes st ["2026-09-29/1"]) "2026-09-29/1")]
+        (is (= 1 (count (filter #(= "https://desk.example.com/fed" (:url %)) (:facts note))))
+            "and the day's facts aren't added twice")))))
 
 (deftest a-failed-compaction-leaves-the-briefing-filed
   (let [c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]

@@ -149,7 +149,7 @@
   among `candidates`. A fact keeps the report it came from, so a digest can
   cite it: one kept from the notes keeps its old day and report, one from
   today's reports takes that report's. A fact whose cite names neither is
-  dropped, and a storyline the answer gave no facts keeps its old note."
+  dropped, one given twice is kept once, and a storyline the answer gave no facts keeps its old note."
   [day candidates notes ids answer max-facts]
   (let [wanted (into {} candidates)
         by-n (into {} (map (juxt :n identity)) (mapcat second candidates))]
@@ -170,6 +170,11 @@
                                                                {:day day :text text :url (:url s)
                                                                 :source (:source s) :headline (:title s)})
                                                      nil)))))
+                                       (reduce (fn [[seen out] f]
+                                                 (let [k [(:day f) (:url f) (:text f)]]
+                                                   (if (seen k) [seen out] [(conj seen k) (conj out f)])))
+                                               [#{} []])
+                                       second
                                        (sort-by :day)
                                        (take-last max-facts)
                                        vec)]
