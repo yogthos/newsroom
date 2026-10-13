@@ -31,6 +31,18 @@
   are kept here too, a row a key with the value as EDN; see
   newsroom.settings.
 
+  Everything above is a reader's own. Each row carries the user_id of the
+  reader it belongs to, and a store is scoped to one reader with
+  `for-user`; a store opened plain is the local reader's, the one reader
+  there is when newsroom runs for one person (see newsroom.auth). The
+  readers are kept in users, by the issuer and subject their sign-in
+  names, and a signed-in browser's session in sessions.
+
+  What a source gives doesn't depend on who reads it, so what one reader's
+  run fetched is kept for the others for a while, in the shared tables:
+  the items a source gave, by what the source asks for, the text of the
+  articles read in full, and the embeddings of the items, by their text.
+
   One connection, serialized by a lock: sqlite writes one at a time anyway,
   and the server's handlers and the pipeline share it."
   (:require [clojure.edn :as edn]
@@ -41,15 +53,26 @@
             [newsroom.embed :as embed]
             [newsroom.news :as news]))
 
-(def ^:private schema
-  ["create table if not exists briefings (
-      day text primary key,
+(def local-user-id
+  "The reader a store opened plain belongs to: the only one when newsroom
+  runs for one person, and the owner of what a database from before there
+  were readers holds."
+  1)
+
+(def ^:private tables
+  "Each reader's tables, by name, every row under its reader's user_id."
+  (array-map
+   "briefings" "create table if not exists briefings (
+      user_id integer not null,
+      day text not null,
       markdown text not null,
       model text,
       provider text,
       tldr text,
-      created_at text not null)"
-   "create table if not exists sources (
+      created_at text not null,
+      primary key (user_id, day))"
+   "sources" "create table if not exists sources (
+      user_id integer not null,
       day text not null,
       n integer not null,
       title text not null,
@@ -66,40 +89,51 @@
       informs text,
       gap text,
       cited integer not null default 0,
-      primary key (day, n))"
-   "create table if not exists source_health (
-      name text primary key,
+      primary key (user_id, day, n))"
+   "source_health" "create table if not exists source_health (
+      user_id integer not null,
+      name text not null,
       last_ok text,
       consecutive_failures integer not null default 0,
-      last_error text)"
-   "create table if not exists coverage (
+      last_error text,
+      primary key (user_id, name))"
+   "coverage" "create table if not exists coverage (
+      user_id integer not null,
       day text not null,
       n integer not null,
       story text,
       outlets integer not null default 1,
       cited integer not null default 0,
-      primary key (day, n))"
-   "create table if not exists standfirsts (
-      day text primary key,
-      tldr text not null)"
-   "create table if not exists story_notes (
-      story text primary key,
+      primary key (user_id, day, n))"
+   "standfirsts" "create table if not exists standfirsts (
+      user_id integer not null,
+      day text not null,
+      tldr text not null,
+      primary key (user_id, day))"
+   "story_notes" "create table if not exists story_notes (
+      user_id integer not null,
+      story text not null,
       title text,
       summary text,
+      status text,
       facts text not null,
       first_day text,
       last_day text not null,
-      updated_at text not null)"
-   "create table if not exists day_trends (
+      updated_at text not null,
+      primary key (user_id, story))"
+   "day_trends" "create table if not exists day_trends (
+      user_id integer not null,
       day text not null,
       idx integer not null,
       thread text not null,
+      level text,
       name text not null,
       direction text,
       summary text,
       stories text,
-      primary key (day, idx))"
-   "create table if not exists digests (
+      primary key (user_id, day, idx))"
+   "digests" "create table if not exists digests (
+      user_id integer not null,
       kind text not null,
       period text not null,
       markdown text not null,
@@ -107,8 +141,9 @@
       provider text,
       tldr text,
       created_at text not null,
-      primary key (kind, period))"
-   "create table if not exists digest_sources (
+      primary key (user_id, kind, period))"
+   "digest_sources" "create table if not exists digest_sources (
+      user_id integer not null,
       kind text not null,
       period text not null,
       n integer not null,
@@ -117,15 +152,18 @@
       url text not null,
       source text,
       cited integer not null default 0,
-      primary key (kind, period, n))"
-   "create table if not exists settings (
-      key text primary key,
-      value text not null)"
+      primary key (user_id, kind, period, n))"
+   "settings" "create table if not exists settings (
+      user_id integer not null,
+      key text not null,
+      value text not null,
+      primary key (user_id, key))"
    ;; a projection is newsroom's own when it has no source, else the
    ;; expectation an outlet put forward; origin and ref are where it was
    ;; read from, a day's briefing or a week's or month's digest
-   "create table if not exists projections (
+   "projections" "create table if not exists projections (
       id integer primary key,
+      user_id integer not null,
       origin text not null,
       ref text not null,
       made_on text not null,
@@ -143,19 +181,20 @@
       checked_kind text,
       checked_period text,
       checked_at text)"
-   "create index if not exists projections_due on projections (status, due)"
-   "create index if not exists projections_ref on projections (origin, ref)"
    ;; a day's podcast: the episode as MP3, and its script as EDN,
    ;; [{:speaker :text}]
-   "create table if not exists narrations (
-      day text primary key,
+   "narrations" "create table if not exists narrations (
+      user_id integer not null,
+      day text not null,
       mp3 blob not null,
       transcript text,
       seconds real,
       model text,
       provider text,
-      created_at text not null)"
-   "create table if not exists retrospectives (
+      created_at text not null,
+      primary key (user_id, day))"
+   "retrospectives" "create table if not exists retrospectives (
+      user_id integer not null,
       kind text not null,
       period text not null,
       summary text,
@@ -163,14 +202,51 @@
       model text,
       provider text,
       created_at text not null,
-      primary key (kind, period))"])
+      primary key (user_id, kind, period))"))
+
+(def ^:private shared-schema
+  "The readers, their sessions, and what is shared between them."
+  ["create table if not exists users (
+      id integer primary key,
+      issuer text not null,
+      subject text not null,
+      name text,
+      email text,
+      created_at text not null,
+      seen_at text,
+      unique (issuer, subject))"
+   ;; a session's id is the sha-256 of the cookie that names it, so the
+   ;; database never holds what signs a browser in
+   "create table if not exists sessions (
+      id text primary key,
+      user_id integer not null,
+      id_token text,
+      created_at integer not null,
+      expires_at integer not null)"
+   ;; key is the sha-256 of what the source asks for and the day; name is
+   ;; what the items were credited to when it was fetched
+   "create table if not exists shared_fetches (
+      key text primary key,
+      name text,
+      items text not null,
+      fetched_at integer not null)"
+   "create table if not exists shared_articles (
+      url text primary key,
+      body text not null,
+      fetched_at integer not null)"
+   "create table if not exists shared_vectors (
+      hash text primary key,
+      vector text not null,
+      used_at integer not null)"])
 
 (def ^:private search-schema
   ;; ref is what a document is replaced and deleted by: the day for a
   ;; briefing and its sources, kind/period for a digest, the story for a
-  ;; note and its facts
+  ;; note and its facts. The index is one for every reader, each document
+  ;; under its reader's user_id.
   ["create table if not exists search_docs (
       id integer primary key,
+      user_id integer not null,
       kind text not null,
       ref text not null,
       day text,
@@ -179,7 +255,7 @@
       cited integer not null default 0,
       title text,
       body text)"
-   "create index if not exists search_docs_ref on search_docs (kind, ref)"
+   "create index if not exists search_docs_ref on search_docs (user_id, kind, ref)"
    "create virtual table if not exists search_fts using fts5(
       title, body, content='search_docs', content_rowid='id',
       tokenize='porter unicode61 remove_diacritics 2')"
@@ -196,6 +272,22 @@
       insert into search_words (search_words, rowid, title, body) values ('delete', old.id, old.title, old.body);
     end"])
 
+(def ^:private search-drops
+  ["drop trigger if exists search_docs_ai"
+   "drop trigger if exists search_docs_ad"
+   "drop table if exists search_vocab"
+   "drop table if exists search_fts"
+   "drop table if exists search_words"
+   "drop table if exists search_docs"])
+
+(def ^:private indexes
+  ["create index if not exists sources_story on sources (user_id, story)"
+   "create index if not exists day_trends_thread on day_trends (user_id, thread)"
+   "create index if not exists coverage_story on coverage (user_id, story)"
+   "create index if not exists projections_due on projections (user_id, status, due)"
+   "create index if not exists projections_ref on projections (user_id, origin, ref)"
+   "create index if not exists sessions_user on sessions (user_id)"])
+
 (defn- add-column!
   "An ALTER TABLE for a column an older database may not have, silently
   skipped when it does."
@@ -203,31 +295,63 @@
   (try (jdbc/execute! conn (str "alter table " table " add column " column " " ddl))
        (catch Exception _ nil)))
 
+(defn- columns
+  "The names of `table`'s columns, empty when there is no such table."
+  [conn table]
+  (mapv :name (jdbc/fetch conn (str "pragma table_info(" table ")"))))
+
+(defn- adopt-legacy!
+  "Give what a database from before there were readers holds to the local
+  reader: each reader's table without a user_id is made again with one,
+  its rows the local reader's, and the search index is dropped, to be
+  built again. A column the old table lacks takes its default, as the
+  ALTER TABLEs of older versions gave it."
+  [conn]
+  (let [legacy (filterv (fn [t] (let [cs (columns conn t)]
+                                  (and (seq cs) (not (some #{"user_id"} cs)))))
+                        (keys tables))]
+    (when (seq legacy)
+      (jdbc/atomic conn
+        (doseq [stmt search-drops] (jdbc/execute! conn stmt))
+        (doseq [t legacy]
+          (let [old (columns conn t)]
+            (jdbc/execute! conn (str "alter table " t " rename to " t "_legacy"))
+            (jdbc/execute! conn (get tables t))
+            (let [cols (str/join ", " (filter (set (columns conn t)) old))]
+              (jdbc/execute! conn (str "insert into " t " (user_id, " cols ") select "
+                                       local-user-id ", " cols " from " t "_legacy")))
+            (jdbc/execute! conn (str "drop table " t "_legacy"))))))
+    legacy))
+
 (defn- coverage-row [day cited {:keys [n story] :as source}]
   ;; a precedent was background, and a gap search's result was found for a
   ;; story rather than reported on it
   (when-not (or (:precedent source) (:gap source))
     [day n story (news/outlets source) (if (contains? cited n) 1 0)]))
 
-(defn- insert-coverage! [conn rows]
+(defn- insert-coverage! [conn uid rows]
   (doseq [row (remove nil? rows)]
-    (jdbc/execute! conn (into ["insert or replace into coverage (day, n, story, outlets, cited)
-                                values (?, ?, ?, ?, ?)"]
+    (jdbc/execute! conn (into ["insert or replace into coverage (user_id, day, n, story, outlets, cited)
+                                values (?, ?, ?, ?, ?, ?)"
+                               uid]
                               row))))
 
 (defn- backfill-coverage!
-  "Coverage for the sources stored before it was kept, once."
+  "Coverage for the sources stored before it was kept, once, for each
+  reader who has sources and no coverage."
   [conn]
-  (when (and (nil? (jdbc/fetch-one conn "select 1 as x from coverage limit 1"))
-             (jdbc/fetch-one conn "select 1 as x from sources limit 1"))
+  (doseq [{uid :user_id} (jdbc/fetch conn "select distinct user_id from sources
+                                           where user_id not in (select distinct user_id from coverage)")]
     (jdbc/atomic conn
-      (insert-coverage! conn (for [r (jdbc/fetch conn "select day, n, url, source, summary, also, story, cited, precedent from sources")
-                                   :when (not= 1 (:precedent r))]
-                               (coverage-row (:day r) (if (= 1 (:cited r)) #{(:n r)} #{})
-                                             {:n (:n r) :story (:story r) :url (:url r) :source (:source r)
-                                              :summary (:summary r)
-                                              :also (when (:also r)
-                                                      (mapv #(if (string? %) {:source %} %) (edn/read-string (:also r))))}))))))
+      (insert-coverage! conn uid
+                        (for [r (jdbc/fetch conn ["select day, n, url, source, summary, also, story, cited, precedent
+                                                   from sources where user_id = ?" uid])
+                              :when (not= 1 (:precedent r))]
+                          (coverage-row (:day r) (if (= 1 (:cited r)) #{(:n r)} #{})
+                                        {:n (:n r) :story (:story r) :url (:url r) :source (:source r)
+                                         :summary (:summary r)
+                                         :also (when (:also r)
+                                                 (mapv #(if (string? %) {:source %} %) (edn/read-string (:also r))))}))))))
 
 ;; --- the search index ------------------------------------------------------------
 
@@ -256,18 +380,19 @@
       str/trim))
 
 (defn- unindex!
-  "Take the documents of `kinds` kept under `ref` out of the index."
-  [conn kinds ref]
-  (jdbc/execute! conn (into [(str "delete from search_docs where ref = ? and kind in ("
+  "Take the documents of `kinds` the reader `uid` keeps under `ref` out of
+  the index."
+  [conn uid kinds ref]
+  (jdbc/execute! conn (into [(str "delete from search_docs where user_id = ? and ref = ? and kind in ("
                                   (str/join ", " (repeat (count kinds) "?")) ")")
-                             ref]
+                             uid ref]
                             kinds)))
 
-(defn- index! [conn docs]
+(defn- index! [conn uid docs]
   (doseq [{:keys [kind ref day href url cited? title body]} docs]
-    (jdbc/execute! conn ["insert into search_docs (kind, ref, day, href, url, cited, title, body)
-                          values (?, ?, ?, ?, ?, ?, ?, ?)"
-                         kind ref day href url (if cited? 1 0) title body])))
+    (jdbc/execute! conn ["insert into search_docs (user_id, kind, ref, day, href, url, cited, title, body)
+                          values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                         uid kind ref day href url (if cited? 1 0) title body])))
 
 (defn- day-docs
   "A day's briefing and each source gathered for it, as documents."
@@ -292,27 +417,33 @@
            :body (str/join "\n\n" (remove str/blank? [text (str/join ", " (remove str/blank? [headline source]))]))})))
 
 (defn- backfill-search!
-  "Index everything kept before the search was, once."
+  "Index everything kept before the search was, or before the index was
+  made again, once."
   [conn]
   (when (and (nil? (jdbc/fetch-one conn "select 1 as x from search_docs limit 1"))
              (or (jdbc/fetch-one conn "select 1 as x from briefings limit 1")
                  (jdbc/fetch-one conn "select 1 as x from digests limit 1")
                  (jdbc/fetch-one conn "select 1 as x from story_notes limit 1")))
     (jdbc/atomic conn
-      (doseq [{:keys [day markdown]} (jdbc/fetch conn "select day, markdown from briefings")]
-        (let [rows (jdbc/fetch conn ["select n, title, url, summary, note, gap, cited from sources where day = ?" day])]
-          (index! conn (day-docs day markdown rows (set (map :n (filter #(= 1 (:cited %)) rows)))))))
-      (doseq [{:keys [kind period markdown]} (jdbc/fetch conn "select kind, period, markdown from digests")]
-        (index! conn (digest-docs kind period markdown)))
-      (doseq [r (jdbc/fetch conn "select story, title, summary, facts, last_day from story_notes")]
-        (index! conn (note-docs (:story r) {:title (:title r) :summary (:summary r) :last-day (:last_day r)
-                                            :facts (edn/read-string (:facts r))}))))))
+      (doseq [{uid :user_id :keys [day markdown]} (jdbc/fetch conn "select user_id, day, markdown from briefings")]
+        (let [rows (jdbc/fetch conn ["select n, title, url, summary, note, gap, cited from sources
+                                      where user_id = ? and day = ?" uid day])]
+          (index! conn uid (day-docs day markdown rows (set (map :n (filter #(= 1 (:cited %)) rows)))))))
+      (doseq [{uid :user_id :keys [kind period markdown]} (jdbc/fetch conn "select user_id, kind, period, markdown from digests")]
+        (index! conn uid (digest-docs kind period markdown)))
+      (doseq [r (jdbc/fetch conn "select user_id, story, title, summary, facts, last_day from story_notes")]
+        (index! conn (:user_id r) (note-docs (:story r) {:title (:title r) :summary (:summary r) :last-day (:last_day r)
+                                                         :facts (edn/read-string (:facts r))}))))))
+
+(defn- now [] (str (java.time.Instant/now)))
+
+(defn- now-ms [] (System/currentTimeMillis))
 
 (defn open
-  "A store on the sqlite database at `uri` (a path, or sqlite::memory:)."
+  "A store on the sqlite database at `uri` (a path, or sqlite::memory:),
+  the local reader's; see `for-user`."
   [uri]
   (let [conn (jdbc/connection (if (re-find #"^sqlite:" uri) uri (str "sqlite:" uri)))]
-    (doseq [stmt schema] (jdbc/execute! conn stmt))
     ;; databases from before these columns have no place for them
     (add-column! conn "briefings" "tldr" "text")
     (doseq [[column ddl] [["also" "text"] ["vector" "text"] ["story" "text"] ["weight" "real"]
@@ -321,58 +452,206 @@
       (add-column! conn "sources" column ddl))
     (add-column! conn "story_notes" "status" "text")
     (add-column! conn "day_trends" "level" "text")
-    (jdbc/execute! conn "create index if not exists sources_story on sources (story)")
-    (jdbc/execute! conn "create index if not exists day_trends_thread on day_trends (thread)")
-    (jdbc/execute! conn "create index if not exists coverage_story on coverage (story)")
+    (adopt-legacy! conn)
+    (doseq [stmt (concat (vals tables) shared-schema)] (jdbc/execute! conn stmt))
+    (jdbc/execute! conn ["insert or ignore into users (id, issuer, subject, name, created_at) values (?, '', 'local', ?, ?)"
+                         local-user-id "You" (now)])
+    (doseq [stmt indexes] (jdbc/execute! conn stmt))
     (backfill-coverage! conn)
     (doseq [stmt search-schema] (jdbc/execute! conn stmt))
     (backfill-search! conn)
-    (jdbc/execute! conn "insert or ignore into standfirsts (day, tldr)
-                         select day, tldr from briefings where tldr is not null")
-    {:conn conn :lock (Object.) :vocab (atom nil)}))
+    (jdbc/execute! conn "insert or ignore into standfirsts (user_id, day, tldr)
+                         select user_id, day, tldr from briefings where tldr is not null")
+    {:conn conn :lock (Object.) :vocab (atom nil) :user local-user-id}))
 
 (defn close [{:keys [conn]}] (.close conn))
+
+(defn user-id
+  "The reader `store` is scoped to."
+  [store]
+  (or (:user store) local-user-id))
+
+(defn for-user
+  "`store` scoped to the reader `id`: everything read and written through
+  it is theirs. It shares the connection, and the shared tables, with
+  every other reader's."
+  [store id]
+  (assoc store :user (long id)))
 
 (defmacro ^:private with-db [[conn store] & body]
   `(locking (:lock ~store)
      (let [~conn (:conn ~store)] ~@body)))
-
-(defn- now [] (str (java.time.Instant/now)))
 
 (defn- stale!
   "Forget the vocabulary read for searching, once the index has changed."
   [store]
   (reset! (:vocab store) nil))
 
+;; --- readers and sessions ------------------------------------------------------------
+
+(defn- row->user [r]
+  {:id (long (:id r)) :issuer (:issuer r) :subject (:subject r) :name (:name r) :email (:email r)
+   :created-at (:created_at r) :seen-at (:seen_at r)})
+
+(defn ensure-user!
+  "The id of the reader the sign-in of `subject` at `issuer` names, added
+  when they are new; their :name and :email are kept up to date."
+  [store {:keys [issuer subject name email]}]
+  (with-db [conn store]
+    (jdbc/execute! conn ["insert into users (issuer, subject, name, email, created_at, seen_at)
+                          values (?, ?, ?, ?, ?, ?)
+                          on conflict(issuer, subject) do update set
+                            name = coalesce(excluded.name, name),
+                            email = coalesce(excluded.email, email),
+                            seen_at = excluded.seen_at"
+                         issuer subject name email (now) (now)])
+    (long (:id (jdbc/fetch-one conn ["select id from users where issuer = ? and subject = ?" issuer subject])))))
+
+(defn user
+  "The reader `id`, {:id :issuer :subject :name :email :created-at
+  :seen-at}, or nil."
+  [store id]
+  (with-db [conn store]
+    (some-> (jdbc/fetch-one conn ["select * from users where id = ?" id]) row->user)))
+
+(defn users
+  "Every reader, the local one first."
+  [store]
+  (with-db [conn store]
+    (mapv row->user (jdbc/fetch conn "select * from users order by id"))))
+
+(defn save-session!
+  "Keep the session `id`, the sha-256 of its cookie, for the reader
+  `user-id` until `expires-at`, epoch ms, with the :id-token the sign-in
+  gave, which signing out hands back to the server."
+  [store {:keys [id user-id id-token expires-at]}]
+  (with-db [conn store]
+    (jdbc/execute! conn ["insert or replace into sessions (id, user_id, id_token, created_at, expires_at)
+                          values (?, ?, ?, ?, ?)"
+                         id user-id id-token (now-ms) expires-at]))
+  nil)
+
+(defn session
+  "The session `id` while it lasts, {:id :user-id :id-token :expires-at},
+  else nil."
+  [store id]
+  (with-db [conn store]
+    (when-let [r (jdbc/fetch-one conn ["select * from sessions where id = ? and expires_at > ?" id (now-ms)])]
+      {:id (:id r) :user-id (long (:user_id r)) :id-token (:id_token r) :expires-at (long (:expires_at r))})))
+
+(defn delete-session! [store id]
+  (with-db [conn store]
+    (jdbc/execute! conn ["delete from sessions where id = ?" id]))
+  nil)
+
+;; --- what readers share --------------------------------------------------------------
+
+(defn shared-fetch
+  "What a source gave when it was fetched for `key` no more than
+  `max-age-ms` ago, {:name :items :fetched-at}, :name what the items were
+  credited to then; nil when nothing that recent is kept."
+  [store key max-age-ms]
+  (with-db [conn store]
+    (when-let [r (jdbc/fetch-one conn ["select name, items, fetched_at from shared_fetches
+                                        where key = ? and fetched_at >= ?"
+                                       key (- (now-ms) max-age-ms)])]
+      {:name (:name r) :items (edn/read-string (:items r)) :fetched-at (long (:fetched_at r))})))
+
+(defn save-shared-fetch!
+  "Keep the `items` a source gave for `key`, credited to `name`, for the
+  readers whose sources ask for the same."
+  [store key name items]
+  (with-db [conn store]
+    (jdbc/execute! conn ["insert or replace into shared_fetches (key, name, items, fetched_at) values (?, ?, ?, ?)"
+                         key name (pr-str (vec items)) (now-ms)]))
+  nil)
+
+(defn shared-article
+  "The text of the article at `url`, when it was read no more than
+  `max-age-ms` ago, else nil."
+  [store url max-age-ms]
+  (with-db [conn store]
+    (:body (jdbc/fetch-one conn ["select body from shared_articles where url = ? and fetched_at >= ?"
+                                 url (- (now-ms) max-age-ms)]))))
+
+(defn save-shared-article! [store url text]
+  (with-db [conn store]
+    (jdbc/execute! conn ["insert or replace into shared_articles (url, body, fetched_at) values (?, ?, ?)"
+                         url text (now-ms)]))
+  nil)
+
+(defn shared-vectors
+  "The embeddings kept for `hashes`, {hash vector}; a hash with none is
+  missing."
+  [store hashes]
+  (let [hashes (vec (distinct hashes))]
+    (if (empty? hashes)
+      {}
+      (with-db [conn store]
+        (let [marks (str/join ", " (repeat (count hashes) "?"))
+              found (into {} (map (fn [r] [(:hash r) (edn/read-string (:vector r))]))
+                          (jdbc/fetch conn (into [(str "select hash, vector from shared_vectors where hash in (" marks ")")]
+                                                 hashes)))]
+          (when (seq found)
+            (jdbc/execute! conn (into [(str "update shared_vectors set used_at = ? where hash in (" marks ")") (now-ms)]
+                                      (keys found))))
+          found)))))
+
+(defn save-shared-vectors!
+  "Keep embeddings, {hash vector}."
+  [store vectors]
+  (with-db [conn store]
+    (jdbc/atomic conn
+      (doseq [[h v] vectors]
+        (jdbc/execute! conn ["insert or replace into shared_vectors (hash, vector, used_at) values (?, ?, ?)"
+                             h (pr-str (vec v)) (now-ms)]))))
+  nil)
+
+(defn prune-shared!
+  "Drop what is shared that is older than `max-age-ms`, an embedding by
+  when it was last used, and the sessions that have expired."
+  [store max-age-ms]
+  (let [before (- (now-ms) max-age-ms)]
+    (with-db [conn store]
+      (jdbc/atomic conn
+        (jdbc/execute! conn ["delete from shared_fetches where fetched_at < ?" before])
+        (jdbc/execute! conn ["delete from shared_articles where fetched_at < ?" before])
+        (jdbc/execute! conn ["delete from shared_vectors where used_at < ?" before])
+        (jdbc/execute! conn ["delete from sessions where expires_at <= ?" (now-ms)]))))
+  nil)
+
+;; --- days --------------------------------------------------------------------------
+
 (defn save-day!
   "Store a day's briefing and its sources, replacing whatever the day had."
   [store {:keys [day sources cited markdown model provider tldr]}]
-  (let [cited (set cited)]
+  (let [cited (set cited)
+        uid (user-id store)]
     (with-db [conn store]
       (jdbc/atomic conn
-        (jdbc/execute! conn ["delete from sources where day = ?" day])
-        (jdbc/execute! conn ["delete from coverage where day = ?" day])
-        (jdbc/execute! conn ["delete from briefings where day = ?" day])
+        (jdbc/execute! conn ["delete from sources where user_id = ? and day = ?" uid day])
+        (jdbc/execute! conn ["delete from coverage where user_id = ? and day = ?" uid day])
+        (jdbc/execute! conn ["delete from briefings where user_id = ? and day = ?" uid day])
         ;; a podcast of the briefing replaced no longer tells it
-        (jdbc/execute! conn ["delete from narrations where day = ?" day])
-        (insert-coverage! conn (map #(coverage-row day cited %) sources))
-        (jdbc/execute! conn ["delete from standfirsts where day = ?" day])
-        (when tldr (jdbc/execute! conn ["insert into standfirsts (day, tldr) values (?, ?)" day tldr]))
-        (jdbc/execute! conn ["insert into briefings (day, markdown, model, provider, tldr, created_at)
-                              values (?, ?, ?, ?, ?, ?)"
-                             day markdown model provider tldr (now)])
+        (jdbc/execute! conn ["delete from narrations where user_id = ? and day = ?" uid day])
+        (insert-coverage! conn uid (map #(coverage-row day cited %) sources))
+        (jdbc/execute! conn ["delete from standfirsts where user_id = ? and day = ?" uid day])
+        (when tldr (jdbc/execute! conn ["insert into standfirsts (user_id, day, tldr) values (?, ?, ?)" uid day tldr]))
+        (jdbc/execute! conn ["insert into briefings (user_id, day, markdown, model, provider, tldr, created_at)
+                              values (?, ?, ?, ?, ?, ?, ?)"
+                             uid day markdown model provider tldr (now)])
         (doseq [{:keys [n title url source summary published also story weight note informs gap]
                  v :vector precedent? :precedent} sources]
-          (jdbc/execute! conn ["insert into sources (day, n, title, url, source, summary, published, also,
+          (jdbc/execute! conn ["insert into sources (user_id, day, n, title, url, source, summary, published, also,
                                                      vector, story, weight, precedent, note, informs, gap, cited)
-                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                               day n title url source summary published
+                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                               uid day n title url source summary published
                                (when (seq also) (pr-str also))
                                (embed/encode v) story weight (if precedent? 1 0)
                                note (when (seq informs) (pr-str (vec informs))) gap
                                (if (contains? cited n) 1 0)]))
-        (unindex! conn ["day" "source"] day)
-        (index! conn (day-docs day markdown sources cited))))
+        (unindex! conn uid ["day" "source"] day)
+        (index! conn uid (day-docs day markdown sources cited))))
     (stale! store)
     nil))
 
@@ -398,17 +677,18 @@
   "The stored day, or nil: {:day :markdown :model :provider :created-at
   :sources :cited}."
   [store day]
-  (with-db [conn store]
-    (when-let [b (jdbc/fetch-one conn ["select * from briefings where day = ?" day])]
-      (let [rows (jdbc/fetch conn ["select * from sources where day = ? order by n" day])]
-        {:day day
-         :markdown (:markdown b)
-         :model (:model b)
-         :provider (:provider b)
-         :tldr (:tldr b)
-         :created-at (:created_at b)
-         :sources (mapv row->source rows)
-         :cited (mapv row->source (filter #(= 1 (:cited %)) rows))}))))
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (when-let [b (jdbc/fetch-one conn ["select * from briefings where user_id = ? and day = ?" uid day])]
+        (let [rows (jdbc/fetch conn ["select * from sources where user_id = ? and day = ? order by n" uid day])]
+          {:day day
+           :markdown (:markdown b)
+           :model (:model b)
+           :provider (:provider b)
+           :tldr (:tldr b)
+           :created-at (:created_at b)
+           :sources (mapv row->source rows)
+           :cited (mapv row->source (filter #(= 1 (:cited %)) rows))})))))
 
 (defn sources-between
   "Every source stored for the days from `from` to `to`, both inclusive,
@@ -423,8 +703,8 @@
                      (and vectors? (:vector r)) (assoc :vector (embed/decode (:vector r)))))
            (jdbc/fetch conn [(str "select day, n, title, url, source, summary, published, also, story, weight, precedent, note, informs, gap, cited"
                                   (when vectors? ", vector")
-                                  " from sources where day >= ? and day <= ? order by day, n")
-                             from to])))))
+                                  " from sources where user_id = ? and day >= ? and day <= ? order by day, n")
+                             (user-id store) from to])))))
 
 (defn archive
   "The days that have a briefing, newest first, each with its standfirst
@@ -432,7 +712,7 @@
   [store]
   (with-db [conn store]
     (mapv (fn [r] {:day (:day r) :tldr (:tldr r)})
-          (jdbc/fetch conn "select day, tldr from briefings order by day desc"))))
+          (jdbc/fetch conn ["select day, tldr from briefings where user_id = ? order by day desc" (user-id store)]))))
 
 (defn record-source-health!
   "Roll each source's latest fetch up into its health: a failure bumps the
@@ -440,26 +720,28 @@
   when it last worked. A source the run didn't fetch, one taken out of the
   config, is forgotten."
   [store results]
-  (with-db [conn store]
-    (when (seq results)
-      (jdbc/execute! conn (into [(str "delete from source_health where name not in ("
-                                      (str/join ", " (repeat (count results) "?")) ")")]
-                                (map :source results))))
-    (doseq [{:keys [source error]} results]
-      (if error
-        (jdbc/execute! conn ["insert into source_health (name, consecutive_failures, last_error)
-                              values (?, 1, ?)
-                              on conflict(name) do update set
-                                consecutive_failures = consecutive_failures + 1,
-                                last_error = excluded.last_error"
-                             source error])
-        (jdbc/execute! conn ["insert into source_health (name, last_ok, consecutive_failures)
-                              values (?, ?, 0)
-                              on conflict(name) do update set
-                                last_ok = excluded.last_ok,
-                                consecutive_failures = 0,
-                                last_error = null"
-                             source (now)])))))
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (when (seq results)
+        (jdbc/execute! conn (into [(str "delete from source_health where user_id = ? and name not in ("
+                                        (str/join ", " (repeat (count results) "?")) ")")
+                                   uid]
+                                  (map :source results))))
+      (doseq [{:keys [source error]} results]
+        (if error
+          (jdbc/execute! conn ["insert into source_health (user_id, name, consecutive_failures, last_error)
+                                values (?, ?, 1, ?)
+                                on conflict(user_id, name) do update set
+                                  consecutive_failures = consecutive_failures + 1,
+                                  last_error = excluded.last_error"
+                               uid source error])
+          (jdbc/execute! conn ["insert into source_health (user_id, name, last_ok, consecutive_failures)
+                                values (?, ?, ?, 0)
+                                on conflict(user_id, name) do update set
+                                  last_ok = excluded.last_ok,
+                                  consecutive_failures = 0,
+                                  last_error = null"
+                               uid source (now)]))))))
 
 (defn source-health
   "Every source's health, alphabetical by name: {:name :last-ok
@@ -471,14 +753,15 @@
                    :last-ok (:last_ok r)
                    :consecutive-failures (long (:consecutive_failures r))
                    :last-error (:last_error r)})
-          (jdbc/fetch conn "select name, last_ok, consecutive_failures, last_error
-                            from source_health order by name"))))
+          (jdbc/fetch conn ["select name, last_ok, consecutive_failures, last_error
+                             from source_health where user_id = ? order by name"
+                            (user-id store)]))))
 
 (defn days
   "Every day with a briefing, newest first."
   [store]
   (with-db [conn store]
-    (mapv :day (jdbc/fetch conn "select day from briefings order by day desc"))))
+    (mapv :day (jdbc/fetch conn ["select day from briefings where user_id = ? order by day desc" (user-id store)]))))
 
 (defn coverage-between
   "The coverage kept for the days from `from` to `to`, both inclusive:
@@ -488,7 +771,8 @@
   (with-db [conn store]
     (mapv (fn [r] {:day (:day r) :n (long (:n r)) :story (:story r)
                    :outlets (long (:outlets r)) :cited? (= 1 (:cited r))})
-          (jdbc/fetch conn ["select * from coverage where day >= ? and day <= ? order by day, n" from to]))))
+          (jdbc/fetch conn ["select * from coverage where user_id = ? and day >= ? and day <= ? order by day, n"
+                            (user-id store) from to]))))
 
 (defn days-without-storylines
   "The days from `from` to `to` with sources stored before storylines were
@@ -496,18 +780,23 @@
   [store from to]
   (with-db [conn store]
     (mapv :day (jdbc/fetch conn ["select distinct day from sources
-                                  where story is null and precedent = 0 and day >= ? and day <= ? order by day" from to]))))
+                                  where user_id = ? and story is null and precedent = 0 and day >= ? and day <= ?
+                                  order by day"
+                                 (user-id store) from to]))))
 
 (defn set-storylines!
   "Store the storyline and embedding of each of a day's `sources`, in the
   sources and in their coverage."
   [store day sources]
-  (with-db [conn store]
-    (jdbc/atomic conn
-      (doseq [{:keys [n story] v :vector} sources]
-        (jdbc/execute! conn ["update sources set story = ?, vector = coalesce(?, vector) where day = ? and n = ?"
-                             story (embed/encode v) day n])
-        (jdbc/execute! conn ["update coverage set story = ? where day = ? and n = ?" story day n]))))
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (jdbc/atomic conn
+        (doseq [{:keys [n story] v :vector} sources]
+          (jdbc/execute! conn ["update sources set story = ?, vector = coalesce(?, vector)
+                                where user_id = ? and day = ? and n = ?"
+                               story (embed/encode v) uid day n])
+          (jdbc/execute! conn ["update coverage set story = ? where user_id = ? and day = ? and n = ?"
+                               story uid day n])))))
   nil)
 
 (defn standfirsts-between
@@ -516,7 +805,8 @@
   [store from to]
   (with-db [conn store]
     (mapv (fn [r] {:day (:day r) :tldr (:tldr r)})
-          (jdbc/fetch conn ["select day, tldr from standfirsts where day >= ? and day <= ? order by day" from to]))))
+          (jdbc/fetch conn ["select day, tldr from standfirsts where user_id = ? and day >= ? and day <= ? order by day"
+                            (user-id store) from to]))))
 
 (defn briefings-between
   "The briefings of the days from `from` to `to`, both inclusive, oldest
@@ -524,20 +814,22 @@
   [store from to]
   (with-db [conn store]
     (mapv (fn [r] {:day (:day r) :markdown (:markdown r)})
-          (jdbc/fetch conn ["select day, markdown from briefings where day >= ? and day <= ? order by day" from to]))))
+          (jdbc/fetch conn ["select day, markdown from briefings where user_id = ? and day >= ? and day <= ? order by day"
+                            (user-id store) from to]))))
 
 (defn save-notes!
   "Store storyline notes, {story note}, each replacing the story's last."
   [store notes]
-  (with-db [conn store]
-    (jdbc/atomic conn
-      (doseq [[story {:keys [title summary status facts first-day last-day]}] notes]
-        (jdbc/execute! conn ["insert or replace into story_notes
-                                (story, title, summary, status, facts, first_day, last_day, updated_at)
-                              values (?, ?, ?, ?, ?, ?, ?, ?)"
-                             story title summary status (pr-str (vec facts)) first-day last-day (now)])
-        (unindex! conn ["story" "fact"] story)
-        (index! conn (note-docs story {:title title :summary summary :facts facts :last-day last-day})))))
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (jdbc/atomic conn
+        (doseq [[story {:keys [title summary status facts first-day last-day]}] notes]
+          (jdbc/execute! conn ["insert or replace into story_notes
+                                  (user_id, story, title, summary, status, facts, first_day, last_day, updated_at)
+                                values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                               uid story title summary status (pr-str (vec facts)) first-day last-day (now)])
+          (unindex! conn uid ["story" "fact"] story)
+          (index! conn uid (note-docs story {:title title :summary summary :facts facts :last-day last-day}))))))
   (stale! store)
   nil)
 
@@ -551,7 +843,8 @@
   "Every storyline's note, the latest updated first."
   [store]
   (with-db [conn store]
-    (mapv row->note (jdbc/fetch conn "select * from story_notes order by last_day desc, story"))))
+    (mapv row->note (jdbc/fetch conn ["select * from story_notes where user_id = ? order by last_day desc, story"
+                                      (user-id store)]))))
 
 (defn recent-stories
   "The `n` storylines with the latest notes, {:story :title :last-day},
@@ -559,7 +852,9 @@
   [store n]
   (with-db [conn store]
     (mapv (fn [r] {:story (:story r) :title (:title r) :last-day (:last_day r)})
-          (jdbc/fetch conn ["select story, title, last_day from story_notes order by last_day desc, story limit ?" n]))))
+          (jdbc/fetch conn ["select story, title, last_day from story_notes where user_id = ?
+                             order by last_day desc, story limit ?"
+                            (user-id store) n]))))
 
 (defn story-coverage
   "A storyline's coverage, day by day: {:day :outlets :sources :cited?},
@@ -569,7 +864,8 @@
     (mapv (fn [r] {:day (:day r) :outlets (long (:outlets r)) :sources (long (:sources r))
                    :cited? (pos? (:cited r))})
           (jdbc/fetch conn ["select day, sum(outlets) as outlets, count(*) as sources, max(cited) as cited
-                             from coverage where story = ? group by day order by day" story]))))
+                             from coverage where user_id = ? and story = ? group by day order by day"
+                            (user-id store) story]))))
 
 (defn notes
   "The notes kept on `stories`, {story {:story :title :summary :facts
@@ -580,8 +876,9 @@
     (with-db [conn store]
       (into {}
             (map (fn [r] [(:story r) (row->note r)]))
-            (jdbc/fetch conn (into [(str "select * from story_notes where story in ("
-                                         (str/join ", " (repeat (count (distinct stories)) "?")) ")")]
+            (jdbc/fetch conn (into [(str "select * from story_notes where user_id = ? and story in ("
+                                         (str/join ", " (repeat (count (distinct stories)) "?")) ")")
+                                    (user-id store)]
                                    (distinct stories)))))))
 
 (def coverage-days
@@ -598,25 +895,34 @@
   [store n]
   (if (neg? n)
     []
-    (let [gone (with-db [conn store]
-                 (let [gone (mapv :day (jdbc/fetch conn ["select day from briefings order by day desc
-                                                          limit -1 offset ?" n]))]
+    (let [uid (user-id store)
+          gone (with-db [conn store]
+                 (let [gone (mapv :day (jdbc/fetch conn ["select day from briefings where user_id = ?
+                                                          order by day desc limit -1 offset ?"
+                                                         uid n]))
+                       oldest "(select min(day) from coverage where user_id = ?)"]
                    (when (seq gone)
                      (jdbc/atomic conn
                        (doseq [d gone]
-                         (unindex! conn ["day" "source"] d)
-                         (jdbc/execute! conn ["delete from sources where day = ?" d])
-                         (jdbc/execute! conn ["delete from briefings where day = ?" d]))
-                       (jdbc/execute! conn "delete from narrations where day not in (select day from briefings)")
-                       (jdbc/execute! conn ["delete from coverage where day not in
-                                               (select distinct day from coverage order by day desc limit ?)"
-                                            (+ n coverage-days)])
+                         (unindex! conn uid ["day" "source"] d)
+                         (jdbc/execute! conn ["delete from sources where user_id = ? and day = ?" uid d])
+                         (jdbc/execute! conn ["delete from briefings where user_id = ? and day = ?" uid d]))
+                       (jdbc/execute! conn ["delete from narrations where user_id = ?
+                                               and day not in (select day from briefings where user_id = ?)"
+                                            uid uid])
+                       (jdbc/execute! conn ["delete from coverage where user_id = ? and day not in
+                                               (select distinct day from coverage where user_id = ?
+                                                order by day desc limit ?)"
+                                            uid uid (+ n coverage-days)])
                        ;; what outlives the days goes with the coverage
-                       (jdbc/execute! conn "delete from standfirsts where day < (select min(day) from coverage)")
-                       (jdbc/execute! conn "delete from day_trends where day < (select min(day) from coverage)")
-                       (jdbc/execute! conn "delete from search_docs where kind in ('story', 'fact') and ref in
-                                              (select story from story_notes where last_day < (select min(day) from coverage))")
-                       (jdbc/execute! conn "delete from story_notes where last_day < (select min(day) from coverage)")))
+                       (jdbc/execute! conn [(str "delete from standfirsts where user_id = ? and day < " oldest) uid uid])
+                       (jdbc/execute! conn [(str "delete from day_trends where user_id = ? and day < " oldest) uid uid])
+                       (jdbc/execute! conn [(str "delete from search_docs where user_id = ? and kind in ('story', 'fact')
+                                                  and ref in (select story from story_notes
+                                                              where user_id = ? and last_day < " oldest ")")
+                                            uid uid uid])
+                       (jdbc/execute! conn [(str "delete from story_notes where user_id = ? and last_day < " oldest)
+                                            uid uid])))
                    gone))]
       (when (seq gone)
         (stale! store)
@@ -631,9 +937,9 @@
   :provider that wrote it, replacing the day's last."
   [store {:keys [day mp3 transcript seconds model provider]}]
   (with-db [conn store]
-    (jdbc/execute! conn ["insert or replace into narrations (day, mp3, transcript, seconds, model, provider, created_at)
-                          values (?, ?, ?, ?, ?, ?, ?)"
-                         day mp3 (pr-str (vec transcript)) (some-> seconds double) model provider (now)]))
+    (jdbc/execute! conn ["insert or replace into narrations (user_id, day, mp3, transcript, seconds, model, provider, created_at)
+                          values (?, ?, ?, ?, ?, ?, ?, ?)"
+                         (user-id store) day mp3 (pr-str (vec transcript)) (some-> seconds double) model provider (now)]))
   nil)
 
 (defn narration
@@ -642,7 +948,8 @@
   [store day]
   (with-db [conn store]
     (when-let [r (jdbc/fetch-one conn ["select day, transcript, seconds, model, provider, created_at
-                                        from narrations where day = ?" day])]
+                                        from narrations where user_id = ? and day = ?"
+                                       (user-id store) day])]
       {:day (:day r)
        :transcript (some-> (:transcript r) edn/read-string)
        :seconds (some-> (:seconds r) double)
@@ -654,7 +961,7 @@
   "The MP3 of `day`'s podcast as bytes, or nil."
   [store day]
   (with-db [conn store]
-    (:mp3 (jdbc/fetch-one conn ["select mp3 from narrations where day = ?" day]))))
+    (:mp3 (jdbc/fetch-one conn ["select mp3 from narrations where user_id = ? and day = ?" (user-id store) day]))))
 
 ;; --- trends ----------------------------------------------------------------------
 
@@ -664,13 +971,14 @@
   or \"force\", the stories by their storylines, in place of the day's
   last."
   [store day trends]
-  (with-db [conn store]
-    (jdbc/atomic conn
-      (jdbc/execute! conn ["delete from day_trends where day = ?" day])
-      (doseq [[i {:keys [thread level name direction summary stories]}] (map-indexed vector trends)]
-        (jdbc/execute! conn ["insert into day_trends (day, idx, thread, level, name, direction, summary, stories)
-                              values (?, ?, ?, ?, ?, ?, ?, ?)"
-                             day i thread (or level "trend") name direction summary (pr-str (vec stories))]))))
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (jdbc/atomic conn
+        (jdbc/execute! conn ["delete from day_trends where user_id = ? and day = ?" uid day])
+        (doseq [[i {:keys [thread level name direction summary stories]}] (map-indexed vector trends)]
+          (jdbc/execute! conn ["insert into day_trends (user_id, day, idx, thread, level, name, direction, summary, stories)
+                                values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                               uid day i thread (or level "trend") name direction summary (pr-str (vec stories))])))))
   nil)
 
 (defn trends-between
@@ -682,7 +990,8 @@
     (mapv (fn [r] {:day (:day r) :thread (:thread r) :level (or (:level r) "trend") :name (:name r)
                    :direction (:direction r)
                    :summary (:summary r) :stories (some-> (:stories r) edn/read-string)})
-          (jdbc/fetch conn ["select * from day_trends where day >= ? and day <= ? order by day, idx" from to]))))
+          (jdbc/fetch conn ["select * from day_trends where user_id = ? and day >= ? and day <= ? order by day, idx"
+                            (user-id store) from to]))))
 
 ;; --- digests -----------------------------------------------------------------------
 
@@ -691,20 +1000,21 @@
   period had."
   [store {:keys [kind period sources cited markdown model provider tldr]}]
   (let [cited (set cited)
-        k (name kind)]
+        k (name kind)
+        uid (user-id store)]
     (with-db [conn store]
       (jdbc/atomic conn
-        (jdbc/execute! conn ["delete from digest_sources where kind = ? and period = ?" k period])
-        (jdbc/execute! conn ["delete from digests where kind = ? and period = ?" k period])
-        (jdbc/execute! conn ["insert into digests (kind, period, markdown, model, provider, tldr, created_at)
-                              values (?, ?, ?, ?, ?, ?, ?)"
-                             k period markdown model provider tldr (now)])
+        (jdbc/execute! conn ["delete from digest_sources where user_id = ? and kind = ? and period = ?" uid k period])
+        (jdbc/execute! conn ["delete from digests where user_id = ? and kind = ? and period = ?" uid k period])
+        (jdbc/execute! conn ["insert into digests (user_id, kind, period, markdown, model, provider, tldr, created_at)
+                              values (?, ?, ?, ?, ?, ?, ?, ?)"
+                             uid k period markdown model provider tldr (now)])
         (doseq [{:keys [n day title url source]} sources]
-          (jdbc/execute! conn ["insert into digest_sources (kind, period, n, day, title, url, source, cited)
-                                values (?, ?, ?, ?, ?, ?, ?, ?)"
-                               k period n day title url source (if (contains? cited n) 1 0)]))
-        (unindex! conn ["digest"] (str k "/" period))
-        (index! conn (digest-docs k period markdown))))
+          (jdbc/execute! conn ["insert into digest_sources (user_id, kind, period, n, day, title, url, source, cited)
+                                values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                               uid k period n day title url source (if (contains? cited n) 1 0)]))
+        (unindex! conn uid ["digest"] (str k "/" period))
+        (index! conn uid (digest-docs k period markdown))))
     (stale! store)
     nil))
 
@@ -712,26 +1022,30 @@
   "The stored digest, or nil: {:kind :period :markdown :model :provider
   :tldr :created-at :sources}."
   [store kind period]
-  (with-db [conn store]
-    (when-let [d (jdbc/fetch-one conn ["select * from digests where kind = ? and period = ?" (name kind) period])]
-      {:kind kind
-       :period period
-       :markdown (:markdown d)
-       :model (:model d)
-       :provider (:provider d)
-       :tldr (:tldr d)
-       :created-at (:created_at d)
-       :sources (mapv (fn [r] {:n (long (:n r)) :day (:day r) :title (:title r) :url (:url r)
-                               :source (:source r) :cited? (= 1 (:cited r))})
-                      (jdbc/fetch conn ["select * from digest_sources where kind = ? and period = ? order by n"
-                                        (name kind) period]))})))
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (when-let [d (jdbc/fetch-one conn ["select * from digests where user_id = ? and kind = ? and period = ?"
+                                         uid (name kind) period])]
+        {:kind kind
+         :period period
+         :markdown (:markdown d)
+         :model (:model d)
+         :provider (:provider d)
+         :tldr (:tldr d)
+         :created-at (:created_at d)
+         :sources (mapv (fn [r] {:n (long (:n r)) :day (:day r) :title (:title r) :url (:url r)
+                                 :source (:source r) :cited? (= 1 (:cited r))})
+                        (jdbc/fetch conn ["select * from digest_sources where user_id = ? and kind = ? and period = ?
+                                           order by n"
+                                          uid (name kind) period]))}))))
 
 (defn digests
   "Every digest, newest period first, each {:kind :period :tldr}."
   [store]
   (with-db [conn store]
     (mapv (fn [r] {:kind (keyword (:kind r)) :period (:period r) :tldr (:tldr r)})
-          (jdbc/fetch conn "select kind, period, tldr from digests order by period desc, kind"))))
+          (jdbc/fetch conn ["select kind, period, tldr from digests where user_id = ? order by period desc, kind"
+                            (user-id store)]))))
 
 ;; --- projections and retrospectives -----------------------------------------------
 
@@ -739,14 +1053,15 @@
   "Store the projections read from `origin` (\"day\", \"week\" or
   \"month\") `ref`, its day or period, in place of the ones it had."
   [store origin ref projections]
-  (with-db [conn store]
-    (jdbc/atomic conn
-      (jdbc/execute! conn ["delete from projections where origin = ? and ref = ?" origin ref])
-      (doseq [{:keys [made-on claim subject story source outlet url by due]} projections]
-        (jdbc/execute! conn ["insert into projections (origin, ref, made_on, claim, subject, story, source,
-                                                       outlet, url, by_whom, due)
-                              values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                             origin ref made-on claim subject story source outlet url by due]))))
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (jdbc/atomic conn
+        (jdbc/execute! conn ["delete from projections where user_id = ? and origin = ? and ref = ?" uid origin ref])
+        (doseq [{:keys [made-on claim subject story source outlet url by due]} projections]
+          (jdbc/execute! conn ["insert into projections (user_id, origin, ref, made_on, claim, subject, story, source,
+                                                         outlet, url, by_whom, due)
+                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                               uid origin ref made-on claim subject story source outlet url by due])))))
   nil)
 
 (defn- row->projection [r]
@@ -770,9 +1085,10 @@
   (with-db [conn store]
     (mapv row->projection
           (jdbc/fetch conn ["select * from projections
-                             where (status = 'open' and due <= ?) or (checked_kind = ? and checked_period = ?)
+                             where user_id = ?
+                               and ((status = 'open' and due <= ?) or (checked_kind = ? and checked_period = ?))
                              order by made_on, id"
-                            to (name kind) period]))))
+                            (user-id store) to (name kind) period]))))
 
 (defn open-projections
   "Newsroom's own projections made before `day` that no retrospective has
@@ -781,21 +1097,22 @@
   (with-db [conn store]
     (mapv row->projection
           (jdbc/fetch conn ["select * from projections
-                             where status = 'open' and source is null and outlet is null and made_on < ?
+                             where user_id = ? and status = 'open' and source is null and outlet is null and made_on < ?
                              order by due, made_on desc, id"
-                            day]))))
+                            (user-id store) day]))))
 
 (defn save-verdicts!
   "Store what a retrospective found of each of `projections`, by :id: its
   status, closeness, reason and due day, and which retrospective it was."
   [store projections]
-  (with-db [conn store]
-    (jdbc/atomic conn
-      (doseq [{:keys [id status closeness reason due checked-kind checked-period]} projections]
-        (jdbc/execute! conn ["update projections set status = ?, closeness = ?, reason = ?, due = ?,
-                                checked_kind = ?, checked_period = ?, checked_at = ?
-                              where id = ?"
-                             status closeness reason due checked-kind checked-period (now) id]))))
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (jdbc/atomic conn
+        (doseq [{:keys [id status closeness reason due checked-kind checked-period]} projections]
+          (jdbc/execute! conn ["update projections set status = ?, closeness = ?, reason = ?, due = ?,
+                                  checked_kind = ?, checked_period = ?, checked_at = ?
+                                where id = ? and user_id = ?"
+                               status closeness reason due checked-kind checked-period (now) id uid])))))
   nil)
 
 (defn projections-checked
@@ -804,9 +1121,9 @@
   [store kind period]
   (with-db [conn store]
     (mapv row->projection
-          (jdbc/fetch conn ["select * from projections where checked_kind = ? and checked_period = ?
+          (jdbc/fetch conn ["select * from projections where user_id = ? and checked_kind = ? and checked_period = ?
                              order by made_on, id"
-                            (name kind) period]))))
+                            (user-id store) (name kind) period]))))
 
 (defn judged-projections
   "Every projection a retrospective settled, held, partly or failed, the
@@ -814,17 +1131,18 @@
   [store]
   (with-db [conn store]
     (mapv row->projection
-          (jdbc/fetch conn "select * from projections where status in ('held', 'partly', 'failed')
-                            order by checked_at desc, id desc"))))
+          (jdbc/fetch conn ["select * from projections where user_id = ? and status in ('held', 'partly', 'failed')
+                             order by checked_at desc, id desc"
+                            (user-id store)]))))
 
 (defn save-retrospective!
   "Store a retrospective, {:kind :period :summary :lessons :model
   :provider}, replacing the period's last."
   [store {:keys [kind period summary lessons model provider]}]
   (with-db [conn store]
-    (jdbc/execute! conn ["insert or replace into retrospectives (kind, period, summary, lessons, model, provider, created_at)
-                          values (?, ?, ?, ?, ?, ?, ?)"
-                         (name kind) period summary (pr-str (vec lessons)) model provider (now)]))
+    (jdbc/execute! conn ["insert or replace into retrospectives (user_id, kind, period, summary, lessons, model, provider, created_at)
+                          values (?, ?, ?, ?, ?, ?, ?, ?)"
+                         (user-id store) (name kind) period summary (pr-str (vec lessons)) model provider (now)]))
   nil)
 
 (defn- row->retrospective [r]
@@ -836,7 +1154,8 @@
   "The retrospective of `kind` and `period`, or nil."
   [store kind period]
   (with-db [conn store]
-    (some-> (jdbc/fetch-one conn ["select * from retrospectives where kind = ? and period = ?" (name kind) period])
+    (some-> (jdbc/fetch-one conn ["select * from retrospectives where user_id = ? and kind = ? and period = ?"
+                                  (user-id store) (name kind) period])
             row->retrospective)))
 
 (defn latest-retrospective
@@ -844,7 +1163,9 @@
   nil."
   [store]
   (with-db [conn store]
-    (some-> (jdbc/fetch-one conn "select * from retrospectives order by created_at desc, rowid desc limit 1")
+    (some-> (jdbc/fetch-one conn ["select * from retrospectives where user_id = ?
+                                   order by created_at desc, rowid desc limit 1"
+                                  (user-id store)])
             row->retrospective)))
 
 ;; --- settings ----------------------------------------------------------------------
@@ -855,23 +1176,26 @@
   (with-db [conn store]
     (into {}
           (map (fn [r] [(keyword (:key r)) (edn/read-string (:value r))]))
-          (jdbc/fetch conn "select key, value from settings"))))
+          (jdbc/fetch conn ["select key, value from settings where user_id = ?" (user-id store)]))))
 
 (defn save-settings!
   "Store `settings`, {key value}, in place of every setting there was."
   [store settings]
-  (with-db [conn store]
-    (jdbc/atomic conn
-      (jdbc/execute! conn "delete from settings")
-      (doseq [[k v] settings]
-        (jdbc/execute! conn ["insert into settings (key, value) values (?, ?)" (name k) (pr-str v)]))))
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (jdbc/atomic conn
+        (jdbc/execute! conn ["delete from settings where user_id = ?" uid])
+        (doseq [[k v] settings]
+          (jdbc/execute! conn ["insert into settings (user_id, key, value) values (?, ?, ?)" uid (name k) (pr-str v)])))))
   nil)
 
 ;; --- search ------------------------------------------------------------------------
 
 (defn vocabulary
   "Every word the index has as written, {word documents}, which misspelled
-  words are matched against; read once until the index changes."
+  words are matched against; read once until the index changes. It is
+  every reader's words, which only guess at what a word was meant to be:
+  what a search matches is still the reader's own."
   [store]
   (with-db [conn store]
     (or @(:vocab store)
@@ -893,13 +1217,13 @@
           (jdbc/fetch conn (cond-> [(str "select d.kind, d.ref, d.day, d.href, d.url, d.cited, d.title,
                                                  snippet(search_fts, 1, char(2), char(3), '…', 24) as snippet
                                           from search_fts join search_docs d on d.id = search_fts.rowid
-                                          where search_fts match ?"
+                                          where search_fts match ? and d.user_id = ?"
                                          (when kind " and d.kind = ?")
                                          " order by "
                                          (when (= :newest sort) "d.day desc, ")
                                          "bm25(search_fts, 4.0, 1.0) * (case when d.cited = 1 then 1.25 else 1.0 end)
                                           limit ? offset ?")
-                                    expr]
+                                    expr (user-id store)]
                              kind (conj (name kind))
                              true (conj limit offset))))))
 
@@ -911,5 +1235,5 @@
           (map (fn [r] [(keyword (:kind r)) (long (:n r))]))
           (jdbc/fetch conn ["select d.kind, count(*) as n
                              from search_fts join search_docs d on d.id = search_fts.rowid
-                             where search_fts match ? group by d.kind"
-                            expr]))))
+                             where search_fts match ? and d.user_id = ? group by d.kind"
+                            expr (user-id store)]))))
