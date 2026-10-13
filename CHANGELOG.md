@@ -45,12 +45,13 @@
   registry, the built-ins included, and `plugin/defprovider` adds one. The
   config page lists them with the key each reads and whether it's found,
   and each role is picked from a dropdown of them and the aliases declared.
-- **Running a day again reuses the models' answers** to whatever it asks
-  the same way as before, for `:reply-cache-hours` (48). An answer is kept
-  under exactly what was asked, so any change to the reports, the notes, a
-  prompt or the model asks again, and a run that failed late costs only
-  what's left when it's run again. The run button's Ask afresh skips them
-  (#8).
+- **A day can be analysed again without paying for it twice.** The
+  models' answers are kept for `:reply-cache-hours` (48) under exactly
+  what was asked, and so is the news each source gave. Analyse again, by
+  the run button once the day has run, reads the news the last run read,
+  its searches included, and asks only what came out different, so a run
+  that failed late, or one after a prompt was edited, costs only the steps
+  that changed. Gathering again reads the sources as before (#8).
 - **A provider can be tried before it's saved.** A test button on each
   built-in and each entry under Your providers asks it a one-word question
   as a run would, and says which model answered, or why it couldn't, a

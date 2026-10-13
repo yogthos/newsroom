@@ -106,8 +106,9 @@
     :fields [{:key :reply-cache-hours :type :int :min 0 :default 48
               :doc (str "How long the models' answers are kept to reuse, in hours: a run that asks what an earlier "
                         "one asked, as running a day again does for every step whose reports and notes came out "
-                        "the same, takes the answer it got rather than paying for it again. 0 asks every time, "
-                        "and the run button's \"ask afresh\" does for one run.")}
+                        "the same, takes the answer it got rather than paying for it again, and Analyse again "
+                        "reads the news the day's last run read, kept as long, so only what changed is asked. "
+                        "0 asks every time.")}
              {:key :group-stories :type :boolean :default true
               :doc (str "Before the briefing, the model sorts the day's reports into stories, the reports on one "
                         "event from different sides together, and gives each an importance, a status and the people, "
