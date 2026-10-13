@@ -84,3 +84,17 @@
     (is (str/includes? block "- **Kospi** (organisation): 2 days, new; Kospi falls further"))
     (is (str/includes? block "- **Federal Reserve** (organisation): 1 day, steady; Fed holds"))
     (is (str/includes? block "Gone quiet since the period before: OPEC"))))
+
+(deftest an-entity-in-much-of-the-day-is-a-hub-not-a-tie
+  (let [stories (vec (concat (for [i (range 10)]
+                               {:story (str "c" i) :title (str "China story " i) :importance 6
+                                :entities (e "China") :ns [(inc i)]})
+                             [{:story "k1" :title "Kospi plunges" :importance 9 :entities (e "Samsung") :ns [20]}
+                              {:story "k2" :title "Chip selloff" :importance 8 :entities (e "Samsung") :ns [21]}]))
+        web (entities/day-web (entities/mentions "2026-10-13" stories #{}) stories)
+        block (entities/web-block web {} nil)]
+    (is (= ["China" "Samsung"] (map :name web)))
+    (is (= {:hub true :count 10 :stories []} (select-keys (first web) [:hub :count :stories])))
+    (is (str/includes? block "In much of the day's news: China (10 stories)"))
+    (is (str/includes? block "- **Samsung** (organisation): Kospi plunges [20]; Chip selloff [21]"))
+    (is (not (str/includes? block "China story")))))

@@ -89,23 +89,42 @@
   "The most entities the day's web shows."
   12)
 
+(def ^:private hub-stories
+  "In more of the day's stories than this, or than one in thirty of them
+  on a busy day, an entity, a big country most often, is in so much of the
+  news that it ties nothing in particular together: it's named with its
+  count, not its stories."
+  8)
+
 (defn day-web
   "The entities that tie more than one of the day's `stories` the analyst
-  can cite together, the heaviest first: {:name :kind :weight :stories
-  [{:title :ns}]}, :weight from all the day's `mentions`."
+  can cite together: {:name :kind :weight :stories [{:title :ns}]},
+  :weight from all the day's `mentions`. They come most telling first:
+  the importance of the stories one ties over how many of the day's
+  stories it's in, so a company that links a market's fall to a selloff
+  comes before a country that's in everything. One in more than its share
+  of the day (see hub-stories) is a hub, {:hub true :count}, its stories
+  not listed, and doesn't count against the web-size the others fill."
   [mentions stories]
   (let [weights (prominence mentions)
+        hub-over (max hub-stories (quot (count stories) 30))
         citable (filter #(seq (:ns %)) stories)
-        in (fn [k] (filter (fn [s] (some #(= k (entity-key (:name %))) (:entities s))) citable))]
-    (->> weights
-         (keep (fn [[k {:keys [name kind weight]}]]
-                 (let [ss (in k)]
-                   (when (< 1 (count ss))
-                     {:name name :kind kind :weight weight
-                      :stories (mapv #(select-keys % [:title :ns]) ss)}))))
-         (sort-by (juxt (comp - :weight) :name))
-         (take web-size)
-         vec)))
+        in (fn [k] (filter (fn [s] (some #(= k (entity-key (:name %))) (:entities s))) citable))
+        tied (keep (fn [[k {:keys [name kind weight] all :stories}]]
+                     (let [ss (in k)]
+                       (cond
+                         (< hub-over (count all))
+                         {:name name :kind kind :weight weight :hub true :count (count all) :stories []}
+                         (< 1 (count ss))
+                         {:name name :kind kind :weight weight
+                          :telling (/ (reduce + (map #(or (:importance %) 5) ss)) (double (count all)))
+                          :stories (mapv #(select-keys % [:title :ns]) ss)})))
+                   weights)]
+    (vec (concat (sort-by (juxt (comp - :count) :name) (filter :hub tied))
+                 (->> (remove :hub tied)
+                      (sort-by (juxt (comp - :telling) (comp - :weight) :name))
+                      (take web-size)
+                      (map #(dissoc % :telling)))))))
 
 ;; --- what changed ------------------------------------------------------------------
 
@@ -183,13 +202,23 @@
   the last briefing, on `previous-day`, as markdown; nil when there is
   nothing to say."
   [web {:keys [new rising fading links]} previous-day]
-  (let [web-part (when (seq web)
-                   (str "The people, organisations, places and markets in more than one of today's stories, "
-                        "with the stories they're in, to see what the day's news gathers around. Sharing an "
-                        "entity alone doesn't link two stories; what one does to the other does:\n\n"
-                        (str/join "\n" (for [{:keys [name kind stories]} web]
-                                         (str "- **" name "**" (kind-text kind) ": "
-                                              (str/join "; " (map #(str (:title %) " " (cites (:ns %))) stories)))))))
+  (let [hubs (filter :hub web)
+        ties (remove :hub web)
+        web-part (when (seq web)
+                   (str/join "\n\n"
+                             (remove nil?
+                                     [(when (seq ties)
+                                        (str "The people, organisations, places and markets in more than one of today's "
+                                             "stories, with the stories they're in, to see what the day's news gathers "
+                                             "around. Sharing an entity alone doesn't link two stories; what one does to "
+                                             "the other does:\n\n"
+                                             (str/join "\n" (for [{:keys [name kind stories]} ties]
+                                                              (str "- **" name "**" (kind-text kind) ": "
+                                                                   (str/join "; " (map #(str (:title %) " " (cites (:ns %)))
+                                                                                       stories)))))))
+                                      (when (seq hubs)
+                                        (str "In much of the day's news: "
+                                             (str/join ", " (map #(str (:name %) " (" (:count %) " stories)") hubs))))])))
         lines (remove nil? [(when (seq new) (str "New to the news: " (names new)))
                             (when (seq rising)
                               (str "In more of the news: "
