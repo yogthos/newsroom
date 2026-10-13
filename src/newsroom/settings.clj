@@ -50,12 +50,16 @@
     :fields [{:key :lookback-days :type :int :min 0 :default 1
               :doc (str "Items dated more than this many days before the briefing's day are skipped. "
                         "Undated items are always kept, and so are items dated the day after.")}
-             {:key :max-items-per-source :type :int :min 1 :default 12
-              :doc (str "The most items taken from one outlet in a source. A source that reads many "
-                        "outlets, like a feed reader, gives each its own share.")}
              {:key :max-items :type :int :min 1 :default 180
-              :doc (str "The most items in all. The most widely carried stories are kept, and among "
-                        "equals outlets are taken in turn.")}
+              :doc (str "The most reports the analyst is given. Every report of the day is sorted into its "
+                        "story first, and the day is cut a story at a time, the heaviest kept: the most "
+                        "important and most widely carried.")}
+             {:key :reports-per-story :type :int :min 1 :default 6
+              :doc (str "The most reports one story brings to the analyst. The rest are credited to it, so "
+                        "they count as told and their outlets as carrying it.")}
+             {:key :must-cover-importance :type :int :nullable? true :min 1 :max 10 :default 8
+              :doc (str "A story the desk rates this important, 1 to 10, is never cut for space, and a "
+                        "briefing that leaves one out is asked to cover it. Blank lets every story be cut.")}
              {:key :seen-days :type :int :min 0 :default 3
               :doc (str "A story told in any of this many past briefings is left out of today's, so one "
                         "dropped for space yesterday is not retold today.")}
@@ -263,6 +267,12 @@
 (def setting-keys
   "Every key the settings have."
   (into scalar-keys [:sources :providers :roles :plugins]))
+
+(def retired-keys
+  "Settings newsroom no longer has, passed over where they are still found:
+  :max-items-per-source cut an outlet's items by their place in its feed,
+  before anything weighed them."
+  #{:max-items-per-source})
 
 ;; --- form names --------------------------------------------------------------------
 
@@ -695,7 +705,8 @@
       (::error m) {:settings {} :errors {"EDN" (str "can't be read: " (::error m))}}
       (not (map? m)) {:settings {} :errors {"EDN" "has to be a map of settings, {:key value ...}"}}
       :else
-      (let [errors (schema-errors m)]
+      (let [m (apply dissoc m retired-keys)
+            errors (schema-errors m)]
         (if (seq errors)
           {:settings {} :errors errors}
           (let [known (select-keys m setting-keys)

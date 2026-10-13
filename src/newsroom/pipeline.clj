@@ -295,20 +295,19 @@
     (map groups (distinct (map :source items)))))
 
 (defn day-items
-  "The items to analyse from each source's result: those published from
-  the lookback, the result's :lookback-days or the config's, to the day
-  after (an outlet ahead of the local timezone has already dated today's
-  news tomorrow), at most :max-items-per-source from each outlet in it,
-  interleaved. A source that reads many outlets, like a feed reader or a
-  search credited to outlets, gives each its own share."
+  "The items to analyse from each source's result: every one published
+  from the lookback, the result's :lookback-days or the config's, to the
+  day after (an outlet ahead of the local timezone has already dated
+  today's news tomorrow), the outlets taken in turn. None is cut by its
+  place in its feed: the day is cut a story at a time once every report is
+  in its story (see trends/select-stories)."
   [results config day]
-  (let [to (plus-days day 1)
-        cap (:max-items-per-source config 12)]
+  (let [to (plus-days day 1)]
     (round-robin
      (for [{:keys [items lookback-days]} results
            :let [from (minus-days day (or lookback-days (:lookback-days config 1)))]
            outlet (by-outlet (feed/recent items from to))]
-       (take cap outlet)))))
+       outlet))))
 
 ;; --- the run -----------------------------------------------------------------------
 
@@ -1120,8 +1119,7 @@
                                          " in the news for " (apply max (map :days followed)) " days")}))
             ;; a story that starts today is named by the day and number of
             ;; its first source
-            ranked (-> (->> ranked (take (:max-items config 80)) news/cite)
-                       (analysis/story-ids day))
+            ranked (-> (trends/select-stories ranked config) news/cite (analysis/story-ids day))
             ;; a story the last briefing cited is flagged, so today's says
             ;; only what is new in it
             covered (set (keep :story (:cited earlier)))

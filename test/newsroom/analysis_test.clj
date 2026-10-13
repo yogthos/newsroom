@@ -74,9 +74,22 @@
                                     (g 4 "G3" :importance 10)]
                                    [] "2026-09-30" 2)]
     (is (= [4 2 3 1] (map #(parse-long (subs (:title %) 7)) ranked))
-        "two outlets beat one, and an importance of 10 doubles a story's weight where 4 cuts it")
+        "importance counts most, and two outlets add to it")
     (is (= [1.0 2.0 2.0 1.0] (map :weight ranked)))
     (is (= [1 2 2 1] (map :group-outlets ranked)))))
+
+(deftest the-day-is-cut-a-story-at-a-time
+  (let [g (fn [i group & {:as more}] (merge (item i :group group) more))
+        ranked [(g 1 "G1") (g 2 "G1") (g 3 "G1") (g 4 "G2") (g 5 "G3") (g 6 "G3") (g 7 "G4" :importance 9)]
+        picked (trends/select-stories ranked {:max-items 4 :reports-per-story 2 :must-cover-importance 8})]
+    (is (= [1 2 4 5 7] (map #(parse-long (subs (:title %) 7)) picked))
+        "two reports a story while they fit, the last that fits cut short, and a story too important to cut kept")
+    (is (= ["Outlet 3"] (map :source (:also (first picked))))
+        "a report left out of its story is still credited to it")
+    (is (= ["Outlet 6"] (map :source (:also (nth picked 3)))))
+    (testing "an item no story claims is a story of its own"
+      (is (= [1 2] (map #(parse-long (subs (:title %) 7))
+                        (trends/select-stories [(item 1) (item 2) (item 3)] {:max-items 2 :reports-per-story 6})))))))
 
 ;; --- dossiers ----------------------------------------------------------------------
 
