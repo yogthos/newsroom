@@ -7,6 +7,7 @@
             [newsroom.auth :as auth]
             [newsroom.config :as config]
             [newsroom.core :as core]
+            [newsroom.pipeline :as pipeline]
             [newsroom.settings :as settings]
             [newsroom.store :as store]
             [ring.util.codec :as codec]))
@@ -56,7 +57,14 @@
       (is (= "/stories" (get-in back [:headers "Location"])) "back to where the reader was going")
       (second (re-find (re-pattern (str auth/cookie-name "=([^;]+)")) (get-in back [:headers "Set-Cookie"]))))))
 
-(deftest each-reader-signs-in-to-their-own-newsroom
+(defn- no-schedules
+  "`f` with the readers' schedules kept from starting: a schedule whose
+  time has passed today starts a real run, which would outlive the test's
+  store."
+  [f]
+  (with-redefs [pipeline/start-schedule! (constantly nil)] (f)))
+
+(defn- each-reader-signs-in []
   (let [st (store/open "sqlite::memory:")]
     (auth/forget!)
     (reset! core/system {:config (config/effective file {}) :store st :file file})
@@ -95,9 +103,14 @@
               (is (str/includes? (get-in resp [:headers "Set-Cookie"]) "Max-Age=0"))))
           (is (= 302 (:status (get-page "/day/2026-09-30" ann))))))
       (finally
-        (doseq [{:keys [schedule]} (vals (:users @core/system)) :when schedule] (schedule))
+        (doseq [uid (keys (:users @core/system))]
+          (pipeline/cancel-run! uid)
+          (is (not (pipeline/running? uid)) "no run outlives the test"))
         (reset! core/system nil)
         (store/close st)))))
+
+(deftest each-reader-signs-in-to-their-own-newsroom
+  (no-schedules #(each-reader-signs-in)))
 
 (deftest a-sign-in-the-server-refuses-is-turned-away
   (let [st (store/open "sqlite::memory:")]
