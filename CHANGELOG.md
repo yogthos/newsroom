@@ -45,6 +45,12 @@
   registry, the built-ins included, and `plugin/defprovider` adds one. The
   config page lists them with the key each reads and whether it's found,
   and each role is picked from a dropdown of them and the aliases declared.
+- **Running a day again reuses the models' answers** to whatever it asks
+  the same way as before, for `:reply-cache-hours` (48). An answer is kept
+  under exactly what was asked, so any change to the reports, the notes, a
+  prompt or the model asks again, and a run that failed late costs only
+  what's left when it's run again. The run button's Ask afresh skips them
+  (#8).
 - **A provider can be tried before it's saved.** A test button on each
   built-in and each entry under Your providers asks it a one-word question
   as a run would, and says which model answered, or why it couldn't, a
