@@ -730,7 +730,7 @@
              [:aside#sidebar.sidebar (ds/init-opts {:selector "#sidebar"})
               (fragment st current "#sidebar")]
              (if-let [cfg (:config current)]
-              [:main#article (config-page/article cfg)]
+              [:main#article (config-page/article (assoc cfg :config (current-config)))]
               [:main#article (dissoc (ds/init-opts {:selector "#article"}) :data-signals)
                (fragment st current "#article")])]
             (when-not (:config current) (topics-pane))

@@ -469,3 +469,27 @@
       (is (str/includes? mine "This is the default."))
       (is (str/includes? mine "Blank, so the default is used.")))
     (is (not (str/includes? (page {}) "data-cfg-reset=\"max-items\"")) "only prompts reset")))
+
+(deftest each-role-picks-from-the-registered-providers
+  (let [tree (settings/to-form (assoc (defaults) :providers {:fast {:type :openrouter :model "z-ai/glm-5.3"}}
+                                      :roles {:analyst :fast :desk :retired}))
+        page (str (h/html (config-page/article {:tree tree})))
+        role (fn [r] (re-find (re-pattern (str "(?s)<select[^>]*name=\"roles\\." r "\"[^>]*>.*?</select>")) page))]
+    (testing "a role is a choice of the providers there are, the ones declared on the page among them"
+      (is (re-find #"data-cfg-role" (role "analyst")))
+      (is (str/includes? (role "analyst") "<option selected=\"selected\" value=\"fast\">fast</option>")
+          "an alias declared on the page")
+      (is (str/includes? (role "analyst") "value=\"openrouter\""))
+      (is (str/includes? (role "analyst") "value=\"zai\"")))
+    (testing "a role naming a provider that's gone keeps it, to be seen and changed"
+      (is (str/includes? (role "desk") "value=\"retired\"")))
+    (testing "the registered providers are listed with what each needs"
+      (is (str/includes? page "OPENROUTER_API_KEY"))
+      (is (str/includes? page "deepseek/deepseek-v4-flash")))
+    (testing "and whether the reader has its key: with several readers, only one the server shares"
+      (with-redefs [config/secret (fn [k] (when (= k "DEEPSEEK_API_KEY") "sk"))]
+        (let [shown (fn [cfg] (str (h/html (config-page/article {:tree tree :config cfg}))))]
+          (is (str/includes? (shown {}) "<code>DEEPSEEK_API_KEY</code> (set)"))
+          (is (str/includes? (shown {:single-user false}) "<code>DEEPSEEK_API_KEY</code> (not set)"))
+          (is (str/includes? (shown {:single-user false :shared-secrets ["DEEPSEEK_API_KEY"]})
+                             "<code>DEEPSEEK_API_KEY</code> (set)")))))))

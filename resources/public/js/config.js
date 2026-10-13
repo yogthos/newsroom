@@ -110,3 +110,39 @@ document.addEventListener('click', (e) => {
   const state = button.parentElement.querySelector('.reset-state');
   if (state) state.textContent = ' Reset to the default. Save to keep it, or discard changes to undo.';
 });
+
+// Each role is a choice of the providers there are: the built-ins, named
+// on the roles' container, and the aliases the Providers entries declare,
+// typed or removed just now included. What a role has picked stays picked,
+// a name that's gone among them, so it can be seen and changed.
+function refreshRoles() {
+  const roles = document.querySelector('[data-cfg-roles]');
+  if (!roles) return;
+  const builtins = roles.dataset.cfgRoles.split(' ').filter(Boolean);
+  const aliases = [...document.querySelectorAll('input[name^="providers."][name$="._alias"]')]
+    .filter((el) => !el.closest('template'))
+    .map((el) => el.value.trim())
+    .filter(Boolean);
+  const names = [...new Set([...builtins, ...aliases])];
+  for (const select of roles.querySelectorAll('select[data-cfg-role]')) {
+    const picked = select.value;
+    const options = ['', ...names];
+    if (picked && !names.includes(picked)) options.push(picked);
+    select.replaceChildren(...options.map((n) => {
+      const o = document.createElement('option');
+      o.value = n;
+      o.textContent = n || '—';
+      o.selected = n === picked;
+      return o;
+    }));
+  }
+}
+
+document.addEventListener('input', (e) => {
+  const name = e.target.getAttribute && e.target.getAttribute('name');
+  if (name && /^providers\.[^.]+\._alias$/.test(name)) refreshRoles();
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-cfg-remove]')) setTimeout(refreshRoles, 0);
+});

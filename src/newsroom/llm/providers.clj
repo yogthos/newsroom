@@ -19,7 +19,8 @@
   :reasoning-effort, :features).
 
   With no :roles, the first built-in whose key is in the environment serves
-  (DeepSeek, GLM, OpenAI), and a local endpoint when none is.
+  (DeepSeek, GLM, Z.ai, OpenRouter, OpenAI), and a local endpoint when none
+  is. The built-ins, and any a plugin adds, are in newsroom.llm.provider.
 
   With several readers, the settings are a reader's own, so a key read from
   the environment or secrets.edn has to be one config.edn shares, and it
@@ -27,32 +28,9 @@
   DEEPSEEK_API_KEY at DeepSeek's own endpoint, and nowhere else. A key
   typed into the settings is the reader's to send where they like."
   (:require [clojure.string :as str]
-            [newsroom.config :as config]))
-
-(def presets
-  {:deepseek {:base-url "https://api.deepseek.com/v1"
-              :features #{:thinking-toggle :reasoning-effort :stream}
-              :key-env  "DEEPSEEK_API_KEY"
-              :model    "deepseek-v4-flash"}
-   ;; the coding endpoint, the one a GLM coding plan key is good for
-   :glm      {:base-url "https://open.bigmodel.cn/api/coding/paas/v4"
-              :features #{:reasoning-effort :stream}
-              :key-env  "ZHIPU_API_KEY"
-              :model    "glm-5.3"}
-   :openai   {:base-url "https://api.openai.com/v1"
-              :features #{:reasoning-effort :stream}
-              :key-env  "OPENAI_API_KEY"
-              :model    "gpt-4o"}
-   ;; llama-server / vLLM / LM Studio
-   :local    {:base-url "http://127.0.0.1:8080/v1"
-              :key-env  nil
-              :model    "local-model"
-              :features #{:thinking-toggle :stream}}
-   ;; Ollama's native api, so no /v1 suffix
-   :ollama   {:base-url "http://127.0.0.1:11434"
-              :key-env  nil
-              :model    "qwen3"
-              :features #{}}})
+            [newsroom.config :as config]
+            [newsroom.llm.builtin]
+            [newsroom.llm.provider :as provider]))
 
 (def default-llm
   "What every provider runs with unless its entry says otherwise. A briefing
@@ -75,7 +53,7 @@
   key it is, at that built-in's own endpoint."
   [config where v llm]
   (when-not (config/single-user? config)
-    (let [preset (presets (:type llm))]
+    (let [preset (provider/preset (:type llm))]
       (when-not (and (= v (:key-env preset)) (= (:base-url llm) (:base-url preset)))
         (ex-info (str where " can't use ${" v "}: a key the server shares is only sent to its own provider's "
                       "endpoint, so type the key in to use it elsewhere")
@@ -102,11 +80,11 @@
 (defn provider-names
   "Every provider `config` can select: the built-ins and its declared aliases."
   [config]
-  (distinct (concat (keys presets) (keep as-key (keys (:providers config))))))
+  (distinct (concat (provider/ids) (keep as-key (keys (:providers config))))))
 
 (defn- detect-provider [config]
-  (or (first (for [p [:deepseek :glm :openai]
-                   :when (env config (:key-env (presets p)))]
+  (or (first (for [p (provider/detect-order)
+                   :when (env config (:key-env (provider/preset p)))]
                p))
       :local))
 
@@ -117,11 +95,11 @@
   [config alias]
   (let [alias (as-key alias)
         entry (declared-entry config alias)
-        type (as-key (or (:type entry) (when (presets alias) alias)))
-        known (sort (map name (keys presets)))
+        type (as-key (or (:type entry) (when (provider/preset alias) alias)))
+        known (map name (provider/ids))
         where (str "provider " (some-> alias name))]
     (cond
-      (and (nil? entry) (nil? (presets alias)))
+      (and (nil? entry) (nil? (provider/preset alias)))
       (throw (ex-info (str "unknown provider " (some-> alias name)
                            "; built-in: " (str/join ", " known))
                       {:provider alias :known (provider-names config)}))
@@ -130,17 +108,17 @@
       (throw (ex-info (str where " needs a :type, one of " (str/join ", " known))
                       {:provider alias}))
 
-      (nil? (presets type))
+      (nil? (provider/preset type))
       (throw (ex-info (str where " has :type " (name type)
                            ", which no adapter serves; one of " (str/join ", " known))
                       {:provider alias :type type}))
 
       :else
-      (let [preset (presets type)
+      (let [preset (provider/preset type)
             key-env (or (:api-key-env entry) (:key-env preset))
             llm (-> (merge default-llm
                            (dissoc preset :key-env)
-                           (dissoc (or entry {}) :type :api-key-env))
+                           (dissoc (or entry {}) :type :api-key-env :headers))
                     (assoc :type type :alias alias))
             allowed #(shared-key-error config where % llm)
             env-key (when (and key-env (not (:api-key entry)) (env config key-env))
@@ -149,8 +127,8 @@
         (cond-> llm
           (and key-env (not (:api-key entry))) (assoc :api-key env-key)
           (:api-key entry) (update :api-key #(expand-var config where % allowed))
-          (:headers entry) (update :headers
-                                   #(into {} (for [[k v] %] [k (expand-var config where v allowed)]))))))))
+          (:headers entry) (update :headers merge
+                                   (into {} (for [[k v] (:headers entry)] [k (expand-var config where v allowed)]))))))))
 
 (defn role-llm
   "The llm config serving `role`: the alias :roles assigns it, else the

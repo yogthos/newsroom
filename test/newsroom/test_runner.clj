@@ -9,6 +9,8 @@
             [newsroom.embed-test]
             [newsroom.entities-test]
             [newsroom.feed-test]
+            [newsroom.json-test]
+            [newsroom.llm-provider-test]
             [newsroom.llm-stream-test]
             [newsroom.markdown-test]
             [newsroom.narration-test]

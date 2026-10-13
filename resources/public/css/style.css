@@ -316,3 +316,8 @@ fieldset.plugin legend { font-weight: 700; padding: 0 6px; }
 .topics-ask-actions button[type=submit] { flex: 1; }
 @media (max-width: 1100px) { .topics-open main { padding-right: clamp(20px, 6vw, 80px); } }
 @media (max-width: 800px) { .topic-add { left: 2px !important; } }
+
+/* the registered providers, on the config page */
+table.providers { border-collapse: collapse; margin: 0.5rem 0 1rem; font-size: 0.9em; width: 100%; }
+table.providers th, table.providers td { text-align: left; padding: 0.25rem 0.75rem 0.25rem 0; border-bottom: 1px solid var(--rule, #ddd); }
+table.providers th { font-weight: 600; }
