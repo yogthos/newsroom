@@ -1405,3 +1405,58 @@
                                             :story "s1" :title "Kospi plunges" :importance 9 :cited true}])
     (m/? (pipeline/digest-task c :week "2026-W40"))
     (is (str/includes? (first @prompts) "- **Kospi** (market): 1 day, new; Kospi plunges"))))
+
+(defn- notes-run
+  "Run a day whose notes call is cut off unless asked with less thinking,
+  on `provider`; the store and the requests the notes call got."
+  [provider]
+  (let [asked (atom [])
+        c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (if (str/includes? p "You keep the running notes")
+                         (do (swap! asked conj req)
+                             (if (= "low" (:reasoning-effort req))
+                               {:content (str "{\"storylines\": [{\"id\": \"2026-09-30/1\", \"title\": \"Story one\","
+                                              " \"summary\": \"S.\", \"status\": \"developing\","
+                                              " \"facts\": [{\"day\": \"2026-09-30\", \"fact\": \"It began.\", \"cite\": 1}]}]}")
+                                :finish-reason "stop"}
+                               {:content "" :reasoning "a lot" :finish-reason "length"}))
+                         {:content "# Today\n\nOne [1]." :model "fake"}))))
+              (update :config merge {:story-notes 12 :providers provider :roles {:analyst :thinker}}))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    [(:store c) @asked]))
+
+(deftest an-answer-cut-off-by-its-thinking-is-asked-again-with-less
+  (let [[st asked] (notes-run {:thinker {:type :local :features #{:reasoning-effort}}})]
+    (is (= [nil "low"] (map :reasoning-effort asked)))
+    (is (= "Story one" (:title (get (store/notes st ["2026-09-30/1"]) "2026-09-30/1"))))
+    (is (some #(str/includes? (:text %) "came back cut off, so it was asked again with less thinking")
+              (:events @pipeline/status)))))
+
+(deftest a-cut-off-answer-is-said-to-be-cut-off
+  (let [[_ asked] (notes-run {:thinker {:type :local}})]
+    (is (= 1 (count asked)) "a provider whose thinking can't be turned down isn't asked again")
+    (is (some #(str/includes? (:text %) "The notes weren't updated: the answer was cut off")
+              (:events @pipeline/status)))))
+
+(deftest an-editor-that-runs-out-looks-over-fewer-stories
+  (with-redefs [analysis/sorting-batch 15]
+    (let [edits (atom [])
+          c (-> (ctx [{:type ::busy :name "Economic Times"}]
+                     (fn [_ req]
+                       (let [p (-> req :messages first :content)]
+                         {:content (cond
+                                     (str/includes? p "You sort the reports") (sorting-answer p (constantly 3))
+                                     (str/includes? p "You edit the day's")
+                                     (do (swap! edits conj (count (re-seq #"(?m)^G\d+ \(" p)))
+                                         (if (= 1 (count @edits))
+                                           "{\"same\": [[\"G1\", "
+                                           (let [k (second (re-find #"(?m)^(G\d+) \(" p))]
+                                             (str "{\"same\": [], \"importance\": {\"" k "\": 9}}"))))
+                                     :else "# Today\n\nMarkets [1].")
+                          :model "fake"})))
+                (update :config merge {:group-stories true :max-items 10}))]
+      (m/? (pipeline/run-task c "2026-09-30"))
+      (is (= [40 20] @edits) "the heaviest half of the stories, asked again")
+      (is (some #(str/includes? (:text %) "The editor re-rated 1 story") (:events @pipeline/status))))))

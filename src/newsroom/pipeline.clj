@@ -603,17 +603,39 @@
              (log! run-id {:text (str what " failed: " (or (ex-message e) (str e))) :level :error})
              nil)))))
 
+(defn- effort
+  "The request opts that keep `llm-config`'s thinking to `level`, where its
+  provider lets it be set."
+  [llm-config level]
+  (if (contains? (:features llm-config) :reasoning-effort) {:reasoning-effort level} {}))
+
+(defn- cut-off? [reply]
+  (or (= "length" (:finish-reason reply)) (str/blank? (:content reply))))
+
+(defn- ask-reply
+  "Task: the model's reply to `prompt`, not streamed, `opts` merged into
+  the request. A reply cut off before its answer was done, which is a
+  model thinking its whole token budget away, is asked for once more with
+  less thinking, where the provider lets it be turned down."
+  [{:keys [run-id] :as ctx} llm-config prompt opts]
+  (m/sp
+    (let [chat (or (:chat ctx) llm/chat)
+          call #(m/? (m/via m/blk (chat llm-config (merge {:messages [{:role "user" :content prompt}]
+                                                           :on-delta (fn [_])}
+                                                          %))))
+          reply (call opts)
+          less (effort llm-config "low")]
+      (if (and (cut-off? reply) (seq less) (not= (:reasoning-effort opts) (:reasoning-effort less)))
+        (do (log! run-id {:text (str "An answer from " (name (:alias llm-config)) " came back cut off, "
+                                     "so it was asked again with less thinking")})
+            (call (merge opts less)))
+        reply))))
+
 (defn- ask
-  "Task: the model's answer to `prompt`, not streamed, `opts` merged into
-  the request."
+  "Task: the model's answer to `prompt` (see ask-reply)."
   ([ctx llm-config prompt] (ask ctx llm-config prompt {}))
   ([ctx llm-config prompt opts]
-   (m/sp
-     (let [chat (or (:chat ctx) llm/chat)
-           reply (m/? (m/via m/blk (chat llm-config (merge {:messages [{:role "user" :content prompt}]
-                                                            :on-delta (fn [_])}
-                                                           opts))))]
-       (str (:content reply))))))
+   (m/sp (str (:content (m/? (ask-reply ctx llm-config prompt opts)))))))
 
 (defn- desk-llm
   "The model the desk works with: the :desk role's when the config gives
@@ -625,11 +647,7 @@
 
 (defn- dated [day] (str (sources/long-date day) " (" day ")"))
 
-(defn- effort
-  "The request opts that keep `llm-config`'s thinking to `level`, where its
-  provider lets it be set."
-  [llm-config level]
-  (if (contains? (:features llm-config) :reasoning-effort) {:reasoning-effort level} {}))
+
 
 (def ^:private sorting-wave
   "How many sorting calls go at once."
@@ -672,8 +690,9 @@
   "How many of the day's heaviest stories the editor looks over: well over
   what :max-items has room for, so a story underrated by its batch can
   still climb into the briefing, and few enough for one call to weigh
-  together with a little thinking."
-  200)
+  together with a little thinking. An answer that can't be read is asked
+  for again over the heaviest half."
+  150)
 
 (defn- review-task
   "Task: the `ranked` items, sorted into stories, once the editor has
@@ -684,13 +703,22 @@
   [{:keys [config run-id] :as ctx} day ranked]
   (m/sp
     (let [llm-config (desk-llm config)
-          keys (take review-pool (distinct (map :group ranked)))
-          pool (filterv (comp (set keys) :group) ranked)
-          _ (log! run-id {:text (str "Asking the editor to look over the day's " (count keys)
-                                     " heaviest stories together")})
-          answer (m/? (softly run-id "The editor's look at the day"
-                              (ask ctx llm-config (analysis/review-prompt (dated day) pool) (effort llm-config "low"))))
-          review (some-> answer (analysis/parse-review keys))
+          heaviest (distinct (map :group ranked))
+          review! (fn [n]
+                    (let [keys (take n heaviest)
+                          pool (filterv (comp (set keys) :group) ranked)
+                          _ (log! run-id {:text (str "Asking the editor to look over the day's " (count keys)
+                                                     " heaviest stories together")})
+                          answer (m/? (softly run-id "The editor's look at the day"
+                                              (ask ctx llm-config (analysis/review-prompt (dated day) pool)
+                                                   (effort llm-config "low"))))]
+                      [answer (some-> answer (analysis/parse-review keys))]))
+          n (min review-pool (count heaviest))
+          [answer review] (review! n)
+          [answer review] (if (or review (< n 2))
+                            [answer review]
+                            (do (log! run-id {:text "The editor's answer couldn't be read, so it was asked again over half as many"})
+                                (review! (quot n 2))))
           items ranked]
       (if-not review
         (do (when answer
@@ -1027,11 +1055,12 @@
               {:keys [prompt ids]} (notes/compaction-prompt day candidates old max-facts dossier-facts)
               llm-config (notes-llm config)
               _ (log! run-id {:text (str "Updating the notes on " (count candidates) " storylines")})
-              chat (or (:chat ctx) llm/chat)
-              result (m/? (m/attempt (m/via m/blk (chat llm-config {:messages [{:role "user" :content prompt}]
-                                                                    :on-delta (fn [_])}))))]
+              result (m/? (m/attempt (ask-reply ctx llm-config prompt {})))]
           (try
-            (let [updated (notes/apply-answer day candidates old ids (:content (result)) max-facts)]
+            (let [reply (result)
+                  _ (when (cut-off? reply)
+                      (throw (ex-info (str "the answer was cut off (finish reason: " (:finish-reason reply) ")") {})))
+                  updated (notes/apply-answer day candidates old ids (:content reply) max-facts)]
               (if (seq updated)
                 (do (store/save-notes! store updated)
                     (log! run-id {:text (str "Updated the notes on " (count updated) " storylines") :level :ok}))

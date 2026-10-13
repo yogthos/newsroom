@@ -26,7 +26,7 @@
   digests get the period's most prominent ones against the period before.
   `{{web}}` places it in an edited prompt.
 - **An editor looks over the day.** After the sorting, one call weighs the
-  day's 200 heaviest stories together, merging the ones split between two
+  day's 150 heaviest stories together, merging the ones split between two
   sorting calls and re-rating importances against the whole day.
 - **Must-cover stories.** A story rated `:must-cover-importance` (8) or
   more is never cut for space, and a briefing that leaves one out is asked
@@ -51,6 +51,10 @@
 
 ### Fixed
 
+- **An answer a model thought its whole budget away on is asked for
+  again** with less thinking, where the provider lets it be turned down.
+  A dossier call lost its four stories' dossiers this way, and the notes
+  call said the answer "held nothing new" when it had been cut off.
 - **A feed with a raw `&` is read whole.** libxml2 stopped at the first
   one, so Rest of World's feed, which has them in its image URLs, gave a
   single item of its twelve.
