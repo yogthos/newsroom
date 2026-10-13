@@ -44,10 +44,10 @@
   mean of its sources' vectors, so one whose sources have no vectors can't
   be continued and is left out. A gap search's result is left out too:
   it was found for a story, not reported on it, so it doesn't count as
-  coverage."
+  coverage, and so is an analysis piece, which argues about a story."
   [history]
   (->> (filter :story history)
-       (remove :gap)
+       (remove #(or (:gap %) (= :analysis (:kind %))))
        (group-by :story)
        (keep (fn [[id ss]]
                (when-let [c (embed/centroid (keep :vector ss))]

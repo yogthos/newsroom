@@ -716,7 +716,7 @@
    (with-db [conn store]
      (mapv (fn [r] (cond-> (assoc (row->source r) :day (:day r) :cited? (= 1 (:cited r)))
                      (and vectors? (:vector r)) (assoc :vector (embed/decode (:vector r)))))
-           (jdbc/fetch conn [(str "select day, n, title, url, source, summary, published, also, story, weight, precedent, note, informs, gap, cited"
+           (jdbc/fetch conn [(str "select day, n, title, url, source, summary, published, also, story, weight, precedent, note, informs, gap, kind, cited"
                                   (when vectors? ", vector")
                                   " from sources where user_id = ? and day >= ? and day <= ? order by day, n")
                              (user-id store) from to])))))

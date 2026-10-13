@@ -35,6 +35,8 @@
                            :markdown "x [4]" :model "m" :provider "p"})
       (is (= :analysis (:kind (last (:sources (store/day db "2026-09-30"))))))
       (is (nil? (:kind (first (:sources (store/day db "2026-09-30"))))) "news is the default, and not written out")
+      (is (= [nil nil nil :analysis] (map :kind (store/sources-between db "2026-09-30" "2026-09-30")))
+          "what storylines and digests read keeps it too")
       (is (= [1 2 3] (map :n (store/coverage-between db "2026-09-30" "2026-09-30")))
           "a commentator carrying a story isn't an outlet reporting it")
       (finally (store/close db)))))

@@ -759,7 +759,7 @@
     (let [budget (or (:max-analysis config) 12)]
       (if (or (empty? commentary) (not (pos? budget)))
         selected
-        (let [pieces (vec (take analysis-candidates (sort-by #(str (:published %)) #(compare %2 %1) commentary)))
+        (let [pieces (vec (take analysis-candidates (sort-by #(str (feed/published-day (:published %))) #(compare %2 %1) commentary)))
               titles (into {} (map (juxt :group :group-title)) (reverse selected))
               stories (vec (for [g (distinct (keep :group selected))] {:key g :title (titles g)}))
               llm-config (desk-llm config)
