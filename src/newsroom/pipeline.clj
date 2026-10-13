@@ -792,7 +792,7 @@
             _ (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
                                        ") to sort " (count items) " reports into stories"
                                        (when (< 1 (count batches)) (str ", in " (count batches) " calls")))})
-            notes (store/notes store (keep :story items))
+            notes (store/notes-before store (keep :story items) day)
             sorted (loop [waves (partition-all sorting-wave batches) out []]
                      (if-let [wave (first waves)]
                        (recur (rest waves)
@@ -1090,7 +1090,7 @@
   (m/sp
     (let [candidates (notes/candidates numbered cited noted)]
       (when (seq candidates)
-        (let [old (store/notes store (map first candidates))
+        (let [old (store/notes-before store (map first candidates) day)
               {:keys [prompt ids]} (notes/compaction-prompt day candidates old max-facts dossier-facts)
               llm-config (notes-llm config)
               _ (log! run-id {:text (str "Updating the notes on " (count candidates) " storylines")})
@@ -1374,7 +1374,7 @@
                                          (str " in " (count (distinct (map :group ranked))) " stories"))
                                        " to analyse after dropping duplicates and older items")})
             max-facts (:story-notes config)
-            kept (when max-facts (store/notes store (map :story ranked)))
+            kept (when max-facts (store/notes-before store (map :story ranked) day))
             stories (analysis/stories ranked)
             day-stories (entities/day-stories day whole-day ranked)
             web (web-block store config day day-stories (:day earlier))

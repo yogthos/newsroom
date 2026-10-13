@@ -75,6 +75,14 @@
 
 ### Fixed
 
+- **Running a day again builds on the notes as they were before it.** The
+  notes keep only their latest state, so a rerun took the notes its first
+  run had written for stories from earlier briefings: the briefing was told
+  the day's own news was background the reader had, and the notes got the
+  day's facts twice. An earlier day run again read notes from the days
+  after it, and could put a storyline's note back to that day. Each note is
+  now kept as of the day that wrote it, a run reads the ones from before its
+  day, and a note a later day has updated isn't touched.
 - **An answer a model thought its whole budget away on is asked for
   again** with less thinking, where the provider lets it be turned down.
   A dossier call lost its four stories' dossiers this way, and the notes

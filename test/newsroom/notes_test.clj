@@ -74,7 +74,17 @@
              (map :text (:facts ((notes/apply-answer "2026-09-30" cs {"fed" fed-note} ids answer 1) "fed"))))))
     (testing "an answer with no JSON updates nothing"
       (is (= {} (notes/apply-answer "2026-09-30" cs {} ids "I can't do that." 12)))
-      (is (nil? (notes/parse-answer "{not json}"))))))
+      (is (nil? (notes/parse-answer "{not json}"))))
+    (testing "a fact given twice is kept once"
+      (is (= ["The Fed first paused." "The Fed held for a third time."]
+             (map :text (:facts ((notes/apply-answer "2026-09-30" cs {"fed" fed-note} ids
+                                                     (str "{\"storylines\": [{\"id\": \"fed\", \"facts\": ["
+                                                          "{\"fact\": \"The Fed first paused.\", \"cite\": \"E1\"},"
+                                                          "{\"fact\": \"The Fed held for a third time.\", \"cite\": 1},"
+                                                          "{\"fact\": \"The Fed held for a third time.\", \"cite\": \"[1]\"}]}]}")
+                                                     12)
+                                 "fed"))))
+          "the second time it's cited"))))
 
 (deftest the-briefing-hears-about-the-stories-still-running
   (let [bg (notes/background {"fed" fed-note} today identity)]

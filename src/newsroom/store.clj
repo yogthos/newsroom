@@ -122,6 +122,17 @@
       last_day text not null,
       updated_at text not null,
       primary key (user_id, story))"
+   "story_note_versions" "create table if not exists story_note_versions (
+      user_id integer not null,
+      story text not null,
+      day text not null,
+      title text,
+      summary text,
+      status text,
+      facts text not null,
+      first_day text,
+      updated_at text not null,
+      primary key (user_id, story, day))"
    "day_trends" "create table if not exists day_trends (
       user_id integer not null,
       day text not null,
@@ -832,13 +843,32 @@
           (jdbc/fetch conn ["select day, markdown from briefings where user_id = ? and day >= ? and day <= ? order by day"
                             (user-id store) from to]))))
 
+(defn- version! [conn uid story day {:keys [title summary status facts first-day]} replace?]
+  (jdbc/execute! conn [(str "insert or " (if replace? "replace" "ignore") " into story_note_versions
+                               (user_id, story, day, title, summary, status, facts, first_day, updated_at)
+                             values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                       uid story day title summary status (pr-str (vec facts)) first-day (now)]))
+
+(declare row->note)
+
 (defn save-notes!
-  "Store storyline notes, {story note}, each replacing the story's last."
+  "Store storyline notes, {story note}, each replacing the story's last,
+  and kept as of its :last-day, the day that wrote it, so that a run of
+  that day again reads the note as it was before (see notes-before). A
+  note written before its history was kept is kept as of its own last day
+  first. An earlier day run again leaves a note a later day has updated
+  as it is."
   [store notes]
   (let [uid (user-id store)]
     (with-db [conn store]
       (jdbc/atomic conn
-        (doseq [[story {:keys [title summary status facts first-day last-day]}] notes]
+        (doseq [[story {:keys [title summary status facts first-day last-day] :as note}] notes
+                :let [current (some-> (jdbc/fetch-one conn ["select * from story_notes where user_id = ? and story = ?"
+                                                            uid story])
+                                      row->note)]
+                :when (or (nil? current) (not (pos? (compare (:last-day current) last-day))))]
+          (when current (version! conn uid story (:last-day current) current false))
+          (version! conn uid story last-day note true)
           (jdbc/execute! conn ["insert or replace into story_notes
                                   (user_id, story, title, summary, status, facts, first_day, last_day, updated_at)
                                 values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -896,6 +926,41 @@
                                     (user-id store)]
                                    (distinct stories)))))))
 
+(defn notes-before
+  "The notes on `stories` as they were before `day`'s run updated them,
+  {story note}: what a run of `day` builds on, so that running it again
+  doesn't take its own notes for earlier briefings'. A note kept from
+  before its history was is taken without the facts of `day` and later; a
+  story with no note before `day` is missing."
+  [store stories day]
+  (if (empty? stories)
+    {}
+    (let [stories (distinct stories)
+          marks (str/join ", " (repeat (count stories) "?"))
+          uid (user-id store)]
+      (with-db [conn store]
+        (let [versions (jdbc/fetch conn (into [(str "select * from story_note_versions where user_id = ? and day < ?
+                                                     and story in (" marks ") order by day")
+                                               uid day]
+                                              stories))
+              latest (into {} (map (fn [r] [(:story r) (row->note (assoc r :last_day (:day r)))])) versions)
+              current (into {} (map (fn [r] [(:story r) (row->note r)]))
+                            (jdbc/fetch conn (into [(str "select * from story_notes where user_id = ? and story in ("
+                                                         marks ")")
+                                                    uid]
+                                                   stories)))]
+          (into {}
+                (keep (fn [story]
+                        (let [{:keys [last-day] :as note} (get current story)]
+                          (cond
+                            (nil? note) nil
+                            (neg? (compare last-day day)) [story note]
+                            (contains? latest story) [story (get latest story)]
+                            :else (let [facts (filterv #(neg? (compare (str (:day %)) day)) (:facts note))]
+                                    (when (seq facts)
+                                      [story (assoc note :facts facts :last-day (:day (peek facts)))]))))))
+                stories))))))
+
 (def coverage-days
   "How many days longer than the days themselves their coverage is kept:
   four months and a few days, a month's digest's baseline."
@@ -938,6 +1003,8 @@
                                                               where user_id = ? and last_day < " oldest ")")
                                             uid uid uid])
                        (jdbc/execute! conn [(str "delete from story_notes where user_id = ? and last_day < " oldest)
+                                            uid uid])
+                       (jdbc/execute! conn [(str "delete from story_note_versions where user_id = ? and day < " oldest)
                                             uid uid])))
                    gone))]
       (when (seq gone)
