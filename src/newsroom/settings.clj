@@ -495,12 +495,28 @@
              (str "is " (sources/source-name s) ", which another source is called too")))
     (mapv second read)))
 
+(defn- provider-alias [raw]
+  (some-> (get raw "_alias") str/trim (str/replace #"^:" "") not-empty keyword))
+
+(defn provider-at
+  "The provider entry the form `params` holds at `prefix`, providers.3 say,
+  read and checked as a save reads it: {:alias :entry :errors}, :errors by
+  form name."
+  [params prefix]
+  (let [raw (get-in (form-tree params) (str/split prefix #"\."))
+        errors (atom {})
+        alias (provider-alias raw)
+        entry (read-map (provider-fields) raw prefix errors)]
+    {:alias alias
+     :entry entry
+     :errors (cond-> @errors (nil? alias) (assoc (field-name prefix "_alias") "is needed"))}))
+
 (defn- read-providers
   "The providers, by alias; `index` gets the form index of each alias."
   [raw errors index]
   (reduce (fn [m [i r]]
             (let [n (field-name :providers i)
-                  alias (some-> (get r "_alias") str/trim (str/replace #"^:" "") not-empty keyword)
+                  alias (provider-alias r)
                   entry (read-map (provider-fields) r n errors)]
               (cond
                 (and (nil? alias) (empty? entry)) m

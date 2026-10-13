@@ -111,38 +111,144 @@ document.addEventListener('click', (e) => {
   if (state) state.textContent = ' Reset to the default. Save to keep it, or discard changes to undo.';
 });
 
-// Each role is a choice of the providers there are: the built-ins, named
-// on the roles' container, and the aliases the Providers entries declare,
-// typed or removed just now included. What a role has picked stays picked,
-// a name that's gone among them, so it can be seen and changed.
-function refreshRoles() {
-  const roles = document.querySelector('[data-cfg-roles]');
-  if (!roles) return;
-  const builtins = roles.dataset.cfgRoles.split(' ').filter(Boolean);
-  const aliases = [...document.querySelectorAll('input[name^="providers."][name$="._alias"]')]
-    .filter((el) => !el.closest('template'))
-    .map((el) => el.value.trim())
-    .filter(Boolean);
-  const names = [...new Set([...builtins, ...aliases])];
-  for (const select of roles.querySelectorAll('select[data-cfg-role]')) {
-    const picked = select.value;
-    const options = ['', ...names];
-    if (picked && !names.includes(picked)) options.push(picked);
-    select.replaceChildren(...options.map((n) => {
-      const o = document.createElement('option');
-      o.value = n;
-      o.textContent = n || '—';
-      o.selected = n === picked;
-      return o;
-    }));
+// The provider types there are, by name, with what each fills in for an
+// entry that leaves it out: {model, 'base-url', 'key-env', ready}.
+function providerTypes() {
+  const roles = document.querySelector('[data-cfg-provider-types]');
+  try {
+    return roles ? JSON.parse(roles.dataset.cfgProviderTypes) : {};
+  } catch (err) {
+    return {};
   }
 }
 
-document.addEventListener('input', (e) => {
+const field = (entry, key) => entry.querySelector(`[name$=".${key}"]`);
+const aliasInputs = () => [...document.querySelectorAll('input[name^="providers."][name$="._alias"]')]
+  .filter((el) => !el.closest('template'));
+const aliasOf = (el) => el.value.trim().replace(/^:/, '');
+
+// The type an entry works like: the one it names, or the built-in its alias
+// names.
+function entryType(entry, types) {
+  const select = field(entry, 'type');
+  const picked = select && select.value.trim().replace(/^:/, '');
+  if (picked) return picked;
+  const alias = field(entry, '_alias');
+  const name = alias ? aliasOf(alias) : '';
+  return name in types ? name : '';
+}
+
+function entryModel(entry, types) {
+  const model = field(entry, 'model');
+  const typed = model && model.value.trim();
+  const type = types[entryType(entry, types)];
+  return typed || (type && type.model) || '';
+}
+
+// A provider entry's blank fields show what its type fills in, and its
+// summary the model it asks for.
+function refreshEntry(entry, types) {
+  const type = types[entryType(entry, types)] || {};
+  for (const el of entry.querySelectorAll('[data-cfg-from-type]')) {
+    el.placeholder = type[el.dataset.cfgFromType] || '';
+  }
+  const summary = summaryPart(entry, '.type');
+  if (summary) summary.textContent = entryModel(entry, types);
+}
+
+// Each role is a choice of the reader's providers, the aliases the entries
+// declare, typed or removed just now included, then the built-ins they
+// haven't changed, each with the model it asks for. What a role has picked
+// stays picked, a name that's gone among them, so it can be seen and changed.
+function refreshRoles() {
+  const roles = document.querySelector('[data-cfg-roles]');
+  if (!roles) return;
+  const types = providerTypes();
+  const mine = new Map();
+  for (const el of aliasInputs()) {
+    const name = aliasOf(el);
+    if (name && !mine.has(name)) mine.set(name, entryModel(el.closest('[data-cfg-entry]'), types));
+  }
+  const label = (name, model) => (model ? `${name} — ${model}` : name);
+  const groups = [
+    ['Your providers', [...mine].map(([name, model]) => [name, label(name, model)])],
+    ['Built-in', Object.entries(types)
+      .filter(([name]) => !mine.has(name))
+      .map(([name, t]) => [name, label(name, t.model) + (t.ready ? '' : ' (no key)')])],
+  ];
+  const values = new Set(groups.flatMap(([, choices]) => choices.map(([value]) => value)));
+  const option = (value, text, picked) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = text;
+    o.selected = value === picked;
+    return o;
+  };
+  for (const select of roles.querySelectorAll('select[data-cfg-role]')) {
+    const picked = select.value;
+    const parts = [option('', '—', picked)];
+    for (const [name, choices] of groups) {
+      if (!choices.length) continue;
+      const group = document.createElement('optgroup');
+      group.label = name;
+      group.append(...choices.map(([value, text]) => option(value, text, picked)));
+      parts.push(group);
+    }
+    if (picked && !values.has(picked)) parts.push(option(picked, picked, picked));
+    select.replaceChildren(...parts);
+  }
+}
+
+function providerChanged(e) {
   const name = e.target.getAttribute && e.target.getAttribute('name');
-  if (name && /^providers\.[^.]+\._alias$/.test(name)) refreshRoles();
-});
+  if (!name || !/^providers\.[^.]+\.(_alias|type|model)$/.test(name)) return;
+  const entry = e.target.closest('[data-cfg-entry]');
+  if (entry) refreshEntry(entry, providerTypes());
+  refreshRoles();
+}
+
+document.addEventListener('input', providerChanged);
+document.addEventListener('change', providerChanged);
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-cfg-remove]')) setTimeout(refreshRoles, 0);
+});
+
+// A provider's test button sends its entry's fields with the entry's name,
+// and shows what came back under it. A built-in's tries the entry that
+// changes it, when there is one, else the built-in as it is.
+document.addEventListener('click', async (e) => {
+  const button = e.target.closest('[data-cfg-test-provider]');
+  if (!button) return;
+  e.preventDefault();
+  let target = button.dataset.cfgTestProvider;
+  let entry = button.closest('[data-cfg-entry]');
+  let out;
+  if (entry) {
+    out = child(entry, '.test-result');
+  } else {
+    const row = button.closest('tr').nextElementSibling;
+    row.hidden = false;
+    out = row.querySelector('.test-result');
+    const own = aliasInputs().find((el) => aliasOf(el) === target);
+    if (own) {
+      entry = own.closest('[data-cfg-entry]');
+      target = own.getAttribute('name').replace(/\._alias$/, '');
+    }
+  }
+  const body = new URLSearchParams();
+  if (entry) {
+    for (const el of entry.querySelectorAll('[name]')) body.append(el.getAttribute('name'), el.value);
+  }
+  body.append('_test', target);
+  button.disabled = true;
+  out.innerHTML = '<p class="muted">Asking it…</p>';
+  try {
+    const resp = await fetch('/config/test-provider', { method: 'POST', body });
+    out.innerHTML = await resp.text();
+  } catch (err) {
+    out.textContent = 'The test failed: ' + err;
+  } finally {
+    button.disabled = false;
+  }
 });

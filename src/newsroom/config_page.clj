@@ -9,6 +9,7 @@
   shape."
   (:require [clojure.string :as str]
             [newsroom.config :as config]
+            [newsroom.json :as json]
             [newsroom.llm.provider :as provider]
             [newsroom.llm.providers :as providers]
             [newsroom.plugin :as plugin]
@@ -90,7 +91,17 @@
               (for [[value text] [["" "Default"] ["true" "Yes"] ["false" "No"]]]
                 [:option {:value value :selected (= value (shown v))} text])]
 
-    :keyword (if-let [options (:options field)]
+    :keyword (if-let [groups (:groups field)]
+               (let [values (set (for [[_ choices] groups [value] choices] value))]
+                 [:select (merge {:id nm :name nm} (:attrs field))
+                  [:option {:value ""} "—"]
+                  (for [[label choices] groups :when (seq choices)]
+                    [:optgroup {:label label}
+                     (for [[value text] choices]
+                       [:option {:value value :selected (= value (shown v))} text])])
+                  (when-not (or (str/blank? (shown v)) (values (shown v)))
+                    [:option {:value v :selected true} v])])
+               (if-let [options (:options field)]
                [:select (merge {:id nm :name nm "data-cfg-type-select" (when (= :type (:key field)) "")}
                                (:attrs field))
                 [:option {:value ""} "—"]
@@ -99,7 +110,7 @@
                 (when-not (or (str/blank? (shown v)) (some #{(shown v)} (map name options)))
                   [:option {:value v :selected true} v])]
                [:input {:type "text" :id nm :name nm :value (shown v) :list (:datalist field)
-                        :placeholder (placeholder field)}])
+                        :placeholder (placeholder field)}]))
 
     :keywords [:span.checks
                [:input {:type "hidden" :name (settings/field-name nm "__") :value "1"}]
@@ -124,8 +135,9 @@
                              (remove-button "")])
                           (str "Add " (str/lower-case (label-of field))))
 
-    [:input {:type "text" :id nm :name nm :value (shown v) :placeholder (placeholder field)
-             :inputmode (when (#{:int :number} (:type field)) "decimal")}]))
+    [:input (merge {:type "text" :id nm :name nm :value (shown v) :placeholder (placeholder field)
+                    :inputmode (when (#{:int :number} (:type field)) "decimal")}
+                   (:attrs field))]))
 
 (defn- field-row
   "A field: its label, its control, what's wrong with it, and what it does."
@@ -249,56 +261,138 @@
 
 ;; --- models ------------------------------------------------------------------------
 
-(defn- provider-entry [nm entry errors]
-  (let [alias-name (settings/field-name nm "_alias")]
+(defn- provider-types
+  "Each provider type there is, by name: what it fills in for an entry that
+  leaves it out, and whether the reader running with `cfg` has its key."
+  [cfg]
+  (into (sorted-map)
+        (for [id (provider/ids)
+              :let [{:keys [label key-env model base-url]} (provider/spec id)]]
+          [(name id) {:label label :model model :base-url base-url :key-env key-env
+                      :ready (or (nil? key-env) (boolean (config/secret-for cfg key-env)))}])))
+
+(defn- alias-of [entry]
+  (some-> (get entry "_alias") str/trim (str/replace #"^:" "") not-empty))
+
+(defn- type-of
+  "The type an entry works like: the one it names, or the built-in its alias
+  names."
+  [entry types]
+  (let [t (some-> (get entry "type") str/trim (str/replace #"^:" "") not-empty)
+        a (alias-of entry)]
+    (or t (when (contains? types a) a))))
+
+(def ^:private from-type
+  "The entry fields a type fills in when they're blank, by the key of the
+  type's defaults."
+  {:model :model :base-url :base-url :api-key-env :key-env})
+
+(defn- test-actions [nm what]
+  (list
+   [:div.source-actions
+    [:button.test {:type "button" "data-cfg-test-provider" nm} "Test provider"]
+    (when what (remove-button what))]
+   [:div.test-result {:aria-live "polite"}]))
+
+(defn- provider-entry [nm entry errors types]
+  (let [alias-name (settings/field-name nm "_alias")
+        defaults (get types (type-of entry types))]
     [:details.entry.provider {"data-cfg-entry" ""
                               :open (boolean (or (nil? entry)
                                                  (some #(str/starts-with? % (str nm ".")) (keys errors))))}
      [:summary [:span.title {"data-cfg-default" "New provider"} (or (not-empty (get entry "_alias")) "New provider")]
-      [:span.type (get entry "model")]]
+      [:span.type (or (not-empty (get entry "model")) (:model defaults))]]
+     [:p.doc "Only the alias is needed, and a type unless the alias names a built-in. A field left blank "
+      "is the type's, shown greyed out."]
      (field-row {:key :_alias :label "Alias" :type :string :required? true
-                 :doc "What roles call it by. Named after a built-in, it only overrides what it sets."}
+                 :doc (str "What roles call it by. Named after a built-in, like deepseek, it changes that "
+                           "built-in, only in what's filled in here.")}
                 alias-name (get entry "_alias") errors 1)
-     (for [f (settings/provider-fields)]
+     (for [f (settings/provider-fields)
+           :let [k (from-type (:key f))
+                 f (cond-> f
+                     (= :type (:key f)) (assoc :attrs {"data-cfg-type-select" nil "data-cfg-provider-type" ""})
+                     k (assoc :default (get defaults k) :attrs {"data-cfg-from-type" (name k)}))]]
        (field-row f (settings/field-name nm (:key f)) (get entry (name (:key f))) errors 1))
      (extra-row nm entry errors)
-     (remove-button "provider")]))
+     (test-actions nm "provider")]))
+
+(defn provider-test-result
+  "What testing a provider found, for its entry: what's wrong with its
+  fields, or why it couldn't be reached, or the model that answered."
+  [{:keys [errors error model base-url reply ms]}]
+  (cond
+    (seq errors)
+    [:div.test.bad [:p "Fix these first:"]
+     [:ul (for [[n e] (sort-by key errors)]
+            [:li (label-of {:key (keyword (str/replace (last (str/split n #"\.")) #"^_" ""))}) " " e])]]
+
+    error
+    [:div.test.bad [:p "Couldn't use it: " error]]
+
+    :else
+    [:div.test.ok
+     [:p (str model " answered in " (format "%.1f" (/ (double ms) 1000)) "s, at " base-url ".")]
+     (if (str/blank? reply)
+       [:p.muted "Its answer had no text: a thinking model may have spent the test's short budget "
+        "reasoning. It was reached and took the key."]
+       [:p.muted "It said: " (subs reply 0 (min 200 (count reply)))])]))
 
 (defn- registered-providers
-  "The providers there are, built in or a plugin's, with what each needs
-  and whether the reader running with `cfg` has its key."
-  [cfg]
+  "The providers there are, built in or a plugin's, with what each needs,
+  whether the reader has its key, and a button to try each. One the reader
+  changed under Your providers says so, `changed` being their aliases."
+  [types changed]
   [:table.providers
-   [:thead [:tr [:th "Type"] [:th "Provider"] [:th "Key"] [:th "Default model"]]]
+   [:thead [:tr [:th "Provider"] [:th "Key"] [:th "Default model"] [:th]]]
    [:tbody
-    (for [id (provider/ids)
-          :let [{:keys [label key-env model]} (provider/spec id)]]
-      [:tr [:td [:code (name id)]] [:td label]
-       [:td (if key-env
-              (list [:code key-env] (if (config/secret-for cfg key-env) " (set)" " (not set)"))
-              "none needed")]
-       [:td [:code model]]])]])
+    (for [[id {:keys [label key-env model ready]}] types]
+      (list
+       [:tr [:td [:code id] " " [:span.muted label]]
+        [:td (if key-env
+               (list [:code key-env] (if ready " (set)" " (not set)"))
+               "none needed")]
+        [:td [:code model] (when (changed id) [:span.muted " (yours changes it, below)"])]
+        [:td [:button.test {:type "button" "data-cfg-test-provider" id} "Test"]]]
+       [:tr.test-row {:hidden true} [:td {:colspan 4} [:div.test-result {:aria-live "polite"}]]]))]])
+
+(defn- role-choices
+  "What a role picks from, as [group [[value label]]]: the reader's own
+  providers, then the built-ins they haven't changed, each with the model
+  it asks for, and a built-in marked when the reader hasn't its key."
+  [tree types]
+  (let [mine (->> (settings/indexed (get tree "providers"))
+                  (keep (fn [[_ e]] (when-let [a (alias-of e)] [a e])))
+                  (reduce (fn [m [a e]] (if (contains? m a) m (assoc m a e))) (array-map)))
+        labelled (fn [a model] (str a (when model (str " — " model))))]
+    [["Your providers"
+      (for [[a e] mine]
+        [a (labelled a (or (not-empty (get e "model")) (:model (get types (type-of e types)))))])]
+     ["Built-in"
+      (for [[id {:keys [model ready]}] types :when (not (contains? mine id))]
+        [id (str (labelled id model) (when-not ready " (no key)"))])]]))
 
 (defn- models-section [tree errors cfg]
-  (let [builtins (map name (provider/ids))
-        aliases (distinct (concat builtins
-                                  (keep #(not-empty (get % "_alias"))
-                                        (map second (settings/indexed (get tree "providers"))))))]
+  (let [types (provider-types cfg)
+        groups (role-choices tree types)]
     (list
-     [:p.doc "The endpoints the models are reached at. Each provider below can serve a role as it is, by its "
-      "type, with its key from the variable shown, in the environment or secrets.edn. An entry under "
-      "Providers registers another by an alias of your own, from one of these types: another model, "
-      "endpoint or key, like OpenRouter with a different model. A plugin can add types of its own."]
-     (registered-providers cfg)
-     [:h3 "Providers"]
+     [:p.doc "Which model does each job, and where it's reached."]
+     [:h3 "Built-in providers"]
+     [:p.doc "Each is ready to use as it is: pick it for a role below, and it reads its key from the variable "
+      "shown, in the environment or secrets.edn. A plugin can add more."]
+     (registered-providers types (set (keep (comp alias-of second) (settings/indexed (get tree "providers")))))
+     [:h3 "Your providers"]
+     [:p.doc "Not needed to use a built-in. Add one to change a built-in, by its name, or to have another of a "
+      "type under a name of your own: another model, endpoint or key, like OpenRouter with a different model."]
      (list-editor 0 "providers" (get tree "providers")
-                  (fn [n entry] (provider-entry n entry errors))
+                  (fn [n entry] (provider-entry n entry errors types))
                   "Add provider")
      [:h3 "Roles"]
-     [:p.doc "Which provider does each job. With none given, the first built-in whose key is in the environment or secrets.edn does."]
-     [:div {"data-cfg-roles" (str/join " " builtins)}
+     [:p.doc "Which provider does each job, yours or a built-in. With none given, the first built-in whose key "
+      "is in the environment or secrets.edn does."]
+     [:div {"data-cfg-roles" "" "data-cfg-provider-types" (json/write-str types)}
       (for [f settings/role-fields]
-        (field-row (assoc f :options (vec aliases) :attrs {"data-cfg-role" ""})
+        (field-row (assoc f :groups groups :attrs {"data-cfg-role" ""})
                    (settings/field-name :roles (:key f))
                    (get-in tree ["roles" (name (:key f))]) errors 0))])))
 

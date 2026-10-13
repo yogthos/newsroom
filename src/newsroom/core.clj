@@ -25,6 +25,9 @@
     POST /config/test-source
                             read one source of the config page's form, as
                             a run would, without saving it
+    POST /config/test-provider
+                            ask one provider of the form, or a built-in, a
+                            one-word question, without saving it
     POST /run?day=...       gather and analyse a day (today by default)
     POST /digest?kind=week&period=YYYY-Www
                             write a digest (kind week or month)
@@ -59,6 +62,9 @@
             [newsroom.auth :as auth]
             [newsroom.config :as config]
             [newsroom.config-page :as config-page]
+            [newsroom.llm.client :as llm]
+            [newsroom.llm.provider :as provider]
+            [newsroom.llm.providers :as providers]
             [newsroom.narration :as narration]
             [newsroom.tts :as tts]
             [newsroom.news :as news]
@@ -161,6 +167,46 @@
           (do (future-cancel task)
               {:error (str "took longer than " (quot timeout 1000) "s, its timeout") :events @events})
           (assoc result :events @events :name (sources/source-name source)))))))
+
+(def ^:private provider-test-ms
+  "The longest a provider's test waits on it: a short answer, not a briefing."
+  60000)
+
+(defn test-provider
+  "Ask the provider `prefix` names a one-word question, as a run would ask
+  it: the entry the form `params` holds there, providers.3 say, or else
+  the built-in of that name as it is. {:errors} when the entry's fields are
+  wrong, {:error} when it can't be resolved or reached, else {:alias :model
+  :base-url :reply :ms}. Nothing is saved, and the key isn't returned.
+  `chat` is the model call, llm/chat by default."
+  ([cfg params prefix] (test-provider cfg params prefix llm/chat))
+  ([cfg params prefix chat]
+   (let [{:keys [alias entry errors]} (if (str/starts-with? prefix "providers.")
+                                        (settings/provider-at params prefix)
+                                        {:alias (keyword prefix)})]
+     (if (seq errors)
+       {:errors errors}
+       (let [task (future
+                    (try
+                      (let [llm (-> (providers/resolve-provider (assoc cfg :providers (if entry {alias entry} {}))
+                                                                alias)
+                                    (update :timeout-ms #(min (or % provider-test-ms) provider-test-ms)))
+                            _ (when (and (contains? llm :api-key) (nil? (:api-key llm)))
+                                (throw (ex-info (str "it has no key: set "
+                                                     (or (:api-key-env entry) (:key-env (provider/preset (:type llm))))
+                                                     " in the environment or secrets.edn, or type one in")
+                                                {})))
+                            start (System/currentTimeMillis)
+                            reply (chat llm {:messages [{:role "user" :content "Reply with the one word: ready"}]
+                                             :max-tokens (min (or (:max-tokens llm) 1024) 1024)})]
+                        {:alias alias :model (or (:model reply) (:model llm)) :base-url (:base-url llm)
+                         :reply (str/trim (str (:content reply))) :ms (- (System/currentTimeMillis) start)})
+                      (catch Throwable e {:error (or (ex-message e) (str e))})))
+             result (deref task (+ provider-test-ms 5000) ::timeout)]
+         (if (= ::timeout result)
+           (do (future-cancel task)
+               {:error (str "it didn't answer in " (quot provider-test-ms 1000) "s")})
+           result))))))
 
 (defn- current-form [req] (settings/to-form (:config (ctx req))))
 
@@ -449,6 +495,10 @@
                 (html (str (h/html (config-page/test-result
                                     (test-source (:config (ctx req)) params (str (get params "_test")))
                                     (pipeline/today))))))}
+   {:path "/config/test-provider" :method :post
+    :response (fn [{:keys [params] :as req}]
+                (html (str (h/html (config-page/provider-test-result
+                                    (test-provider (:config (ctx req)) params (str (get params "_test"))))))))}
    {:path "/js/:file" :method :get :response asset}
    {:path "/css/:file" :method :get :response asset}
    {:path :not-found :response (fn [_] (not-found))}])
