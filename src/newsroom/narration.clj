@@ -5,15 +5,17 @@
   the episode is stored with the day.
 
   Recording takes minutes, so it doesn't hold the run: it is a worker of
-  its own, on a thread of its own. One podcast is made at a time, and at
-  most one more waits for it, a newer request taking the place of the one
-  waiting. A podcast that fails says why in `status` and is never thrown
-  into the run that asked for it.
+  its own, on a thread of its own. One podcast is made at a time, since
+  the speech engine takes gigabytes, and for each reader at most one more
+  waits for it, their newer request taking the place of the one waiting;
+  readers' requests wait in turn. A podcast that fails says why in its
+  reader's status and is never thrown into the run that asked for it.
 
   Progress is published to `status`, a glimmer ratom, for the sidebar to
   show live. `phase` is the part of it that changes only when the work
   moves to its next stage, for the day's page, which shouldn't redraw at
-  every line."
+  every line. Those are the local reader's; another reader's are in their
+  `lane`."
   (:require [clojure.string :as str]
             [glimmer.ratom :as ratom]
             [newsroom.config :as config]
@@ -37,8 +39,30 @@
   without the counts, which change only as the work moves on."}
   phase (ratom/reaction (select-keys @status [:state :day :pending])))
 
-(defonce ^{:doc "The podcast being made and the one waiting: {:current
-  job :pending job}, a job {:ctx :day :cancelled}."}
+(defonce ^:private lanes (atom {}))
+
+(defn lane
+  "The reader `uid`'s podcasts: {:status :phase}, as `status` and `phase`
+  are the local reader's, which they are for `uid` nil."
+  [uid]
+  (if (or (nil? uid) (= store/local-user-id uid))
+    {:status status :phase phase}
+    (or (get @lanes uid)
+        (get (swap! lanes (fn [m]
+                            (if (contains? m uid)
+                              m
+                              (let [st (ratom/atom {:state :idle})]
+                                (assoc m uid {:status st
+                                              :phase (ratom/reaction (select-keys @st [:state :day :pending]))})))))
+             uid))))
+
+(defn- uid-of [ctx] (some-> (:store ctx) store/user-id))
+
+(defn- status-of [job] (:status (lane (:uid job))))
+
+(defonce ^{:doc "The podcast being made and those waiting: {:current job
+  :queue [job]}, a job {:ctx :day :uid :cancelled}, at most one waiting
+  for each reader."}
   ^:private jobs (atom {}))
 
 (defn busy?
@@ -74,7 +98,7 @@
   "Write and record the podcast of `day` and store it, reporting to
   `status` as it goes. Blocks; throws when it can't be made, and when
   `cancelled?` turns true."
-  [{:keys [config store on-saved] :as ctx} day cancelled?]
+  [{:keys [config store on-saved] :as ctx} status day cancelled?]
   (let [chat (or (:chat ctx) llm/chat)
         llm-config (podcast-llm config)
         hosts (podcast/hosts (:podcast-hosts config) (tts/voices))
@@ -127,13 +151,15 @@
     seconds))
 
 (defn- run-job!
-  "Make the podcast of `job`, catching whatever stops it into `status`."
-  [{:keys [ctx day cancelled]}]
-  (swap! status merge {:state :writing :day day :done 0 :total nil :error nil :seconds nil :note nil
-                       :device nil})
-  (let [cancelled? #(deref cancelled)]
+  "Make the podcast of `job`, catching whatever stops it into its
+  reader's status."
+  [{:keys [ctx day cancelled] :as job}]
+  (let [status (status-of job)
+        cancelled? #(deref cancelled)]
+    (swap! status merge {:state :writing :day day :done 0 :total nil :error nil :seconds nil :note nil
+                         :device nil})
     (try
-      (let [seconds (record! ctx day cancelled?)]
+      (let [seconds (record! ctx status day cancelled?)]
         (swap! status merge {:state :done :seconds seconds}))
       (catch Throwable e
         (swap! status merge (if (or (cancelled?) (::cancelled (ex-data e)))
@@ -143,15 +169,15 @@
 (declare launch!)
 
 (defn- next!
-  "Once `job` is over, start the one waiting, if any."
+  "Once `job` is over, start the first one waiting, if any."
   [job]
   (let [[old new] (swap-vals! jobs (fn [js]
                                      (if (identical? job (:current js))
-                                       {:current (:pending js)}
+                                       {:current (first (:queue js)) :queue (vec (rest (:queue js)))}
                                        js)))]
     (when-let [next (:current new)]
       (when-not (identical? next (:current old))
-        (swap! status assoc :pending nil)
+        (swap! (status-of next) assoc :pending nil)
         (launch! next)))))
 
 (defn- launch! [job]
@@ -161,25 +187,36 @@
 
 (defn enqueue!
   "Make the podcast of the stored `day`: now, when no other is being
-  made, else once the one being made is done, in place of any already
-  waiting. `ctx` is {:config :store}, and optionally :chat (the model call,
-  llm/chat by default) and :on-saved, called once the episode is stored.
-  Returns true."
+  made, else once the ones before it are done, in place of any of its
+  reader's already waiting. `ctx` is {:config :store}, and optionally
+  :chat (the model call, llm/chat by default) and :on-saved, called once
+  the episode is stored. Returns true."
   [ctx day]
-  (let [job {:ctx ctx :day day :cancelled (atom false)}
-        [_ new] (swap-vals! jobs (fn [{:keys [current] :as js}]
-                                   (if current (assoc js :pending job) {:current job})))]
+  (let [uid (uid-of ctx)
+        job {:ctx ctx :day day :uid uid :cancelled (atom false)}
+        theirs? #(= uid (:uid %))
+        [_ new] (swap-vals! jobs (fn [{:keys [current queue] :as js}]
+                                   (cond
+                                     (nil? current) {:current job :queue []}
+                                     (some theirs? queue) (assoc js :queue (mapv #(if (theirs? %) job %) queue))
+                                     :else (assoc js :queue (conj (vec queue) job)))))]
     (if (identical? job (:current new))
       (launch! job)
-      (swap! status assoc :pending day))
+      (swap! (status-of job) assoc :pending day))
     true))
 
 (defn cancel!
-  "Stop the podcast being made and forget the one waiting. Returns true
-  when there was one to stop."
-  []
-  (let [[old _] (swap-vals! jobs dissoc :pending)]
-    (swap! status assoc :pending nil)
-    (when-let [job (:current old)]
-      (reset! (:cancelled job) true)
-      true)))
+  "Stop the podcast the reader `uid`, the local one by default, has being
+  made and forget the one they have waiting. Returns true when there was
+  one to stop."
+  ([] (cancel! nil))
+  ([uid]
+   (let [uid (or uid store/local-user-id)
+         theirs? #(= uid (or (:uid %) store/local-user-id))
+         [old _] (swap-vals! jobs update :queue #(vec (remove theirs? %)))]
+     (swap! (:status (lane uid)) assoc :pending nil)
+     (let [current (:current old)
+           waiting (some theirs? (:queue old))]
+       (when (and current (theirs? current))
+         (reset! (:cancelled current) true))
+       (boolean (or (and current (theirs? current)) waiting))))))
