@@ -45,7 +45,7 @@
   local reader's at :config and :schedule and every other's under :users,
   by id."
   (:require [clojure.core.async :as async]
-            [clojure.data.json :as json]
+            [newsroom.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [hiccup2.core :as h]

@@ -6,7 +6,7 @@
 
   An item is {:title :url :source :summary :published}, every value a string
   but :published, which is the feed's own date text or nil."
-  (:require [clojure.data.json :as json]
+  (:require [newsroom.json :as json]
             [clojure.string :as str]))
 
 ;; --- text --------------------------------------------------------------------------

@@ -22,7 +22,7 @@
   ever one outlet's on one subject. The briefings and digests are told the
   lessons and the standings, and the analyst sees each outlet's record on
   the subject of what it expects."
-  (:require [clojure.data.json :as json]
+  (:require [newsroom.json :as json]
             [clojure.math :as m]
             [clojure.string :as str]))
 

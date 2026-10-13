@@ -26,7 +26,7 @@
   The briefing is then written from the dossiers and the map, with the
   numbered sources to cite. Every stage is optional, and a stage that
   fails leaves the briefing to be written from what there is."
-  (:require [clojure.data.json :as json]
+  (:require [newsroom.json :as json]
             [clojure.string :as str]
             [newsroom.embed :as embed]
             [newsroom.entities :as entities]

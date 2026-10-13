@@ -8,7 +8,7 @@
   jolt.http-client reads a response whole, so this speaks HTTP/1.1 over the
   socket itself: plain TCP through jolt.http.net, TLS through jolt.http.tls."
   (:require [jolt.time]
-            [clojure.data.json :as json]
+            [newsroom.json :as json]
             [clojure.string :as str]
             [jolt.http.net :as net]
             [jolt.http.tls :as tls]

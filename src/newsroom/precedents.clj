@@ -18,7 +18,7 @@
   after the day's, and cited like any other. A precedent takes no part in
   the storylines: it is background, not a story that started today or an
   earlier day of one that did."
-  (:require [clojure.data.json :as json]
+  (:require [newsroom.json :as json]
             [clojure.string :as str]
             [newsroom.news :as news]
             [newsroom.template :as template]))

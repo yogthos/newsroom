@@ -40,7 +40,7 @@
   reader, so whoever ran newsroom for themselves keeps what it holds once
   it takes readers. :scopes are the scopes asked for, openid, profile and
   email by default."
-  (:require [clojure.data.json :as json]
+  (:require [newsroom.json :as json]
             [clojure.string :as str]
             [jolt.http-client :as http]
             [newsroom.config :as config]
