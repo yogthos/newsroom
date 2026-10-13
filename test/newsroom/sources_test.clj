@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [jolt.http-client :as http]
+            [newsroom.feed :as feed]
             [newsroom.sources :as sources]))
 
 (defn- search-stub
@@ -175,3 +176,16 @@
       (with-redefs [http/get (answering [{:status 503 :body ""} {:status 200 :body feed}] calls)]
         (is (thrown? Exception (sources/fetch-text "https://e.com/rss" {}))))
       (is (= 1 @calls)))))
+
+(deftest a-feed-with-a-bare-ampersand-is-read-whole
+  ;; Rest of World's feed puts raw & in its image URLs, where libxml2 stops
+  (let [rss (str "<?xml version=\"1.0\"?><rss xmlns:media=\"http://search.yahoo.com/mrss/\"><channel>"
+                 "<item><title>One &amp; two</title><link>https://e.com/1?a=1&amp;b=2</link>"
+                 "<description><![CDATA[Tom & Jerry &amp; co]]></description>"
+                 "<media:content url=\"https://e.com/i.jpg?w=1&dpr=2\" /></item>"
+                 "<item><title>Three &#38; four &eacute;</title><link>https://e.com/3</link></item>"
+                 "</channel></rss>")
+        items (feed/feed-items (sources/parse-xml rss) "Wire")]
+    (is (= ["One & two" "Three & four é"] (map :title items)))
+    (is (= "https://e.com/1?a=1&b=2" (:url (first items))))
+    (is (= "Tom & Jerry & co" (:summary (first items))) "what CDATA holds isn't escaped twice")))

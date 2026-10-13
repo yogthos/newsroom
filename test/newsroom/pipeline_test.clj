@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [ebb.core :as m]
+            [newsroom.analysis :as analysis]
             [newsroom.embed :as embed]
             [newsroom.pipeline :as pipeline]
             [newsroom.plugin :as plugin]
@@ -67,7 +68,7 @@
 
 (defn- ctx [sources chat]
   {:config {:sources sources :source-timeout-ms 500 :lookback-days 1
-            :max-items-per-source 2 :max-items 10
+            :max-items 10
             ;; the fixture stories are all near-alike text, so embedding
             ;; must stay off unless a test turns it on
             :dupe-threshold nil
@@ -92,8 +93,8 @@
                   :model "fake"}))
         summary (m/? (pipeline/run-task c "2026-09-30"))
         day (store/day (:store c) "2026-09-30")]
-    (testing "each source is capped, and a story two sources carry is kept once"
-      (is (= ["https://e.com/1" "https://e.com/2" "https://e.com/4"] (map :url (:sources day)))))
+    (testing "every report is kept, and a story two sources carry is kept once"
+      (is (= ["https://e.com/1" "https://e.com/2" "https://e.com/4" "https://e.com/3"] (map :url (:sources day)))))
     (testing "a slow and a broken source cost only their own items"
       (is (= :failed (get-in @pipeline/status [:sources "Slow" :state])))
       (is (str/includes? (get-in @pipeline/status [:sources "Slow" :error]) "timed out"))
@@ -116,18 +117,18 @@
         (is (has? "A: 3 items"))
         (is (has? "Broken failed: feed is down"))
         (is (has? "Slow timed out"))
-        (is (has? "3 reports to analyse"))
+        (is (has? "4 reports to analyse"))
         (is (has? "Asking local (local-model) to write the briefing"))
         (is (has? "The model is thinking"))
         (is (has? "The model is writing"))
-        (is (has? "Filed the briefing: 3 of 3 sources cited"))
+        (is (has? "Filed the briefing: 3 of 4 sources cited"))
         (is (every? :at events))
         (is (= 1 (count (filter #(str/includes? % "is writing") texts))) "said once, not per delta"))
       (let [w (:writing @pipeline/status)]
         (is (= 6 (:words w)) "words of prose, not markup or citations")
         (is (= "The mechanics" (:section w)))
         (is (str/ends-with? (:tail w) "unknown [9]."))))
-    (is (= {:day "2026-09-30" :items 3 :cited 3} (select-keys summary [:day :items :cited])))))
+    (is (= {:day "2026-09-30" :items 4 :cited 3} (select-keys summary [:day :items :cited])))))
 
 (deftest a-run-with-nothing-gathered-fails-and-stores-nothing
   (let [c (ctx [{:type ::broken :name "Broken"}] (fn [_ _] (throw (ex-info "not called" {}))))]
@@ -151,33 +152,128 @@
     (is (= :cancelled (:state @pipeline/status)) (pr-str (select-keys @pipeline/status [:error :state])))
     (is (nil? (store/day (:store c) "2026-09-30")))))
 
-(deftest the-item-cap-trims-every-source-evenly
-  (let [results [{:items (mapv #(item % "2026-09-30") [1 2 3])}
-                 {:items (mapv #(item % "2026-09-30") [10 11])}
-                 {:items []}
-                 {:items (mapv #(item % "2026-09-30") [20])}]]
-    (is (= ["https://e.com/1" "https://e.com/10" "https://e.com/20"
-            "https://e.com/2" "https://e.com/11" "https://e.com/3"]
-           (map :url (pipeline/day-items results {:max-items-per-source 5} "2026-09-30"))))))
+(deftest every-item-in-the-window-is-kept
+  (let [results [{:items (mapv #(item % "2026-09-30") (range 1 31))}
+                 {:items (mapv #(item % "2026-09-30") [40 41])}
+                 {:items []}]]
+    (testing "an outlet's thirtieth item is as much the day's as its first"
+      (is (= 32 (count (pipeline/day-items results {} "2026-09-30")))))
+    (testing "the outlets are taken in turn"
+      (is (= ["https://e.com/1" "https://e.com/40" "https://e.com/2" "https://e.com/41" "https://e.com/3"]
+             (take 5 (map :url (pipeline/day-items results {} "2026-09-30"))))))))
 
-(deftest the-item-cap-is-per-outlet
-  (let [from (fn [outlet n] (assoc (item n "2026-09-30") :source outlet))
-        results [{:items [(from "A" 1) (from "B" 2) (from "A" 3) (from "A" 4) (from "B" 5) (from "C" 6)]}
-                 {:items [(from "A" 10) (from "A" 11) (from "A" 12)]}]]
-    (testing "each outlet in a result gets the cap, the outlets taken in turn"
-      (is (= ["https://e.com/1" "https://e.com/2" "https://e.com/6" "https://e.com/10"
-              "https://e.com/3" "https://e.com/5" "https://e.com/11"]
-             (map :url (pipeline/day-items results {:max-items-per-source 2} "2026-09-30")))))
-    (testing "an outlet in two results is capped in each"
-      (is (= 4 (count (filter #(= "A" (:source %))
-                              (pipeline/day-items results {:max-items-per-source 2} "2026-09-30"))))))))
+(defmethod sources/fetch-items ::busy [_ {:keys [day]}]
+  ;; a busy outlet's day, the one report that matters well down its feed
+  (assoc (mapv #(assoc (item % day) :title (str "Routine report " %)) (range 1 41))
+         27 (assoc (item 28 day) :title "S Korea's Kospi plunges over 7% as chip stocks tumble")))
+
+(defn- sorting-answer
+  "The desk's sorting of the reports in prompt `p`, each a story of its
+  own, as important as `importance` says of its title."
+  [p importance]
+  (str "{\"stories\": ["
+       (str/join ", " (for [[_ n title] (re-seq #"(?m)^\[(\d+)\] (.*?) \(" p)]
+                        (str "{\"title\": \"" title "\", \"reports\": [" n "], \"importance\": "
+                             (importance title) ", \"status\": \"developing\"}")))
+       "], \"junk\": []}"))
+
+(deftest a-big-story-deep-in-a-busy-feed-reaches-the-briefing
+  (let [prompts (atom [])
+        c (-> (ctx [{:type ::busy :name "Economic Times"}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (swap! prompts conj p)
+                       {:content (if (str/includes? p "You sort the reports")
+                                   (sorting-answer p #(if (str/includes? % "Kospi") 9 2))
+                                   "# Today\n\nMarkets [1].")
+                        :model "fake"})))
+              (update :config merge {:group-stories true :max-items 10}))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (let [brief (last @prompts)]
+      (is (str/includes? brief "Kospi plunges") "the crash is in what the analyst reads")
+      (is (< (str/index-of brief "Kospi plunges") (str/index-of brief "Routine report"))
+          "ahead of the routine reports")
+      (is (>= 10 (count (re-seq #"(?m)^\[\d+\] " brief))) "and the day is still cut to :max-items"))))
+
+(defn- sorting-run
+  "Run the busy day with the desk sorting through `sort`, a fn of the
+  sorting prompt and how many times the desk has been asked; the prompts
+  sent, in order."
+  [sort]
+  (let [prompts (atom [])
+        asked (atom 0)
+        c (-> (ctx [{:type ::busy :name "Economic Times"}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (swap! prompts conj p)
+                       {:content (if (str/includes? p "You sort the reports")
+                                   (sort p (swap! asked inc))
+                                   "# Today\n\nMarkets [1].")
+                        :model "fake"})))
+              (update :config merge {:group-stories true :max-items 50}))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    @prompts))
+
+(defn- sorts [prompts] (filter #(str/includes? % "You sort the reports") prompts))
+
+(defn- kospi-first? [prompts]
+  (let [brief (last prompts)]
+    (< (str/index-of brief "Kospi plunges") (str/index-of brief "Routine report"))))
+
+(deftest the-sorting-goes-a-batch-at-a-time
+  (with-redefs [analysis/sorting-batch 15]
+    (let [prompts (sorting-run (fn [p _] (sorting-answer p #(if (str/includes? % "Kospi") 9 2))))]
+      (is (= 3 (count (sorts prompts))) "40 reports, 15 a call")
+      (is (every? #(<= (count (re-seq #"(?m)^\[\d+\] " %)) 15) (sorts prompts)))
+      (is (= 40 (count (re-seq #"(?m)^\[\d+\] " (last prompts)))) "every report reaches the analyst")
+      (is (kospi-first? prompts)))))
+
+(deftest a-cut-off-sorting-is-asked-again
+  (with-redefs [analysis/sorting-batch 15]
+    (let [prompts (sorting-run (fn [p n]
+                                 (if (= 1 n)
+                                   "{\"stories\": [{\"title\": \"Rou"
+                                   (sorting-answer p #(if (str/includes? % "Kospi") 9 2)))))]
+      (is (= 4 (count (sorts prompts))) "the batch whose answer was cut off is asked once more")
+      (is (kospi-first? prompts))
+      (is (some #(str/includes? (:text %) "asked again") (:events @pipeline/status))))))
+
+(deftest reports-a-sorting-leaves-out-are-asked-about-again
+  (let [prompts (sorting-run (fn [p n]
+                               (if (= 1 n)
+                                 (sorting-answer (str/replace p #"(?m)^\[\d+\] S Korea.*$" "") (constantly 2))
+                                 (sorting-answer p #(if (str/includes? % "Kospi") 9 2)))))
+        [_ again] (sorts prompts)]
+    (is (= 1 (count (re-seq #"(?m)^\[\d+\] " again))) "only the report left out is asked about")
+    (is (str/includes? again "Kospi plunges"))
+    (is (kospi-first? prompts))))
+
+(deftest the-editor-raises-a-story-the-batches-underrated
+  (with-redefs [analysis/sorting-batch 15]
+    (let [prompts (atom [])
+          c (-> (ctx [{:type ::busy :name "Economic Times"}]
+                     (fn [_ req]
+                       (let [p (-> req :messages first :content)]
+                         (swap! prompts conj p)
+                         {:content (cond
+                                     (str/includes? p "You sort the reports") (sorting-answer p (constantly 3))
+                                     (str/includes? p "You edit the day's")
+                                     (let [k (second (re-find #"(?m)^(G\d+) \(.*Kospi" p))]
+                                       (str "{\"same\": [], \"importance\": {\"" k "\": 9}}"))
+                                     :else "# Today\n\nMarkets [1].")
+                          :model "fake"})))
+                (update :config merge {:group-stories true :max-items 10}))]
+      (m/? (pipeline/run-task c "2026-09-30"))
+      (is (= 1 (count (filter #(str/includes? % "You edit the day's") @prompts))) "one call over the whole day")
+      (is (str/includes? (last @prompts) "Kospi plunges"))
+      (is (some #(str/includes? (:text %) "The editor re-rated 1 story") (:events @pipeline/status))))))
 
 (deftest the-window-runs-from-the-lookback-to-the-next-day
   (let [dated (fn [n day] (assoc (item n day) :published (str day "T08:00:00Z")))
         results [{:items [(dated 1 "2026-09-28") (dated 2 "2026-09-29") (dated 3 "2026-09-30")
                           (dated 4 "2026-10-01") (dated 5 "2026-10-02")]}]]
     (is (= ["https://e.com/2" "https://e.com/3" "https://e.com/4"]
-           (map :url (pipeline/day-items results {:lookback-days 1 :max-items-per-source 9}
+           (map :url (pipeline/day-items results {:lookback-days 1 }
                                          "2026-09-30"))))))
 
 (deftest a-source-can-look-further-back-than-the-run
@@ -186,7 +282,7 @@
     (is (= ["https://e.com/3" "https://e.com/2/b"]
            (map :url (pipeline/day-items [{:items items} {:items (mapv #(update % :url str "/b") (take 2 items))
                                                          :lookback-days 3}]
-                                         {:lookback-days 1 :max-items-per-source 9} "2026-09-30")))
+                                         {:lookback-days 1 } "2026-09-30")))
         "the second result's own lookback reaches the 27th, the config's doesn't")
     (is (= [(dated 3 "2026-09-30")]
            (pipeline/day-items [{:items items :lookback-days nil}] {:lookback-days 1} "2026-09-30")))))
@@ -243,9 +339,8 @@
     (is (nil? (store/day (:store c) "2026-09-30")))))
 
 (deftest stories-in-the-last-briefing-are-left-out
-  (let [c (assoc-in (ctx [{:type ::fixture :name "A" :ns [1 2 3]}]
-                         (fn [_ _] {:content "# Today\n\nTwo [1]." :model "fake"}))
-                    [:config :max-items-per-source] 3)
+  (let [c (ctx [{:type ::fixture :name "A" :ns [1 2 3]}]
+               (fn [_ _] {:content "# Today\n\nTwo [1]." :model "fake"}))
         st (:store c)
         source (fn [n url] {:n n :title (str "Old " n) :url url :source "Fixture" :summary "" :published nil})]
     ;; the latest briefing before the day, however far back
@@ -567,8 +662,7 @@
                     (dupe-src "BBC" "bbc")]
                    (fn [_ req] (swap! prompts conj (-> req :messages first :content))
                      {:content "# Today\n\nStory [1]." :model "fake"}))
-              (assoc-in [:config :dupe-threshold] 0.55)
-              (assoc-in [:config :max-items-per-source] 5))]
+              (assoc-in [:config :dupe-threshold] 0.55))]
     (m/? (pipeline/run-task c "2026-09-30"))
     (let [day (store/day (:store c) "2026-09-30")]
       (is (= 1 (count (:sources day))) "one wire story, not one copy per outlet")
@@ -804,7 +898,7 @@
                    (str "{\"storylines\": [{\"id\": \"2026-09-30/1\", \"title\": \"One event\", \"summary\": \"S.\","
                         " \"status\": \"escalating\", \"facts\": [{\"day\": \"2026-09-30\", \"fact\": \"Both agree.\", \"cite\": 1}]}]}")
                    :else "# Today\n\n## Overview\n\nOne [1].\n\n## How it all connects\n\nChains [2, 3]."))
-        c (-> (ctx [{:type ::fixture :name "A" :ns [1 2 3]} {:type ::fixture :name "B" :ns [2 4]}]
+        c (-> (ctx [{:type ::fixture :name "A" :ns [1 2]} {:type ::fixture :name "B" :ns [2 4]}]
                    (fn [_ req]
                      (let [p (-> req :messages first :content)
                            kind (re-find #"You sort|prepares the dossiers|You map|running notes|Brief" p)]
@@ -1229,3 +1323,140 @@
         (doseq [d [dir bak] :when (.exists d)]
           (doseq [f (.listFiles d)] (.delete f))
           (.delete d))))))
+
+(defn- coverage-run
+  "Run the busy day with the Kospi crash a must; the analyst's first
+  briefing leaves it out, and `revise` is its answer when asked to cover
+  it. The stored markdown and the prompts."
+  [revise]
+  (let [prompts (atom [])
+        c (-> (ctx [{:type ::busy :name "Economic Times"}]
+                   (fn [_ req]
+                     (let [msgs (:messages req)
+                           p (-> msgs first :content)]
+                       (swap! prompts conj (-> msgs last :content))
+                       {:content (cond
+                                   (str/includes? p "You sort the reports")
+                                   (sorting-answer p #(if (str/includes? % "Kospi") 9 2))
+                                   (< 1 (count msgs)) revise
+                                   :else "# Today\n\n## Markets\n\nRoutine [2].")
+                        :model "fake"})))
+              (update :config merge {:group-stories true :max-items 10 :must-cover-importance 8}))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    [(:markdown (store/day (:store c) "2026-09-30")) @prompts]))
+
+(deftest a-briefing-that-leaves-out-a-must-is-asked-to-cover-it
+  (let [[md prompts] (coverage-run "# Today\n\n## Markets\n\nKospi fell [1]. Routine [2].")]
+    (is (some #(str/includes? % "S Korea's Kospi plunges over 7% as chip stocks tumble [1]") prompts)
+        "the analyst is told which story it left out, by its sources")
+    (is (str/includes? md "Kospi fell [[1]]"))
+    (is (not (str/includes? md "Also today")))))
+
+(deftest a-must-still-left-out-is-listed-under-the-briefing
+  (let [[md _] (coverage-run "Sorry, I can't.")]
+    (is (str/includes? md "Routine [[2]]") "the draft stands")
+    (is (str/includes? md "## Also today\n\n- S Korea's Kospi plunges over 7% as chip stocks tumble [[1]]"))))
+
+(defn- entity-run
+  "Run `day` from fixture reports `ns`, sorted as `stories` say: [title
+  [report] importance [entity]] each. The analyst's prompt."
+  [c day ns stories]
+  (let [prompts (atom [])
+        answer (str "{\"stories\": ["
+                    (str/join ", " (for [[title reports imp ents] stories]
+                                     (str "{\"title\": \"" title "\", \"reports\": " (pr-str reports)
+                                          ", \"importance\": " imp ", \"entities\": ["
+                                          (str/join ", " (map #(str "{\"name\": \"" % "\", \"kind\": \"organisation\"}") ents))
+                                          "]}")))
+                    "]}")
+        c (-> c
+              (assoc-in [:config :sources] [{:type ::fixture :name "A" :ns ns}])
+              (assoc :chat (fn [_ req]
+                             (let [p (-> req :messages first :content)]
+                               (swap! prompts conj p)
+                               {:content (if (str/includes? p "You sort the reports") answer "# Today\n\nOne [1].")
+                                :model "fake"}))))]
+    (m/? (pipeline/run-task c day))
+    (last @prompts)))
+
+(deftest the-analyst-reads-the-days-web-and-how-it-changed
+  (let [c (-> (ctx [] nil) (update :config merge {:group-stories true}))
+        first-day (entity-run c "2026-09-30" [1 2 3] [["Kospi plunges" [1] 9 ["Samsung" "Kospi"]]
+                                                       ["Chip shares sell off" [2] 8 ["Samsung" "SK Hynix"]]
+                                                       ["Fed holds" [3] 5 ["Federal Reserve"]]])]
+    (is (str/includes? first-day "- **Samsung** (organisation): Kospi plunges [1]; Chip shares sell off [2]"))
+    (is (= #{"samsung" "kospi" "sk hynix" "federal reserve"}
+           (set (map :entity (store/mentions-between (:store c) "2026-09-30" "2026-09-30")))))
+    (is (= #{1} (set (keep #(when (:cited %) (count [%])) (store/mentions-between (:store c) "2026-09-30" "2026-09-30"))))
+        "what the briefing cited is marked")
+    (let [next-day (entity-run c "2026-10-01" [4 5] [["Fed cuts" [1] 9 ["Federal Reserve"]]
+                                                      ["Rates fall" [2] 7 ["Federal Reserve" "Treasury"]]])]
+      (is (str/includes? next-day "Since 30 September 2026"))
+      (is (str/includes? next-day "Gone quiet: Samsung"))
+      (is (str/includes? next-day "- **Federal Reserve** (organisation): Fed cuts [1]; Rates fall [2]")))))
+
+(deftest a-digest-reads-the-period-through-its-entities
+  (let [prompts (atom [])
+        c (digest-ctx (fn [_ req] (swap! prompts conj (-> req :messages first :content))
+                        {:content "# The week\n\n> Rates held [1].\n\n## Overview\n\nSteady [1]." :model "fake"}))
+        st (:store c)]
+    (store-week! st)
+    (store/save-mentions! st "2026-09-29" [{:day "2026-09-29" :entity "kospi" :name "Kospi" :kind "market"
+                                            :story "s1" :title "Kospi plunges" :importance 9 :cited true}])
+    (m/? (pipeline/digest-task c :week "2026-W40"))
+    (is (str/includes? (first @prompts) "- **Kospi** (market): 1 day, new; Kospi plunges"))))
+
+(defn- notes-run
+  "Run a day whose notes call is cut off unless asked with less thinking,
+  on `provider`; the store and the requests the notes call got."
+  [provider]
+  (let [asked (atom [])
+        c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (if (str/includes? p "You keep the running notes")
+                         (do (swap! asked conj req)
+                             (if (= "low" (:reasoning-effort req))
+                               {:content (str "{\"storylines\": [{\"id\": \"2026-09-30/1\", \"title\": \"Story one\","
+                                              " \"summary\": \"S.\", \"status\": \"developing\","
+                                              " \"facts\": [{\"day\": \"2026-09-30\", \"fact\": \"It began.\", \"cite\": 1}]}]}")
+                                :finish-reason "stop"}
+                               {:content "" :reasoning "a lot" :finish-reason "length"}))
+                         {:content "# Today\n\nOne [1]." :model "fake"}))))
+              (update :config merge {:story-notes 12 :providers provider :roles {:analyst :thinker}}))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    [(:store c) @asked]))
+
+(deftest an-answer-cut-off-by-its-thinking-is-asked-again-with-less
+  (let [[st asked] (notes-run {:thinker {:type :local :features #{:reasoning-effort}}})]
+    (is (= [nil "low"] (map :reasoning-effort asked)))
+    (is (= "Story one" (:title (get (store/notes st ["2026-09-30/1"]) "2026-09-30/1"))))
+    (is (some #(str/includes? (:text %) "came back cut off, so it was asked again with less thinking")
+              (:events @pipeline/status)))))
+
+(deftest a-cut-off-answer-is-said-to-be-cut-off
+  (let [[_ asked] (notes-run {:thinker {:type :local}})]
+    (is (= 1 (count asked)) "a provider whose thinking can't be turned down isn't asked again")
+    (is (some #(str/includes? (:text %) "The notes weren't updated: the answer was cut off")
+              (:events @pipeline/status)))))
+
+(deftest an-editor-that-runs-out-looks-over-fewer-stories
+  (with-redefs [analysis/sorting-batch 15]
+    (let [edits (atom [])
+          c (-> (ctx [{:type ::busy :name "Economic Times"}]
+                     (fn [_ req]
+                       (let [p (-> req :messages first :content)]
+                         {:content (cond
+                                     (str/includes? p "You sort the reports") (sorting-answer p (constantly 3))
+                                     (str/includes? p "You edit the day's")
+                                     (do (swap! edits conj (count (re-seq #"(?m)^G\d+ \(" p)))
+                                         (if (= 1 (count @edits))
+                                           "{\"same\": [[\"G1\", "
+                                           (let [k (second (re-find #"(?m)^(G\d+) \(" p))]
+                                             (str "{\"same\": [], \"importance\": {\"" k "\": 9}}"))))
+                                     :else "# Today\n\nMarkets [1].")
+                          :model "fake"})))
+                (update :config merge {:group-stories true :max-items 10}))]
+      (m/? (pipeline/run-task c "2026-09-30"))
+      (is (= [40 20] @edits) "the heaviest half of the stories, asked again")
+      (is (some #(str/includes? (:text %) "The editor re-rated 1 story") (:events @pipeline/status))))))

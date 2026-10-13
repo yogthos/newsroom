@@ -219,7 +219,7 @@
         queued (atom [])
         ctx (fn [podcast? & [auto?]]
               {:config {:sources [{:type ::fixture :name "A"}] :source-timeout-ms 500 :lookback-days 1
-                        :max-items-per-source 2 :max-items 10 :dupe-threshold nil
+                        :max-items 10 :dupe-threshold nil
                         :providers {} :roles {:analyst :local} :podcast podcast?
                         :podcast-auto (if (some? auto?) auto? true)}
                :store st

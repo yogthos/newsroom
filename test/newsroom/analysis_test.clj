@@ -41,6 +41,77 @@
                      "{\"stories\": [{\"title\": \"Big\", \"reports\": [1, 12345678901234567890, \"99999999999999999999\"],
                        \"importance\": 1e300}]}" 2))))))
 
+(deftest a-sorting-names-each-storys-entities
+  (let [answer (str "{\"stories\": [{\"title\": \"Kospi falls\", \"reports\": [1, 2], \"importance\": 9,"
+                    " \"entities\": [{\"name\": \"Kospi\", \"kind\": \"market\"},"
+                    " {\"name\": \" Samsung Electronics \", \"kind\": \"Organization\"},"
+                    " {\"name\": \"\", \"kind\": \"person\"}, \"South Korea\","
+                    " {\"name\": \"Bank of Korea\", \"kind\": \"bank\"}]}]}")
+        [g] (:groups (analysis/parse-grouping answer 2))]
+    (is (= [{:name "Kospi" :kind "market"} {:name "Samsung Electronics" :kind "organisation"}
+            {:name "South Korea" :kind nil} {:name "Bank of Korea" :kind nil}]
+           (:entities g))
+        "names trimmed, a nameless one dropped, a bare name taken, a kind it doesn't know left out")
+    (is (= (:entities g) (:entities (first (analysis/apply-grouping [(item 1) (item 2)] {:groups [g] :junk #{}}))))
+        "and each report of the story carries them"))
+  (is (str/includes? (analysis/grouping-prompt "30 September 2026" [(item 1)] {}) "\"entities\"")))
+
+(deftest a-merged-story-keeps-the-entities-of-its-parts
+  (let [e (fn [& ns] (mapv (fn [n] {:name n :kind "organisation"}) ns))
+        items [(item 1 :group "G1" :entities (e "Samsung")) (item 2 :group "G2" :entities (e "SK Hynix" "samsung"))]
+        merged (analysis/apply-review items {:same [["G1" "G2"]] :importance {}})]
+    (is (= [["Samsung" "SK Hynix"] ["Samsung" "SK Hynix"]] (map #(map :name (:entities %)) merged)))))
+
+(deftest the-reports-are-sorted-in-batches-of-neighbours
+  (let [at (fn [i v] (item i :vector v))
+        a [0.9 0.1 0.0] b [0.0 0.2 0.9]
+        items [(at 1 a) (at 2 b) (at 3 a) (at 4 a) (at 5 b) (at 6 a)]
+        batches (analysis/sorting-batches items 3)
+        n-of #(parse-long (subs (:title %) 7))]
+    (is (every? #(<= (count %) 3) batches))
+    (is (= (set (range 1 7)) (set (map n-of (apply concat batches)))) "every report in one batch")
+    (is (some #(= #{2 5} (set (map n-of %))) (map #(filter (fn [i] (#{2 5} (n-of i))) %) batches))
+        "the reports on one subject are sorted together")
+    (is (= 1 (count (filter #(some (comp #{2 5} n-of) %) batches))))
+    (testing "without embeddings the reports are batched in order"
+      (is (= [[1 2] [3]] (map #(map n-of %) (analysis/sorting-batches [(item 1) (item 2) (item 3)] 2)))))))
+
+(deftest a-sorting-accounts-for-every-report
+  (let [parsed (analysis/parse-grouping "{\"stories\": [{\"title\": \"A\", \"reports\": [1, 3]}], \"junk\": [4]}" 5)]
+    (is (= [2 5] (analysis/unplaced parsed 5)) "neither in a story nor junk")
+    (is (= [] (analysis/unplaced (update parsed :junk conj 2 5) 5)))))
+
+(deftest the-batches-sortings-are-joined
+  (is (= {:groups [{:title "A" :members [1 2]} {:title "B" :members [5]} {:title "C" :members [4]}]
+          :junk #{3 6}}
+         (analysis/join-groupings [[3 {:groups [{:title "A" :members [1 2]}] :junk #{3}}]
+                                   [3 {:groups [{:title "B" :members [2]} {:title "C" :members [1]}] :junk #{3}}]])))
+  (testing "a batch that couldn't be sorted adds nothing, its reports left to be stories of their own"
+    (is (= {:groups [{:title "B" :members [3]}] :junk #{}}
+           (analysis/join-groupings [[2 nil] [2 {:groups [{:title "B" :members [1]}] :junk #{}}]])))))
+
+(deftest the-editor-sees-every-story-of-the-day
+  (let [g (fn [i group & {:as more}] (merge (item i :group group :group-title (str "Story " group)) more))
+        p (analysis/review-prompt "13 October 2026" [(g 1 "G1" :importance 7) (g 2 "G1" :importance 7)
+                                                     (g 3 "G2" :importance 3)])]
+    (is (str/includes? p "G1 (importance 7, 2 reports, 2 outlets): Story G1"))
+    (is (str/includes? p "G2 (importance 3, 1 report, 1 outlet): Story G2"))
+    (is (str/includes? p "\"same\""))))
+
+(deftest the-editor-merges-and-rerates
+  (let [g (fn [i group imp] (item i :group group :group-title (str "Story " group) :importance imp))
+        items [(g 1 "G1" 8) (g 2 "G2" 7) (g 3 "G3" 6) (g 4 "G2" 7) (g 5 "G4" 2)]
+        review (analysis/parse-review
+                "{\"same\": [[\"G2\", \"G3\", \"G9\"], [\"G4\"]], \"importance\": {\"G3\": 9, \"G1\": 0, \"G4\": \"5\"}}"
+                #{"G1" "G2" "G3" "G4"})
+        reviewed (analysis/apply-review items review)]
+    (is (= {:same [["G2" "G3"]] :importance {"G3" 9 "G4" 5}} review)
+        "a key the day doesn't have is dropped, a story merged with only itself is no merge, a rating out of range dropped")
+    (is (= ["G1" "G2" "G2" "G2" "G4"] (map :group reviewed)) "a merged story takes the first one's key")
+    (is (= [8 9 9 9 5] (map :importance reviewed)) "and the highest importance of its parts")
+    (is (= "Story G2" (:group-title (nth reviewed 2))))
+    (is (= items (analysis/apply-review items nil)) "no review leaves the stories as they are")))
+
 (deftest grouping-sorts-the-items-into-stories
   (let [items [(item 1 :story "fed") (item 2) (item 3 :story "old") (item 4 :story "fed") (item 5)]
         grouped (analysis/apply-grouping items {:groups [{:title "The Fed" :members [2 1 4] :importance 8
@@ -74,9 +145,22 @@
                                     (g 4 "G3" :importance 10)]
                                    [] "2026-09-30" 2)]
     (is (= [4 2 3 1] (map #(parse-long (subs (:title %) 7)) ranked))
-        "two outlets beat one, and an importance of 10 doubles a story's weight where 4 cuts it")
+        "importance counts most, and two outlets add to it")
     (is (= [1.0 2.0 2.0 1.0] (map :weight ranked)))
     (is (= [1 2 2 1] (map :group-outlets ranked)))))
+
+(deftest the-day-is-cut-a-story-at-a-time
+  (let [g (fn [i group & {:as more}] (merge (item i :group group) more))
+        ranked [(g 1 "G1") (g 2 "G1") (g 3 "G1") (g 4 "G2") (g 5 "G3") (g 6 "G3") (g 7 "G4" :importance 9)]
+        picked (trends/select-stories ranked {:max-items 4 :reports-per-story 2 :must-cover-importance 8})]
+    (is (= [1 2 4 5 7] (map #(parse-long (subs (:title %) 7)) picked))
+        "two reports a story while they fit, the last that fits cut short, and a story too important to cut kept")
+    (is (= ["Outlet 3"] (map :source (:also (first picked))))
+        "a report left out of its story is still credited to it")
+    (is (= ["Outlet 6"] (map :source (:also (nth picked 3)))))
+    (testing "an item no story claims is a story of its own"
+      (is (= [1 2] (map #(parse-long (subs (:title %) 7))
+                        (trends/select-stories [(item 1) (item 2) (item 3)] {:max-items 2 :reports-per-story 6})))))))
 
 ;; --- dossiers ----------------------------------------------------------------------
 

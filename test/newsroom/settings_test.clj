@@ -284,7 +284,9 @@
                                {:name "CCTV" :query "site:english.cctv.com news {{date}}"}]}
                     %)
                 (:sources settings))))
-    (is (= {:max-items 5} (:settings (settings/from-edn "{:max-items 5}")))))
+    (is (= {:max-items 5} (:settings (settings/from-edn "{:max-items 5}"))))
+    (is (= {:settings {:max-items 5} :errors {}} (settings/from-edn "{:max-items 5 :max-items-per-source 12}"))
+        "a setting newsroom no longer has is passed over"))
   (testing "what is wrong is said, by where it is"
     (is (= {":bogus" "disallowed key" ":max-items" "should be an int"}
            (:errors (settings/from-edn "{:bogus 1 :max-items \"lots\"}"))))

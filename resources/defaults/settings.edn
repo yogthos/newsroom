@@ -17,9 +17,14 @@
  ;; sources and markdown files, after each new briefing. -1 keeps them all.
  :keep-days 100
 
- ;; the most items taken from one outlet in a source, and in all
- :max-items-per-source 12
+ ;; the most reports the analyst is given, cut a story at a time once
+ ;; every report of the day is sorted into its story, the heaviest kept;
+ ;; the most reports one story brings, the rest credited to it; and how
+ ;; important, 1 to 10, a story has to be never to be cut, a briefing that
+ ;; leaves one out asked to cover it (nil lets every story be cut)
  :max-items 180
+ :reports-per-story 6
+ :must-cover-importance 8
 
  ;; how many past briefings a story is remembered from: a story told in
  ;; any of the last :seen-days briefings is left out of today's, so one

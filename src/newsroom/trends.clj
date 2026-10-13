@@ -128,18 +128,20 @@
   [[lead & others :as members]]
   (news/outlets (assoc lead :also (vec (concat others (mapcat :also members))))))
 
-(defn importance-factor
-  "How much a story's importance, 1 to 10, scales its weight: 5 leaves it
-  as its coverage has it, 10 doubles it, 1 cuts it to a fifth. A story
-  with no importance is left as it is."
-  [importance]
-  (if importance (/ importance 5.0) 1.0))
+(defn story-score
+  "How heavy a story is: its `importance`, 1 to 10 (5 when the desk gave
+  none), times one plus the log of its `weight`, its outlets today and its
+  storyline's earlier days. Coverage counts, but each further outlet less,
+  so a major event one outlet carried still outweighs a minor one three
+  did: a 9 in one outlet scores 9, a 3 in three about 6.3."
+  [importance weight]
+  (* (or importance 5) (+ 1.0 (m/log (max 1.0 (double weight))))))
 
 (defn rank-groups
   "The items, sorted into stories by their :group, ranked a story at a
   time: by the story's weight, the outlets that carried any of its reports
-  today plus its storyline's earlier days, scaled by its :importance (see
-  importance-factor). Heaviest story first, the reports of one story
+  today plus its storyline's earlier days, and its :importance (see
+  story-score). Heaviest story first, the reports of one story
   together, the most widely carried first. Each item gets its story's
   :weight, :days and :group-outlets. Stories of equal score keep their
   order."
@@ -159,12 +161,48 @@
                   weight (+ outlets (past-weight past day half-life))
                   days (inc (count (distinct (map :day past))))]
               {:i i
-               :score (* weight (importance-factor (:importance lead)))
+               :score (story-score (:importance lead) weight)
                :members (mapv #(assoc % :weight (round2 weight) :days days :group-outlets outlets)
                               members)})))
          (sort-by (fn [{:keys [i score]}] [(- score) i]))
          (mapcat :members)
          vec)))
+
+;; --- cutting the day ----------------------------------------------------------------
+
+(defn- credited
+  "`item` with `left`, reports of its story left out for space, credited to
+  it in :also, so they count as told and their outlets as carrying it."
+  [item left]
+  (if (seq left)
+    (update item :also (fnil into [])
+            (mapcat (fn [r] (cons (assoc (select-keys r [:source :url :title]) :origin (news/origin r))
+                                  (:also r)))
+                    left))
+    item))
+
+(defn select-stories
+  "The `ranked` items cut a story at a time, the stories in their order,
+  an item with no :group a story of its own: at most :reports-per-story
+  (6) of each story's reports while :max-items (180) of them fit, the last
+  story that fits cut short. A story whose :importance is
+  :must-cover-importance or more is kept whatever the space. The reports
+  left out are credited to the first kept of their story."
+  [ranked {:keys [max-items reports-per-story must-cover-importance]}]
+  (let [cap (or max-items 180)
+        per (or reports-per-story 6)
+        stories (partition-by (fn [item] (or (:group item) item)) ranked)
+        must? (fn [[lead]] (and must-cover-importance (:importance lead)
+                                (>= (:importance lead) must-cover-importance)))]
+    (first
+     (reduce (fn [[out n] story]
+               (let [room (if (must? story) per (min per (- cap n)))]
+                 (if (pos? room)
+                   (let [[kept left] (split-at room story)]
+                     [(into out (cons (credited (first kept) left) (rest kept))) (+ n (count kept))])
+                   [out n])))
+             [[] 0]
+             stories))))
 
 ;; --- periods ---------------------------------------------------------------------
 
@@ -363,8 +401,9 @@
   "The digest's prompt: the Selmer `template` with {{period}}, {{days}},
   {{stories}}, {{previous}}, about the last digest, {{briefings}}, the
   briefings the period's digest is built on, {{trends}}, the trends the
-  desk followed through the period, and {{record}}, how earlier
-  projections turned out, filled in. A template with no place for the
+  desk followed through the period, {{web}}, its entities against the
+  period before, and {{record}}, how earlier projections turned out,
+  filled in. A template with no place for the
   stories gets them after it, so the model always sees what it may cite,
   and one with no place for `previous`, `briefings`, `trends` or `record`
   gets them just before them."
@@ -373,15 +412,18 @@
   ([template period days stories previous trends briefings]
    (render-digest-prompt template period days stories previous trends briefings nil))
   ([template period days stories previous trends briefings record]
+   (render-digest-prompt template period days stories previous trends briefings record nil))
+  ([template period days stories previous trends briefings record web]
    (template/fill (news/place-vars template (cond-> []
                                               previous (conj "previous")
                                               briefings (conj "briefings")
                                               trends (conj "trends")
+                                              web (conj "web")
                                               record (conj "record")
                                               true (conj "stories"))
                                    "stories")
                   {:period period :days days :stories stories :previous previous :trends trends
-                   :briefings briefings :record record})))
+                   :briefings briefings :record record :web web})))
 
 ;; --- the desk's trends -------------------------------------------------------------
 

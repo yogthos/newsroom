@@ -28,6 +28,8 @@
   fails leaves the briefing to be written from what there is."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [newsroom.embed :as embed]
+            [newsroom.entities :as entities]
             [newsroom.news :as news]
             [newsroom.notes :as notes]
             [newsroom.retrospective :as retrospective]))
@@ -95,6 +97,31 @@
        (when-let [t (:title (get notes story))]
          (str "\n    Continues the storyline: " t))))
 
+(def entity-kinds
+  "The kinds of entity a story is about."
+  ["person" "organisation" "country" "place" "market"])
+
+(def ^:private max-entities
+  "The most entities the sorting names for one story."
+  5)
+
+(defn- entity-kind [v]
+  (let [k (some-> v str str/trim str/lower-case (str/replace "organization" "organisation"))]
+    (some #{k} entity-kinds)))
+
+(defn- read-entities
+  "The entities a story's answer names, {:name :kind}: a bare name taken
+  as one of no kind, a nameless one dropped, at most max-entities."
+  [v]
+  (->> (if (sequential? v) v [])
+       (keep (fn [e]
+               (let [[n k] (if (map? e) [(get e "name") (get e "kind")] [e nil])
+                     n (some-> n str str/trim (str/replace #"\s+" " "))]
+                 (when-not (str/blank? n)
+                   {:name (clip n 80) :kind (entity-kind k)}))))
+       (take max-entities)
+       vec))
+
 (defn grouping-prompt
   "The prompt that has the desk sort `items`, numbered from 1 in order,
   into stories. `notes` are the notes on the storylines the items
@@ -115,14 +142,21 @@
        "- its importance from 1 to 10 for a reader who wants to understand the world: 10 when it moves "
        "the balance of power between states, war and peace, trade, markets, prices, production, energy "
        "or a major country's political direction, 1 for a local, human-interest, celebrity, sport or "
-       "lifestyle item with no wider consequence;\n"
-       "- its status: " (str/join ", " statuses) ".\n\n"
+       "lifestyle item with no wider consequence. A market or currency moving several percent in a day, a "
+       "central bank's surprise, a default, a war's escalation, a coup or a major election result is 8 or "
+       "more however few reports carry it;\n"
+       "- its status: " (str/join ", " statuses) ";\n"
+       "- its entities: the main people, organisations, countries, places and markets (an index, a "
+       "currency, a commodity) it is about, at most " max-entities ", each by its full common name in "
+       "English, the same way every time (\"United States\", not \"US\"; \"Federal Reserve\", not "
+       "\"the Fed\"), with its kind: " (str/join ", " entity-kinds) ".\n\n"
        "Leave out as junk only the reports that aren't news at all: a section or index page, an advert, "
        "a login or error page, a quiz, a list of links, a headline with nothing behind it. Put every "
        "other report in exactly one story.\n\n"
        "Answer with JSON only, in this shape:\n"
        "{\"stories\": [{\"title\": \"...\", \"reports\": [3, 7, 12], \"importance\": 7, "
-       "\"status\": \"escalating\"}], \"junk\": [5]}\n\n"
+       "\"status\": \"escalating\", \"entities\": [{\"name\": \"Bank of Korea\", \"kind\": \"organisation\"}]}], "
+       "\"junk\": [5]}\n\n"
        "Reports:\n\n"
        (str/join "\n\n" (map-indexed (fn [i item] (grouping-line (inc i) item notes)) items))))
 
@@ -143,10 +177,12 @@
                                          (remove placed)
                                          vec)]
                         (if (seq members)
-                          [(conj groups {:title (text (get g "title") 160)
-                                         :members members
-                                         :importance (importance-of (get g "importance"))
-                                         :status (status-of (get g "status"))})
+                          [(conj groups (let [ents (read-entities (get g "entities"))]
+                                          (cond-> {:title (text (get g "title") 160)
+                                                   :members members
+                                                   :importance (importance-of (get g "importance"))
+                                                   :status (status-of (get g "status"))}
+                                            (seq ents) (assoc :entities ents))))
                            (into placed members)]
                           [groups placed])))
                     [[] #{}]
@@ -154,6 +190,71 @@
         (when (seq groups)
           {:groups groups
            :junk (set (remove placed (filter in-range? (numbers (get m "junk")))))})))))
+
+(defn unplaced
+  "The reports, by number from 1 to `n`, a sorting `parsed` neither put in
+  a story nor called junk."
+  [{:keys [groups junk]} n]
+  (let [placed (into (set junk) (mapcat :members groups))]
+    (vec (remove placed (range 1 (inc n))))))
+
+(def sorting-batch
+  "How many reports one sorting call sorts: few enough that the answer,
+  a line a story, comes back whole and the model reads every report, enough
+  that a story's reports mostly meet in one call."
+  40)
+
+(def ^:private neighbours
+  "How close (cosine similarity) a report has to sit to the reports of a
+  subject to be sorted with them: looser than the storylines', so that
+  reports one call ought to see together, a market's fall and the shares
+  behind it, meet."
+  0.5)
+
+(defn sorting-batches
+  "`items` in batches of at most `size` for the sorting calls, the reports
+  on one subject together: grouped by their :vector, each joining the
+  closest group whose mean it sits `neighbours` close to, and the groups
+  packed into the first batch with room, a group too big for one split.
+  Without embeddings, in order."
+  [items size]
+  (if-not (every? :vector items)
+    (mapv vec (partition-all size items))
+    (let [groups (reduce (fn [groups item]
+                           (let [v (:vector item)
+                                 best (some->> (map-indexed vector groups)
+                                               (map (fn [[i g]] [(embed/cosine v (:sum g)) i]))
+                                               seq
+                                               (apply max-key first))]
+                             (if (and best (>= (first best) neighbours))
+                               (update groups (second best)
+                                       #(-> % (update :items conj item) (update :sum (partial mapv +) v)))
+                               (conj groups {:items [item] :sum v}))))
+                         []
+                         items)
+          pieces (mapcat #(partition-all size (:items %)) groups)]
+      (reduce (fn [batches piece]
+                (if-let [i (first (keep-indexed (fn [i b] (when (<= (+ (count b) (count piece)) size) i))
+                                                batches))]
+                  (update batches i into piece)
+                  (conj batches (vec piece))))
+              []
+              pieces))))
+
+(defn join-groupings
+  "The sortings of consecutive batches as one, [[size parsed]] in order,
+  each batch's reports numbered after the batches before it. A batch with
+  no sorting adds nothing, so its reports are stories of their own."
+  [batches]
+  (first
+   (reduce (fn [[out offset] [size parsed]]
+             (let [shift #(+ offset %)]
+               [(-> out
+                    (update :groups into (map #(update % :members (partial mapv shift)) (:groups parsed)))
+                    (update :junk into (map shift (:junk parsed))))
+                (+ offset size)]))
+           [{:groups [] :junk #{}} 0]
+           batches)))
 
 (defn- shared-story
   "The storyline most of `members` continue, the first of them on a tie,
@@ -179,7 +280,7 @@
     (->> groups
          (remove (fn [g] (every? junk (:members g))))
          (map-indexed
-          (fn [k {:keys [title members importance status]}]
+          (fn [k {:keys [title members importance status entities]}]
             (let [members (mapv #(nth items (dec %)) (remove junk members))
                   story (shared-story members)
                   key (str "G" (inc k))]
@@ -187,10 +288,99 @@
                       (cond-> (assoc item :group key :group-title (or title (:title (first members))))
                         importance (assoc :importance importance)
                         status (assoc :status status)
+                        (seq entities) (assoc :entities entities)
                         story (assoc :story story)))
                     members))))
          (apply concat)
          vec)))
+
+;; --- 1b. the editor's look at the whole day ------------------------------------------
+
+(defn- story-outlets [[lead & others :as members]]
+  (news/outlets (assoc lead :also (vec (concat others (mapcat :also members))))))
+
+(defn review-prompt
+  "The prompt that has the editor look over every story the batches sorted
+  `items` into, a line each, for the stories two batches each started on
+  one event and for the importances that don't hold up against the rest
+  of the day."
+  [day items]
+  (let [by-group (group-by :group items)]
+    (str "You edit the day's news briefing. Today is " day ".\n\n"
+         "The day's reports were sorted into stories in batches, so two batches may each have started a "
+         "story on one event, and each batch rated importance against only its own reports. Below is every "
+         "story of the day, with its key, the importance it was given from 1 to 10, and how many reports "
+         "and outlets carry it.\n\n"
+         "1. Find the stories that are one event, or one event and its direct consequences, told apart: "
+         "a market's fall and the shares that led it, two reports of one missile test. Keep apart stories "
+         "that are only related.\n"
+         "2. Rate again every story whose importance doesn't hold up against the whole day, from 1 to 10: "
+         "10 when it moves the balance of power between states, war and peace, trade, markets, prices, "
+         "production, energy or a major country's political direction. A market or currency moving several "
+         "percent in a day, a central bank's surprise, a default, a war's escalation, a coup or a major "
+         "election result is 8 or more however few outlets carry it. 1 for a local, human-interest, "
+         "celebrity, sport or lifestyle item.\n\n"
+         "Name only the stories you merge or re-rate. Answer with JSON only, in this shape:\n"
+         "{\"same\": [[\"G3\", \"G17\"]], \"importance\": {\"G17\": 9}}\n\n"
+         "Stories:\n\n"
+         (str/join "\n" (for [g (distinct (map :group items))
+                              :let [members (get by-group g)
+                                    lead (first members)
+                                    n (count members)
+                                    o (story-outlets members)]]
+                          (str g " (importance " (or (:importance lead) "unrated") ", "
+                               n (if (= 1 n) " report, " " reports, ") o (if (= 1 o) " outlet" " outlets") "): "
+                               (or (:group-title lead) (:title lead))))))))
+
+(defn parse-review
+  "The editor's `answer` about the stories `keys`: {:same [[key]]
+  :importance {key n}}, a merge of two or more of the day's stories each,
+  a key no story has dropped, a story in the first merge that names it,
+  and only importances from 1 to 10. nil when it can't be read."
+  [answer keys]
+  (when-let [m (json-object answer)]
+    (let [known (set keys)
+          same (first
+                (reduce (fn [[out placed] ks]
+                          (let [ks (->> (if (sequential? ks) ks []) (map str) (filter known) (remove placed) distinct vec)]
+                            (if (< 1 (count ks)) [(conj out ks) (into placed ks)] [out placed])))
+                        [[] #{}]
+                        (if (sequential? (get m "same")) (get m "same") [])))
+          importance (into {} (for [[k v] (when (map? (get m "importance")) (get m "importance"))
+                                    :let [n (small-number v)]
+                                    :when (and (known (str k)) n (<= 1 n 10))]
+                                [(str k) n]))]
+      {:same same :importance importance})))
+
+(defn apply-review
+  "The `items` as the editor's `review` has them: the stories it merges
+  under the first one's key and title, each story's importance the one the
+  editor gave, a merged story the highest of its parts'."
+  [items {:keys [same importance] :as review}]
+  (if-not review
+    items
+    (let [into-key (into {} (for [ks same, k ks] [k (first ks)]))
+          lead-of (into {} (map (fn [item] [(:group item) item])) (reverse items))
+          rated (fn [g] (or (get importance g) (:importance (lead-of g))))
+          merged-importance (reduce (fn [m [g k]]
+                                      (let [r (rated g)]
+                                        (cond-> m r (update k #(if % (max % r) r)))))
+                                    {}
+                                    (map (fn [g] [g (get into-key g g)]) (distinct (map :group items))))]
+      (let [entities (reduce (fn [m g]
+                               (let [k (get into-key g g)]
+                                 (update m k #(entities/union % (:entities (lead-of g))))))
+                             {}
+                             (distinct (map :group items)))]
+        (mapv (fn [{:keys [group] :as item}]
+                (let [k (get into-key group group)
+                      head (lead-of k)
+                      imp (get merged-importance k)
+                      ents (get entities k)]
+                  (cond-> (assoc item :group k :group-title (:group-title head))
+                    imp (assoc :importance imp)
+                    (seq ents) (assoc :entities ents))))
+              items)))))
 
 (defn story-ids
   "The day's numbered `sources` with a storyline each: the one it

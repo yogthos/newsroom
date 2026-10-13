@@ -11,10 +11,28 @@
 
 ;; --- text --------------------------------------------------------------------------
 
+(def ^:private accents
+  "HTML's accented letters, by the name of the accent: &eacute; is e with
+  the combining acute."
+  {"acute" 0x301 "grave" 0x300 "circ" 0x302 "tilde" 0x303 "uml" 0x308 "ring" 0x30A
+   "cedil" 0x327 "caron" 0x30C})
+
 (def ^:private entities
-  {"amp" "&" "lt" "<" "gt" ">" "quot" "\"" "apos" "'" "nbsp" " "
-   "ndash" "–" "mdash" "—" "hellip" "…" "rsquo" "’" "lsquo" "‘"
-   "rdquo" "”" "ldquo" "“"})
+  (merge
+   (into {} (for [letter "aeiouyAEIOUYcCnNsSzZ"
+                  [accent mark] accents
+                  :let [composed (java.text.Normalizer/normalize (str letter (char mark))
+                                                                 java.text.Normalizer$Form/NFC)]
+                  :when (= 1 (count composed))]
+              [(str letter accent) composed]))
+   {"amp" "&" "lt" "<" "gt" ">" "quot" "\"" "apos" "'" "nbsp" " " "ensp" " " "emsp" " " "thinsp" " "
+    "shy" "" "ndash" "–" "mdash" "—" "hellip" "…" "rsquo" "’" "lsquo" "‘" "sbquo" "‚"
+    "rdquo" "”" "ldquo" "“" "bdquo" "„" "laquo" "«" "raquo" "»" "lsaquo" "‹" "rsaquo" "›"
+    "szlig" "ß" "aelig" "æ" "AElig" "Æ" "oslash" "ø" "Oslash" "Ø" "eth" "ð" "ETH" "Ð"
+    "thorn" "þ" "THORN" "Þ" "oelig" "œ" "OElig" "Œ" "iexcl" "¡" "iquest" "¿"
+    "copy" "©" "reg" "®" "trade" "™" "euro" "€" "pound" "£" "yen" "¥" "cent" "¢"
+    "deg" "°" "middot" "·" "bull" "•" "times" "×" "divide" "÷" "minus" "−" "plusmn" "±"
+    "sect" "§" "para" "¶" "prime" "′" "Prime" "″" "frac12" "½" "frac14" "¼" "frac34" "¾"}))
 
 (defn- decode-entity [[whole body]]
   (cond

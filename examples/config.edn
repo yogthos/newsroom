@@ -57,13 +57,17 @@
  ;; Undated items are always kept.
  :lookback-days 1
 
- ;; The most items taken from one outlet in a source, and in all. A source
- ;; that reads many outlets, like a feed reader or a search crediting its
- ;; results to outlets, gives each its own share. The overall cap keeps the
- ;; most widely carried stories (see :story-threshold), and among equals
- ;; outlets are taken in turn, so it trims every one evenly.
- :max-items-per-source 12
+ ;; The most reports the analyst is given. Every report of the day is
+ ;; sorted into its story first, however far down its feed it was, and the
+ ;; day is cut a story at a time, the heaviest kept: the most important and
+ ;; most widely carried (see :story-threshold). A story brings at most
+ ;; :reports-per-story reports, the rest credited to it. A story the desk
+ ;; rates :must-cover-importance or more, 1 to 10, is never cut, and a
+ ;; briefing that leaves one out is asked to cover it; nil lets every story
+ ;; be cut.
  :max-items 180
+ :reports-per-story 6
+ :must-cover-importance 8
 
  ;; How many past briefings a story is remembered from. A story told in any
  ;; of the last :seen-days briefings is left out of today's, so one dropped
