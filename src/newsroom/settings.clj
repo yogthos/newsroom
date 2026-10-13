@@ -57,6 +57,11 @@
              {:key :reports-per-story :type :int :min 1 :default 6
               :doc (str "The most reports one story brings to the analyst. The rest are credited to it, so "
                         "they count as told and their outlets as carrying it.")}
+             {:key :max-analysis :type :int :min 0 :default 12
+              :doc (str "The most pieces of analysis, from the sources whose kind is analysis, the analyst is "
+                        "given: each under the story it argues about, two a story at most, the most important "
+                        "stories' first. They frame the facts the reporting carries and aren't counted as "
+                        "coverage. 0 gives none.")}
              {:key :must-cover-importance :type :int :nullable? true :min 1 :max 10 :default 8
               :doc (str "A story the desk rates this important, 1 to 10, is never cut for space, and a "
                         "briefing that leaves one out is asked to cover it. Blank lets every story be cut.")}
@@ -436,11 +441,21 @@
      {:key :retry-wait-ms :type :int :min 0 :default (default :retry-wait-ms)
       :doc "The wait before trying again when the server doesn't say. Blank: its type's, else the setting."}]))
 
-(defn source-fields
-  "The fields a source of `type` shows: its name, its shape's, then how
-  it is read."
+(defn kind-field
+  "Whether a source of `type` reports or argues, its type's kind shown as
+  the default."
   [type]
-  (-> [source-name-field]
+  {:key :kind :type :keyword :options sources/kinds
+   :default (str (name (sources/kind {:type type})) " for this type")
+   :doc (str "news for reporting, which the briefing takes its facts from; analysis for commentary, like "
+             "a commentator's channel or an opinion feed, which frames the facts and argues about them, "
+             "credited to whoever makes the argument. Blank: its type's.")})
+
+(defn source-fields
+  "The fields a source of `type` shows: its name and kind, its shape's,
+  then how it is read."
+  [type]
+  (-> [source-name-field (kind-field type)]
       (into (:fields (sources/shape type)))
       (into (policy-fields type))))
 

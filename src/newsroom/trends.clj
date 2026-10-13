@@ -335,9 +335,11 @@
   "The stored `sources` a digest cites for a storyline with no notes: at
   most `n`, the most telling of each day (cited by the day's briefing, then
   the most widely carried), latest days first when there are more days than
-  room, in the order they ran."
+  room, in the order they ran. An analysis argued about the storyline
+  rather than reporting it, so it isn't one."
   [sources n]
-  (->> (group-by :day sources)
+  (->> (remove #(= :analysis (:kind %)) sources)
+       (group-by :day)
        (map (fn [[_ ss]] (first (sort-by (fn [s] [(if (:cited? s) 0 1) (- (news/outlets s)) (:n s)]) ss))))
        (sort-by :day)
        (take-last n)

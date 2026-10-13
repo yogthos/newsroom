@@ -26,6 +26,19 @@
         (is (= [1 3] (map :n (:cited day))) "the sources the briefing cites"))
       (finally (store/close db)))))
 
+(deftest an-analysis-source-is-kept-as-one-and-isnt-coverage
+  (let [db (fresh)
+        piece {:n 4 :title "Why the ceasefire won't hold" :url "https://youtube.com/watch?v=x" :source "Daniel Davis"
+               :summary "An argument." :published nil :kind :analysis :story "s1"}]
+    (try
+      (store/save-day! db {:day "2026-09-30" :sources (conj (mapv #(assoc % :story "s1") sources) piece) :cited [4]
+                           :markdown "x [4]" :model "m" :provider "p"})
+      (is (= :analysis (:kind (last (:sources (store/day db "2026-09-30"))))))
+      (is (nil? (:kind (first (:sources (store/day db "2026-09-30"))))) "news is the default, and not written out")
+      (is (= [1 2 3] (map :n (store/coverage-between db "2026-09-30" "2026-09-30")))
+          "a commentator carrying a story isn't an outlet reporting it")
+      (finally (store/close db)))))
+
 (deftest a-day-with-a-tldr-and-corroborated-source-round-trips
   (let [db (fresh)]
     (try

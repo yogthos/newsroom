@@ -29,6 +29,9 @@
     (is (= [1 2] (map :n (second (first cs)))) "with every report of the day on it"))
   (testing "what a gap search found isn't the day's reporting"
     (let [cs (notes/candidates (conj today (assoc (src 6 "fed") :gap "why now")) [5 6] #{"fed"})]
+      (is (= [1 2] (map :n (second (first cs)))))))
+  (testing "nor is a commentator's analysis of it, whose arguments aren't the story's facts"
+    (let [cs (notes/candidates (conj today (assoc (src 7 "fed") :kind :analysis)) [5 7] #{"fed"})]
       (is (= [1 2] (map :n (second (first cs))))))))
 
 (deftest the-prompt-names-each-fact-and-report

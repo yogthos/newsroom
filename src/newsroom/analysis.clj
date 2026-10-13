@@ -406,22 +406,98 @@
   [s]
   (or (:group s) (str "S" (:n s))))
 
+(defn analysis?
+  "Whether a source is commentary, which frames the facts, rather than
+  reporting, which carries them."
+  [s]
+  (= :analysis (:kind s)))
+
 (defn stories
   "The day's numbered `sources` as stories, in order: {:key :title :status
-  :importance :story :sources}. A source with no :group is a story of its
-  own."
+  :importance :story :sources :analysis}, :sources its reports and
+  :analysis the commentary on it. A source with no :group is a story of
+  its own, an analysis no story took one of no reports."
   [sources]
   (let [keyed (map #(assoc % ::key (story-key %)) sources)
         by-key (group-by ::key keyed)]
     (vec (for [k (distinct (map ::key keyed))
                :let [members (mapv #(dissoc % ::key) (get by-key k))
-                     lead (first members)]]
+                     lead (or (first (remove analysis? members)) (first members))]]
            {:key k
             :title (or (:group-title lead) (:title lead))
             :status (:status lead)
             :importance (:importance lead)
             :story (:story lead)
-            :sources members}))))
+            :sources (filterv (complement analysis?) members)
+            :analysis (filterv analysis? members)}))))
+
+;; --- 1c. the analysis ---------------------------------------------------------------
+
+(defn attach-prompt
+  "The prompt that has the desk say which of the day's `stories`, {:key
+  :title}, each of the analysis `pieces`, numbered from 1, argues about."
+  [day stories pieces]
+  (str "You edit a daily news briefing. Today is " day ".\n\n"
+       "Below are the day's stories, by key, and pieces of analysis: commentators' videos, columns and "
+       "essays on the news. For each piece, name the stories it argues about, the one it is most about "
+       "first, or none when it is about none of them. Name a story only when the piece says something "
+       "about that event itself, not when it only shares a country or a topic.\n\n"
+       "Answer with JSON only, in this shape:\n"
+       "{\"pieces\": [{\"piece\": 1, \"stories\": [\"G4\", \"G9\"]}, {\"piece\": 2, \"stories\": []}]}\n\n"
+       "Stories:\n\n"
+       (str/join "\n" (map #(str (:key %) ": " (:title %)) stories))
+       "\n\nAnalysis:\n\n"
+       (str/join "\n\n" (map-indexed (fn [i p] (grouping-line (inc i) p {})) pieces))))
+
+(defn parse-attachments
+  "The stories of `keys` each of `n` pieces argues about, by the desk's
+  `answer`: {piece [key]}, every piece from 1 to `n`, one the answer
+  doesn't name with none. nil when it can't be read."
+  [answer n keys]
+  (when-let [m (json-object answer)]
+    (when (sequential? (get m "pieces"))
+      (let [known (set keys)
+            named (into {} (for [p (maps (get m "pieces"))
+                                 :let [i (small-number (get p "piece"))]
+                                 :when (and i (<= 1 i n))]
+                             [i (->> (if (sequential? (get p "stories")) (get p "stories") [])
+                                     (map str) (filter known) distinct vec)]))]
+        (into {} (for [i (range 1 (inc n))] [i (get named i [])]))))))
+
+(defn place-analysis
+  "The `ranked` reports with the analysis `pieces` among them: each piece
+  under the story it argues about most, `attachments` {piece [key]} by
+  the pieces' numbers from 1, after that story's reports, the heaviest
+  stories' first, at most `per-story` a story and `budget` in all. Pieces
+  no story took fill what the budget leaves, after every story. A placed
+  piece takes its story's :group and :group-title."
+  [ranked pieces attachments budget per-story]
+  (let [pieces (vec pieces)
+        by-story (group-by (fn [i] (first (get attachments i))) (range 1 (inc (count pieces))))
+        order (distinct (keep :group ranked))
+        chosen (loop [gs order out {} n 0]
+                 (if (or (empty? gs) (>= n budget))
+                   out
+                   (let [g (first gs)
+                         take-n (min per-story (- budget n))
+                         is (take take-n (get by-story g))]
+                     (recur (rest gs) (cond-> out (seq is) (assoc g is)) (+ n (count is))))))
+        used (reduce + (map count (vals chosen)))
+        loose (take (max 0 (- budget used)) (get by-story nil))
+        titles (into {} (map (juxt :group :group-title)) (reverse ranked))
+        as-piece (fn [g i] (cond-> (nth pieces (dec i)) g (assoc :group g :group-title (titles g))))
+        last-of (into {} (map-indexed (fn [idx item] [(:group item) idx])) ranked)]
+    (vec (concat
+          (apply concat
+                 (map-indexed (fn [idx item]
+                                (let [g (:group item)]
+                                  (if (and g (= idx (last-of g)) (chosen g))
+                                    (cons item (map #(as-piece g %) (chosen g)))
+                                    [item])))
+                              ranked))
+          (map #(as-piece nil %) loose)))))
+
+
 
 ;; --- 2. dossiers -------------------------------------------------------------------
 
@@ -468,12 +544,20 @@
          (str/join "" (for [f (take-last 3 (:facts note))]
                         (str "\n- " (long-date (:day f)) ": " (:text f)))))))
 
-(defn- dossier-story-block [{:keys [key title status sources story]} notes long-date]
+(def ^:private analysis-chars
+  "How much of a piece of analysis, a transcript say, a dossier reads."
+  4000)
+
+(defn- dossier-story-block [{:keys [key title status sources story analysis]} notes long-date]
   (str "### " key ": " title "\n"
        (when status (str "Status as sorted: " status "\n"))
        (when-let [bg (note-background (get notes story) long-date)] (str bg "\n"))
        "Reports:\n\n"
-       (str/join "\n\n" (map report-block (dossier-sources {:sources sources})))))
+       (str/join "\n\n" (map report-block (dossier-sources {:sources sources})))
+       (when (seq analysis)
+         (str "\n\nAnalysis of this story, commentary to weigh, not facts:\n\n"
+              (str/join "\n\n" (map #(report-block (update % :text (fn [t] (some-> t (clip analysis-chars)))))
+                                     analysis))))))
 
 (def ^:private max-expectations
   "The most of the outlets' expectations a dossier keeps."
@@ -509,6 +593,11 @@
        "rates stay high, trade splitting into blocs, or a technology shifting the balance of production, "
        "a short phrase each.\n"
        "- significance: a sentence or two on why it matters beyond its borders, or that it doesn't.\n"
+       "- views: where a story has analysis, the commentary of commentators and columnists below its "
+       "reports, the arguments it makes about the story, each with who makes it and its citation, and "
+       "where it disputes what the reports say, say so. Analysis frames the facts; it is never one. A fact "
+       "cites the reports, and what only an analysis says goes here, credited to whoever says it. An "
+       "analysis's forecasts go in expectations like any other.\n"
        "- expectations: at most " max-expectations " forecasts the reports themselves put forward on how "
        "the story will go, in their own voice or through the analysts and experts they choose to present, "
        "each a claim that can later be found true or false, with its subject, one of "
@@ -524,6 +613,7 @@
        "\"disputes\": [{\"issue\": \"...\", \"claims\": [{\"claim\": \"...\", \"by\": \"...\", \"cites\": [4]}]}], "
        "\"framing\": [{\"outlet\": \"...\", \"angle\": \"...\"}], "
        "\"gaps\": [{\"gap\": \"...\", \"query\": \"...\"}], \"forces\": [\"...\"], \"significance\": \"...\", "
+       "\"views\": [{\"by\": \"...\", \"view\": \"...\", \"cites\": [6]}], "
        "\"expectations\": [{\"claim\": \"...\", \"subject\": \"economy\", \"due\": \"YYYY-MM-DD\", "
        "\"by\": \"...\", \"cites\": [3]}]}]}\n\n"
        "Stories:\n\n"
@@ -560,16 +650,19 @@
 
 (defn- read-dossier
   "A dossier from the answer's `d`, its citations kept to `sources`, its
-  story's. A fact that cites none of them is dropped."
+  story's reports and analysis. A fact cites its reports, and one that
+  cites none of them is dropped, however many analyses it cites."
   [d sources]
   (let [by-n (into {} (map (juxt :n identity)) sources)
-        cites #(filterv by-n (numbers %))]
+        cites #(filterv by-n (numbers %))
+        reported (into {} (remove (comp analysis? val)) by-n)]
     {:summary (text (get d "summary") 800)
      :status (status-of (get d "status"))
      :domain (domain-of (get d "domain"))
      :label (text (get d "label") 60)
      :facts (vec (for [f (maps (get d "facts"))
-                       :let [t (text (get f "fact") 400) cs (cites (or (get f "cites") (get f "cite")))]
+                       :let [t (text (get f "fact") 400)
+                             cs (filterv reported (cites (or (get f "cites") (get f "cite"))))]
                        :when (and t (seq cs))]
                    {:fact t :cites cs}))
      :actors (vec (for [a (maps (get d "actors"))
@@ -596,6 +689,10 @@
                   {:gap gap :query (text (get g "query") 200)}))
      :forces (texts (get d "forces") 6 120)
      :significance (text (get d "significance") 500)
+     :views (vec (for [v (maps (get d "views"))
+                       :let [t (text (get v "view") 400) cs (cites (get v "cites"))]
+                       :when (and t (seq cs))]
+                   {:by (text (get v "by") 100) :view t :cites cs}))
      :expectations (vec (take max-expectations (keep #(expectation % by-n cites) (maps (get d "expectations")))))}))
 
 (defn parse-dossiers
@@ -607,7 +704,7 @@
           (keep (fn [d]
                   (let [k (str/trim (str (get d "story")))]
                     (when-let [story (by-key k)]
-                      (let [dossier (read-dossier d (:sources story))]
+                      (let [dossier (read-dossier d (concat (:sources story) (:analysis story)))]
                         (when (or (:summary dossier) (seq (:facts dossier)))
                           [k dossier]))))))
           (maps (get (json-object answer) "dossiers")))))
@@ -968,7 +1065,7 @@
     (str "No record on " subject " yet.")))
 
 (defn- dossier-text [{:keys [key title] :as story} {:keys [label status summary facts actors disputes
-                                                          framing gaps forces significance expectations]}
+                                                          framing gaps forces significance expectations views]}
                      found records]
   (str "### " (or label title) ": " title "\n"
        "Sources " (cite-list (source-numbers story)) (when status (str ". Status: " status)) "\n"
@@ -991,6 +1088,11 @@
               "\n"))
        (when (seq framing)
          (str "\nFraming:\n" (str/join "\n" (for [{:keys [outlet angle]} framing] (str "- " outlet ": " angle))) "\n"))
+       (when (seq views)
+         (str "\nViews, from the analysis (arguments, not facts):\n"
+              (str/join "\n" (for [{:keys [by view cites]} views]
+                               (str "- " (when by (str by ": ")) view " " (cite-list cites))))
+              "\n"))
        (when (seq gaps)
          (str "\nNot in the reports:\n"
               (str/join "\n" (for [{:keys [gap]} gaps

@@ -1460,3 +1460,47 @@
       (m/? (pipeline/run-task c "2026-09-30"))
       (is (= [40 20] @edits) "the heaviest half of the stories, asked again")
       (is (some #(str/includes? (:text %) "The editor re-rated 1 story") (:events @pipeline/status))))))
+
+(defmethod sources/fetch-items ::talk [_ {:keys [day]}]
+  [{:title "Why the ceasefire won't hold" :url "https://www.youtube.com/watch?v=t1" :source "Daniel Davis"
+    :origin "Daniel Davis" :summary "A commentator argues the ceasefire will fail."
+    :text "Transcript of the video on Daniel Davis:\nThe ceasefire won't hold past winter."
+    :published (str day "T09:00:00Z")}
+   {:title "Gardening tips" :url "https://www.youtube.com/watch?v=t2" :source "Garden Guy"
+    :origin "Garden Guy" :summary "Roses." :published (str day "T09:00:00Z")}])
+
+(deftest analysis-frames-the-stories-it-argues-about
+  (let [prompts (atom [])
+        c (-> (ctx [{:type ::fixture :name "A" :ns [1 2]} {:type ::talk :name "Talk" :kind :analysis}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (swap! prompts conj p)
+                       {:content (cond
+                                   (str/includes? p "You sort the reports")
+                                   (str "{\"stories\": [{\"title\": \"Ceasefire holds\", \"reports\": [1], \"importance\": 7},"
+                                        " {\"title\": \"Other news\", \"reports\": [2], \"importance\": 5}]}")
+                                   (str/includes? p "pieces of analysis")
+                                   "{\"pieces\": [{\"piece\": 1, \"stories\": [\"G1\"]}, {\"piece\": 2, \"stories\": []}]}"
+                                   (str/includes? p "prepares the dossiers")
+                                   (str "{\"dossiers\": [{\"story\": \"G1\", \"summary\": \"It holds.\","
+                                        " \"facts\": [{\"fact\": \"Strikes paused.\", \"cites\": [1]}],"
+                                        " \"views\": [{\"by\": \"Daniel Davis\", \"view\": \"It won't hold.\", \"cites\": [2]}]}]}")
+                                   :else "# Today\n\nCeasefire [1], argued over [2].")
+                        :model "fake"})))
+              (update :config merge {:group-stories true :dossier-stories 5 :read-articles 0 :max-analysis 1}))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (let [sorting (first (filter #(str/includes? % "You sort the reports") @prompts))
+          dossier (first (filter #(str/includes? % "prepares the dossiers") @prompts))
+          brief (last @prompts)
+          day (store/day (:store c) "2026-09-30")]
+      (is (not (str/includes? sorting "ceasefire won't hold")) "analysis is no report to sort")
+      (is (str/includes? dossier "Analysis of this story, commentary to weigh, not facts:\n\n[2] Why the ceasefire won't hold (Daniel Davis)"))
+      (is (str/includes? dossier "The ceasefire won't hold past winter.") "with its transcript")
+      (is (str/includes? brief "Views, from the analysis (arguments, not facts):\n- Daniel Davis: It won't hold. [2]"))
+      (is (str/includes? brief "Sources marked analysis are commentary"))
+      (is (str/includes? brief "[2] Why the ceasefire won't hold (Daniel Davis, analysis)"))
+      (is (not (str/includes? brief "Gardening tips")) ":max-analysis leaves the one about nothing out")
+      (is (= [nil :analysis nil] (map :kind (:sources day))) "and it's stored as analysis")
+      (is (= ["Story 1" "Why the ceasefire won't hold" "Story 2"] (map :title (:sources day)))
+          "under the story it argues about")
+      (is (some #(str/includes? (:text %) "Set aside 2 pieces of analysis") (:events @pipeline/status))))))
