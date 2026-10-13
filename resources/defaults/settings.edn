@@ -24,6 +24,10 @@
  ;; leaves one out asked to cover it (nil lets every story be cut)
  :max-items 180
  :reports-per-story 6
+ ;; the most pieces of analysis, from the sources whose :kind is :analysis
+ ;; (a YouTube channel's by default), the analyst is given, each under the
+ ;; story it argues about; they frame the facts and aren't coverage
+ :max-analysis 12
  :must-cover-importance 8
 
  ;; how many past briefings a story is remembered from: a story told in

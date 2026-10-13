@@ -31,6 +31,11 @@
 - **Must-cover stories.** A story rated `:must-cover-importance` (8) or
   more is never cut for space, and a briefing that leaves one out is asked
   to cover it, then lists what's still missing as Also today.
+- **Analysis sources.** A source's `:kind` is `:news` or `:analysis`, a
+  type's shape can set the default, and YouTube channels are analysis. At
+  most `:max-analysis` (12) pieces go to the analyst, each under the story
+  it argues about; dossiers record them as views, never as facts, and they
+  count for no coverage. Each video is credited to its channel.
 - **`:reports-per-story`**, the most reports one story brings to the
   analyst, 6 by default.
 

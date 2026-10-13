@@ -127,3 +127,17 @@
       (is (str/includes? (news/coverage-request missed) "- Kospi plunges [3, 4]"))
       (is (= "# Day\n\nText [1].\n\n## Also today\n\n- Kospi plunges [3, 4]"
              (news/also-today "# Day\n\nText [1].\n" missed))))))
+
+(deftest analysis-is-labelled-for-the-analyst-and-the-critic
+  (let [news-src (assoc (item 1 "Wire") :group "G1" :group-title "Ceasefire")
+        piece (assoc (item 2 "Daniel Davis" :summary "It won't hold.") :group "G1" :group-title "Ceasefire"
+                     :kind :analysis)
+        lone (assoc (item 3 "Glenn Diesen") :kind :analysis :days 3)
+        block (news/source-block [news-src piece lone])]
+    (is (str/includes? block "[2] Story 2 (Daniel Davis, analysis)"))
+    (is (str/includes? block "Story: Ceasefire") "under the story it argues about")
+    (is (str/includes? block "Sources marked analysis are commentary"))
+    (is (re-find #"\[1\][^\[]*Coverage" (news/source-block [(assoc (item 1 "Wire") :days 3)]))
+        "a report running for days shows its coverage")
+    (is (not (re-find #"\[3\][^\[]*Coverage" block)) "an analysis is no coverage")
+    (is (not (str/includes? (news/source-block [news-src]) "marked analysis")) "no analysis, no note")))

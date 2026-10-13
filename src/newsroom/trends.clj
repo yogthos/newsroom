@@ -44,10 +44,10 @@
   mean of its sources' vectors, so one whose sources have no vectors can't
   be continued and is left out. A gap search's result is left out too:
   it was found for a story, not reported on it, so it doesn't count as
-  coverage."
+  coverage, and so is an analysis piece, which argues about a story."
   [history]
   (->> (filter :story history)
-       (remove :gap)
+       (remove #(or (:gap %) (= :analysis (:kind %))))
        (group-by :story)
        (keep (fn [[id ss]]
                (when-let [c (embed/centroid (keep :vector ss))]
@@ -335,9 +335,11 @@
   "The stored `sources` a digest cites for a storyline with no notes: at
   most `n`, the most telling of each day (cited by the day's briefing, then
   the most widely carried), latest days first when there are more days than
-  room, in the order they ran."
+  room, in the order they ran. An analysis argued about the storyline
+  rather than reporting it, so it isn't one."
   [sources n]
-  (->> (group-by :day sources)
+  (->> (remove #(= :analysis (:kind %)) sources)
+       (group-by :day)
        (map (fn [[_ ss]] (first (sort-by (fn [s] [(if (:cited? s) 0 1) (- (news/outlets s)) (:n s)]) ss))))
        (sort-by :day)
        (take-last n)

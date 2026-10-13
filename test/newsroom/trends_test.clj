@@ -171,3 +171,13 @@
 (deftest a-gap-searchs-result-doesnt-make-a-storyline
   (is (= [1] (map :n (:sources (first (trends/storylines [{:n 1 :story "fed" :vector fed}
                                                           {:n 2 :story "fed" :vector fed :gap "The vote"}])))))))
+
+(deftest commentary-doesnt-make-a-storyline
+  (is (= [1] (map :n (:sources (first (trends/storylines [{:n 1 :story "fed" :vector fed}
+                                                          {:n 2 :story "fed" :vector fed :kind :analysis}])))))
+      "a commentator's piece isn't coverage of the storyline it argues about"))
+
+(deftest a-digest-cites-a-storylines-reporting-not-its-commentary
+  (let [piece (assoc (src "2026-09-30" 9 "fed" fed :outlets 5 :cited? true) :kind :analysis)
+        report (src "2026-09-30" 1 "fed" fed)]
+    (is (= [1] (map :n (trends/digest-sources [piece report] 3))))))

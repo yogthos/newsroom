@@ -401,3 +401,61 @@
           start (System/currentTimeMillis)]
       (is (nil? (feed/article-text html)))
       (is (< (- (System/currentTimeMillis) start) 5000)))))
+
+;; --- analysis --------------------------------------------------------------------
+
+(defn- piece [i & {:as more}]
+  (merge (item i :kind :analysis :source (str "Commentator " i)
+               :text (str "Transcript of commentator " i ": the ceasefire won't hold."))
+         more))
+
+(deftest a-storys-analysis-is-kept-apart-from-its-reports
+  (let [[g lone] (analysis/stories [(assoc (item 1) :n 1 :group "G1" :group-title "Ceasefire")
+                                    (assoc (piece 2) :n 2 :group "G1")
+                                    (assoc (piece 3) :n 3)])]
+    (is (= [1] (map :n (:sources g))))
+    (is (= [2] (map :n (:analysis g))))
+    (is (= [] (:sources lone)) "an analysis no story took is a story of no reports")
+    (is (= [3] (map :n (:analysis lone))))))
+
+(deftest the-dossier-reads-a-storys-analysis-as-argument-not-fact
+  (let [story {:key "G1" :title "Ceasefire" :sources [(assoc (item 1) :n 1)]
+               :analysis [(assoc (piece 2) :n 2 :text (str "Transcript: " (apply str (repeat 9000 "x"))))]}
+        p (analysis/dossier-prompt "30 September 2026" [story] {} identity)]
+    (is (str/includes? p "Analysis of this story, commentary to weigh, not facts:\n\n[2] Report 2 (Commentator 2)"))
+    (is (< (count p) 12000) "a long transcript is cut for the dossier")
+    (is (str/includes? p "- views:"))
+    (let [answer (str "{\"dossiers\": [{\"story\": \"G1\", \"summary\": \"It holds, for now.\","
+                      " \"facts\": [{\"fact\": \"Both sides paused strikes.\", \"cites\": [1]},"
+                      " {\"fact\": \"The ceasefire will collapse.\", \"cites\": [2]}],"
+                      " \"views\": [{\"by\": \"Commentator 2\", \"view\": \"It won't hold past winter.\", \"cites\": [2]},"
+                      " {\"by\": \"Nobody\", \"view\": \"Uncited.\", \"cites\": [9]}],"
+                      " \"expectations\": [{\"claim\": \"Fighting resumes by December.\", \"subject\": \"geopolitics\","
+                      " \"due\": \"2026-12-31\", \"by\": \"Commentator 2\", \"cites\": [2]}]}]}")
+          d (get (analysis/parse-dossiers answer [story]) "G1")]
+      (is (= ["Both sides paused strikes."] (map :fact (:facts d))) "a fact only an analysis carries is no fact")
+      (is (= [{:by "Commentator 2" :view "It won't hold past winter." :cites [2]}] (:views d)))
+      (is (= "Commentator 2" (:source (first (:expectations d)))) "a commentator's call is on their record"))))
+
+(deftest analysis-is-attached-to-the-stories-it-argues-about
+  (let [stories [{:key "G1" :title "Ceasefire talks"} {:key "G2" :title "Kospi plunges"}]
+        p (analysis/attach-prompt "30 September 2026" stories [(piece 1) (piece 2)])]
+    (is (str/includes? p "G1: Ceasefire talks"))
+    (is (str/includes? p "[1] Report 1 (Commentator 1)\n    What report 1 says."))
+    (is (= {1 ["G2" "G1"] 2 []}
+           (analysis/parse-attachments "{\"pieces\": [{\"piece\": 1, \"stories\": [\"G2\", \"G1\", \"G9\"]}, {\"piece\": 7, \"stories\": [\"G1\"]}]}"
+                                       2 #{"G1" "G2"}))
+        "a story the day doesn't have and a piece out of range are dropped, every piece accounted for")
+    (is (nil? (analysis/parse-attachments "no" 2 #{"G1"})))))
+
+(deftest analysis-goes-with-its-story-within-its-budget
+  (let [r (fn [i g] (item i :group g :group-title (str "Story " g)))
+        ranked [(r 1 "G1") (r 2 "G1") (r 3 "G2") (r 4 "G3")]
+        pieces [(piece 10) (piece 11) (piece 12) (piece 13) (piece 14)]
+        placed (analysis/place-analysis ranked pieces {1 ["G2"] 2 ["G1" "G2"] 3 ["G1"] 4 ["G1"] 5 []} 4 2)
+        n-of #(parse-long (subs (:title %) 7))]
+    (is (= [1 2 11 12 3 10 4 14] (map n-of placed))
+        "under the story it argues about, the heaviest stories' first, two a story, and one no story took last")
+    (is (= ["G1" "G1"] (map :group (filter (comp #{11 12} n-of) placed))))
+    (is (nil? (:group (last placed))))
+    (is (= ranked (analysis/place-analysis ranked pieces {} 0 2)) "no budget, no analysis")))
