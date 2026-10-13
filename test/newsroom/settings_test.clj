@@ -104,6 +104,16 @@
       (is (nil? (sources/shape :plain-test)))
       (is (= [] (sources/fetch-items {:type :plain-test} {:day "2026-09-30" :config {}}))))))
 
+(deftest a-source-says-whether-it-reports-or-argues
+  (plugin/load-all! "plugins" {})
+  (let [kind-of (fn [type] (first (filter #(= :kind (:key %)) (settings/source-fields type))))]
+    (is (= [:news :analysis] (:options (kind-of :rss))))
+    (is (= "news for this type" (:default (kind-of :rss))))
+    (is (= "analysis for this type" (:default (kind-of :youtube)))))
+  (is (= [{:type :rss :url "u" :kind :analysis}]
+         (:sources (:settings (settings/from-form {"sources.0.type" "rss" "sources.0.url" "u"
+                                                   "sources.0.kind" "analysis"}))))))
+
 (deftest the-page-lists-every-plugin-found
   (let [dir (str (fs/create-temp-dir))
         put! (fn [rel text] (io/make-parents (io/file dir rel)) (spit (io/file dir rel) text))

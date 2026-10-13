@@ -189,3 +189,11 @@
     (is (= ["One & two" "Three & four é"] (map :title items)))
     (is (= "https://e.com/1?a=1&b=2" (:url (first items))))
     (is (= "Tom & Jerry & co" (:summary (first items))) "what CDATA holds isn't escaped twice")))
+
+(defmethod sources/shape ::commentary [_] {:kind :analysis})
+
+(deftest a-source-is-news-unless-it-or-its-type-says-otherwise
+  (is (= :news (sources/kind {:type :rss :url "u"})))
+  (is (= :analysis (sources/kind {:type ::commentary})) "its type's")
+  (is (= :news (sources/kind {:type ::commentary :kind :news})) "its own first")
+  (is (= :analysis (sources/kind {:type :rss :kind :analysis}))))

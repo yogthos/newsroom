@@ -33,7 +33,9 @@
   :retry-wait-ms}, is how its sources are read when they don't say,
   before the config's settings for every source. A :string can also say it is
   a :regex?, or match a :pattern; an :int or :number can have a :min and
-  a :max. :label names it on the page, where the key does by default."
+  a :max. :label names it on the page, where the key does by default. A
+  shape's :kind, :news or :analysis, says what its sources' items are when
+  a source doesn't say (see `kind`)."
   (:require [jolt.time]
             [clojure.data.json :as json]
             [clojure.string :as str]
@@ -101,6 +103,18 @@
   (let [typed (:policy (shape (:type source)))]
     (into {} (for [[k global] global-keys]
                [k (some #(when (some? %) %) [(get source k) (get typed k) (get config global) (default-policy k)])]))))
+
+(def kinds
+  "What a source's items are: :news, reporting, which the briefing takes
+  its facts from, or :analysis, commentary, which it takes arguments and
+  framing from."
+  [:news :analysis])
+
+(defn kind
+  "What `source`'s items are, one of `kinds`: its own :kind, else its
+  type's shape's, else :news."
+  [source]
+  (some #(when (some #{%} kinds) %) [(:kind source) (:kind (shape (:type source))) :news]))
 
 (defn lookback-days
   "How many days before the briefing's day an item of `source` may be

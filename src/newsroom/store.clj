@@ -88,6 +88,7 @@
       note text,
       informs text,
       gap text,
+      kind text,
       cited integer not null default 0,
       primary key (user_id, day, n))"
    "source_health" "create table if not exists source_health (
@@ -336,9 +337,9 @@
     legacy))
 
 (defn- coverage-row [day cited {:keys [n story] :as source}]
-  ;; a precedent was background, and a gap search's result was found for a
-  ;; story rather than reported on it
-  (when-not (or (:precedent source) (:gap source))
+  ;; a precedent was background, a gap search's result was found for a
+  ;; story rather than reported on it, and an analysis argues about one
+  (when-not (or (:precedent source) (:gap source) (= :analysis (:kind source)))
     [day n story (news/outlets source) (if (contains? cited n) 1 0)]))
 
 (defn- insert-coverage! [conn uid rows]
@@ -460,7 +461,7 @@
     (add-column! conn "briefings" "tldr" "text")
     (doseq [[column ddl] [["also" "text"] ["vector" "text"] ["story" "text"] ["weight" "real"]
                           ["precedent" "integer not null default 0"] ["note" "text"] ["informs" "text"]
-                          ["gap" "text"]]]
+                          ["gap" "text"] ["kind" "text"]]]
       (add-column! conn "sources" column ddl))
     (add-column! conn "story_notes" "status" "text")
     (add-column! conn "day_trends" "level" "text")
@@ -652,15 +653,16 @@
         (jdbc/execute! conn ["insert into briefings (user_id, day, markdown, model, provider, tldr, created_at)
                               values (?, ?, ?, ?, ?, ?, ?)"
                              uid day markdown model provider tldr (now)])
-        (doseq [{:keys [n title url source summary published also story weight note informs gap]
+        (doseq [{:keys [n title url source summary published also story weight note informs gap kind]
                  v :vector precedent? :precedent} sources]
           (jdbc/execute! conn ["insert into sources (user_id, day, n, title, url, source, summary, published, also,
-                                                     vector, story, weight, precedent, note, informs, gap, cited)
-                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                                     vector, story, weight, precedent, note, informs, gap, kind, cited)
+                                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                                uid day n title url source summary published
                                (when (seq also) (pr-str also))
                                (embed/encode v) story weight (if precedent? 1 0)
                                note (when (seq informs) (pr-str (vec informs))) gap
+                               (when (and kind (not= :news kind)) (name kind))
                                (if (contains? cited n) 1 0)]))
         (unindex! conn uid ["day" "source"] day)
         (index! conn uid (day-docs day markdown sources cited))))
@@ -683,6 +685,7 @@
     (:note r) (assoc :note (:note r))
     (:informs r) (assoc :informs (edn/read-string (:informs r)))
     (:gap r) (assoc :gap (:gap r))
+    (:kind r) (assoc :kind (keyword (:kind r)))
     (:weight r) (assoc :weight (double (:weight r)))))
 
 (defn day

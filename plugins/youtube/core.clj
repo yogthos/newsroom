@@ -180,7 +180,9 @@
         said (some-> said (clip transcript-chars))]
     (plugin/item source {:title (:title video)
                          :url (:url video)
-                         :source (when-not (:name source) (:channel video))
+                         ;; each commentator by name, for what they argue and their record
+                         :source (:channel video)
+                         :origin (:channel video)
                          :summary (str/join " " (remove str/blank? [(description-lead (:description video)) said]))
                          :published (:published video)
                          :text (when said (str "Transcript of the video on " (:channel video) ":\n" said))})))
@@ -214,6 +216,8 @@
              "which the desk takes as the videos' full text.")
    ;; a channel posts every few days, not every day
    :lookback-days 3
+   ;; what a channel says frames the news; it isn't reporting
+   :kind :analysis
    ;; a handle's page, the feeds, and two requests a video
    :policy {:timeout-ms 60000}
    :fields [{:key :channels :type :strings :required? true :label "Channels"
