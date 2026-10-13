@@ -437,6 +437,41 @@
                                            ns))
                        whole))))))
 
+(defn missed-stories
+  "The day's stories rated `threshold` or more, by the :importance of
+  their numbered `sources`, that the briefing `markdown` cites none of the
+  reports of: [{:title :ns}] in the order the sources run. None when there
+  is no threshold."
+  [sources markdown threshold]
+  (if-not threshold
+    []
+    (let [cited (set (citations markdown))
+          musts (filter #(and (:importance %) (>= (:importance %) threshold) (not (:precedent %))) sources)
+          by-story (group-by #(or (:group %) (:n %)) musts)]
+      (vec (for [k (distinct (map #(or (:group %) (:n %)) musts))
+                 :let [members (get by-story k)
+                       ns (mapv :n members)]
+                 :when (not-any? cited ns)]
+             {:title (or (:group-title (first members)) (:title (first members))) :ns ns})))))
+
+(defn- missed-line [{:keys [title ns]}]
+  (str "- " title " [" (str/join ", " ns) "]"))
+
+(defn coverage-request
+  "What the analyst is told when its briefing left out the `missed`
+  stories the desk rated among the day's most important."
+  [missed]
+  (str "Your briefing leaves out these stories, which the desk rated among the most important of the day:\n\n"
+       (str/join "\n" (map missed-line missed))
+       "\n\nWork each into the briefing where it belongs, with what it means, citing its sources by "
+       "number as above. Answer with the whole briefing, rewritten, and nothing else."))
+
+(defn also-today
+  "The briefing `markdown` with the `missed` stories listed at its end,
+  under Also today, each with its sources."
+  [markdown missed]
+  (str (str/trimr markdown) "\n\n## Also today\n\n" (str/join "\n" (map missed-line missed))))
+
 (defn- source-entry [s]
   (str "- [" (:n s) "] [" (str/replace (:title s) #"[\[\]]" "") "](" (:url s) ")"
        (when-not (str/blank? (:source s)) (str " — " (:source s)))))

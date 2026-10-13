@@ -116,7 +116,9 @@
        "- its importance from 1 to 10 for a reader who wants to understand the world: 10 when it moves "
        "the balance of power between states, war and peace, trade, markets, prices, production, energy "
        "or a major country's political direction, 1 for a local, human-interest, celebrity, sport or "
-       "lifestyle item with no wider consequence;\n"
+       "lifestyle item with no wider consequence. A market or currency moving several percent in a day, a "
+       "central bank's surprise, a default, a war's escalation, a coup or a major election result is 8 or "
+       "more however few reports carry it;\n"
        "- its status: " (str/join ", " statuses) ".\n\n"
        "Leave out as junk only the reports that aren't news at all: a section or index page, an advert, "
        "a login or error page, a quiz, a list of links, a headline with nothing behind it. Put every "
@@ -257,6 +259,87 @@
                     members))))
          (apply concat)
          vec)))
+
+;; --- 1b. the editor's look at the whole day ------------------------------------------
+
+(defn- story-outlets [[lead & others :as members]]
+  (news/outlets (assoc lead :also (vec (concat others (mapcat :also members))))))
+
+(defn review-prompt
+  "The prompt that has the editor look over every story the batches sorted
+  `items` into, a line each, for the stories two batches each started on
+  one event and for the importances that don't hold up against the rest
+  of the day."
+  [day items]
+  (let [by-group (group-by :group items)]
+    (str "You edit the day's news briefing. Today is " day ".\n\n"
+         "The day's reports were sorted into stories in batches, so two batches may each have started a "
+         "story on one event, and each batch rated importance against only its own reports. Below is every "
+         "story of the day, with its key, the importance it was given from 1 to 10, and how many reports "
+         "and outlets carry it.\n\n"
+         "1. Find the stories that are one event, or one event and its direct consequences, told apart: "
+         "a market's fall and the shares that led it, two reports of one missile test. Keep apart stories "
+         "that are only related.\n"
+         "2. Rate again every story whose importance doesn't hold up against the whole day, from 1 to 10: "
+         "10 when it moves the balance of power between states, war and peace, trade, markets, prices, "
+         "production, energy or a major country's political direction. A market or currency moving several "
+         "percent in a day, a central bank's surprise, a default, a war's escalation, a coup or a major "
+         "election result is 8 or more however few outlets carry it. 1 for a local, human-interest, "
+         "celebrity, sport or lifestyle item.\n\n"
+         "Name only the stories you merge or re-rate. Answer with JSON only, in this shape:\n"
+         "{\"same\": [[\"G3\", \"G17\"]], \"importance\": {\"G17\": 9}}\n\n"
+         "Stories:\n\n"
+         (str/join "\n" (for [g (distinct (map :group items))
+                              :let [members (get by-group g)
+                                    lead (first members)
+                                    n (count members)
+                                    o (story-outlets members)]]
+                          (str g " (importance " (or (:importance lead) "unrated") ", "
+                               n (if (= 1 n) " report, " " reports, ") o (if (= 1 o) " outlet" " outlets") "): "
+                               (or (:group-title lead) (:title lead))))))))
+
+(defn parse-review
+  "The editor's `answer` about the stories `keys`: {:same [[key]]
+  :importance {key n}}, a merge of two or more of the day's stories each,
+  a key no story has dropped, a story in the first merge that names it,
+  and only importances from 1 to 10. nil when it can't be read."
+  [answer keys]
+  (when-let [m (json-object answer)]
+    (let [known (set keys)
+          same (first
+                (reduce (fn [[out placed] ks]
+                          (let [ks (->> (if (sequential? ks) ks []) (map str) (filter known) (remove placed) distinct vec)]
+                            (if (< 1 (count ks)) [(conj out ks) (into placed ks)] [out placed])))
+                        [[] #{}]
+                        (if (sequential? (get m "same")) (get m "same") [])))
+          importance (into {} (for [[k v] (when (map? (get m "importance")) (get m "importance"))
+                                    :let [n (small-number v)]
+                                    :when (and (known (str k)) n (<= 1 n 10))]
+                                [(str k) n]))]
+      {:same same :importance importance})))
+
+(defn apply-review
+  "The `items` as the editor's `review` has them: the stories it merges
+  under the first one's key and title, each story's importance the one the
+  editor gave, a merged story the highest of its parts'."
+  [items {:keys [same importance] :as review}]
+  (if-not review
+    items
+    (let [into-key (into {} (for [ks same, k ks] [k (first ks)]))
+          lead-of (into {} (map (fn [item] [(:group item) item])) (reverse items))
+          rated (fn [g] (or (get importance g) (:importance (lead-of g))))
+          merged-importance (reduce (fn [m [g k]]
+                                      (let [r (rated g)]
+                                        (cond-> m r (update k #(if % (max % r) r)))))
+                                    {}
+                                    (map (fn [g] [g (get into-key g g)]) (distinct (map :group items))))]
+      (mapv (fn [{:keys [group] :as item}]
+              (let [k (get into-key group group)
+                    head (lead-of k)
+                    imp (get merged-importance k)]
+                (cond-> (assoc item :group k :group-title (:group-title head))
+                  imp (assoc :importance imp))))
+            items))))
 
 (defn story-ids
   "The day's numbered `sources` with a storyline each: the one it

@@ -69,6 +69,28 @@
     (is (= {:groups [{:title "B" :members [3]}] :junk #{}}
            (analysis/join-groupings [[2 nil] [2 {:groups [{:title "B" :members [1]}] :junk #{}}]])))))
 
+(deftest the-editor-sees-every-story-of-the-day
+  (let [g (fn [i group & {:as more}] (merge (item i :group group :group-title (str "Story " group)) more))
+        p (analysis/review-prompt "13 October 2026" [(g 1 "G1" :importance 7) (g 2 "G1" :importance 7)
+                                                     (g 3 "G2" :importance 3)])]
+    (is (str/includes? p "G1 (importance 7, 2 reports, 2 outlets): Story G1"))
+    (is (str/includes? p "G2 (importance 3, 1 report, 1 outlet): Story G2"))
+    (is (str/includes? p "\"same\""))))
+
+(deftest the-editor-merges-and-rerates
+  (let [g (fn [i group imp] (item i :group group :group-title (str "Story " group) :importance imp))
+        items [(g 1 "G1" 8) (g 2 "G2" 7) (g 3 "G3" 6) (g 4 "G2" 7) (g 5 "G4" 2)]
+        review (analysis/parse-review
+                "{\"same\": [[\"G2\", \"G3\", \"G9\"], [\"G4\"]], \"importance\": {\"G3\": 9, \"G1\": 0, \"G4\": \"5\"}}"
+                #{"G1" "G2" "G3" "G4"})
+        reviewed (analysis/apply-review items review)]
+    (is (= {:same [["G2" "G3"]] :importance {"G3" 9 "G4" 5}} review)
+        "a key the day doesn't have is dropped, a story merged with only itself is no merge, a rating out of range dropped")
+    (is (= ["G1" "G2" "G2" "G2" "G4"] (map :group reviewed)) "a merged story takes the first one's key")
+    (is (= [8 9 9 9 5] (map :importance reviewed)) "and the highest importance of its parts")
+    (is (= "Story G2" (:group-title (nth reviewed 2))))
+    (is (= items (analysis/apply-review items nil)) "no review leaves the stories as they are")))
+
 (deftest grouping-sorts-the-items-into-stories
   (let [items [(item 1 :story "fed") (item 2) (item 3 :story "old") (item 4 :story "fed") (item 5)]
         grouped (analysis/apply-grouping items {:groups [{:title "The Fed" :members [2 1 4] :importance 8

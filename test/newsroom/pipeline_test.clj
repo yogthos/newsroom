@@ -248,6 +248,26 @@
     (is (str/includes? again "Kospi plunges"))
     (is (kospi-first? prompts))))
 
+(deftest the-editor-raises-a-story-the-batches-underrated
+  (with-redefs [analysis/sorting-batch 15]
+    (let [prompts (atom [])
+          c (-> (ctx [{:type ::busy :name "Economic Times"}]
+                     (fn [_ req]
+                       (let [p (-> req :messages first :content)]
+                         (swap! prompts conj p)
+                         {:content (cond
+                                     (str/includes? p "You sort the reports") (sorting-answer p (constantly 3))
+                                     (str/includes? p "You edit the day's")
+                                     (let [k (second (re-find #"(?m)^(G\d+) \(.*Kospi" p))]
+                                       (str "{\"same\": [], \"importance\": {\"" k "\": 9}}"))
+                                     :else "# Today\n\nMarkets [1].")
+                          :model "fake"})))
+                (update :config merge {:group-stories true :max-items 10}))]
+      (m/? (pipeline/run-task c "2026-09-30"))
+      (is (= 1 (count (filter #(str/includes? % "You edit the day's") @prompts))) "one call over the whole day")
+      (is (str/includes? (last @prompts) "Kospi plunges"))
+      (is (some #(str/includes? (:text %) "The editor re-rated 1 story") (:events @pipeline/status))))))
+
 (deftest the-window-runs-from-the-lookback-to-the-next-day
   (let [dated (fn [n day] (assoc (item n day) :published (str day "T08:00:00Z")))
         results [{:items [(dated 1 "2026-09-28") (dated 2 "2026-09-29") (dated 3 "2026-09-30")
@@ -1303,3 +1323,36 @@
         (doseq [d [dir bak] :when (.exists d)]
           (doseq [f (.listFiles d)] (.delete f))
           (.delete d))))))
+
+(defn- coverage-run
+  "Run the busy day with the Kospi crash a must; the analyst's first
+  briefing leaves it out, and `revise` is its answer when asked to cover
+  it. The stored markdown and the prompts."
+  [revise]
+  (let [prompts (atom [])
+        c (-> (ctx [{:type ::busy :name "Economic Times"}]
+                   (fn [_ req]
+                     (let [msgs (:messages req)
+                           p (-> msgs first :content)]
+                       (swap! prompts conj (-> msgs last :content))
+                       {:content (cond
+                                   (str/includes? p "You sort the reports")
+                                   (sorting-answer p #(if (str/includes? % "Kospi") 9 2))
+                                   (< 1 (count msgs)) revise
+                                   :else "# Today\n\n## Markets\n\nRoutine [2].")
+                        :model "fake"})))
+              (update :config merge {:group-stories true :max-items 10 :must-cover-importance 8}))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    [(:markdown (store/day (:store c) "2026-09-30")) @prompts]))
+
+(deftest a-briefing-that-leaves-out-a-must-is-asked-to-cover-it
+  (let [[md prompts] (coverage-run "# Today\n\n## Markets\n\nKospi fell [1]. Routine [2].")]
+    (is (some #(str/includes? % "S Korea's Kospi plunges over 7% as chip stocks tumble [1]") prompts)
+        "the analyst is told which story it left out, by its sources")
+    (is (str/includes? md "Kospi fell [[1]]"))
+    (is (not (str/includes? md "Also today")))))
+
+(deftest a-must-still-left-out-is-listed-under-the-briefing
+  (let [[md _] (coverage-run "Sorry, I can't.")]
+    (is (str/includes? md "Routine [[2]]") "the draft stands")
+    (is (str/includes? md "## Also today\n\n- S Korea's Kospi plunges over 7% as chip stocks tumble [[1]]"))))

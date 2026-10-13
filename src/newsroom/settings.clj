@@ -100,8 +100,9 @@
     :fields [{:key :group-stories :type :boolean :default true
               :doc (str "Before the briefing, the model sorts the day's reports into stories, the reports on one "
                         "event from different sides together, and gives each an importance and a status. A "
-                        "story's reports share its storyline and are ranked together, its coverage summed and "
-                        "scaled by its importance, and reports that aren't news are left out. One model call.")}
+                        "story's reports share its storyline and are ranked together, by its importance and its "
+                        "coverage, and reports that aren't news are left out. A call for every 40 reports, the "
+                        "reports on one subject together.")}
              {:key :dossier-stories :type :int :nullable? true :min 1 :default 20
               :doc (str "How many of the day's top stories get a dossier, written from their reports alone: "
                         "the salient facts with their citations, the actors' positions and interests, where "

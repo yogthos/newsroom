@@ -115,3 +115,15 @@
     (is (not (str/includes? p "[2] T2 (S)\nhttps://e.com/2\nAlready")))
     (is (str/includes? p "Story: Talks\nAlready in the last briefing"))
     (is (= 2 (count (re-seq #"Already in the last briefing" p))) "a story's reports share its header's mark")))
+
+(deftest the-stories-a-briefing-must-cover
+  (let [s (fn [n group imp] (assoc (item n "Wire") :group group :group-title (str "Story " group) :importance imp))
+        sources [(s 1 "G1" 9) (s 2 "G1" 9) (s 3 "G2" 8) (s 4 "G3" 5) (assoc (s 5 "G4" 9) :precedent true)]]
+    (is (= [{:title "Story G2" :ns [3]}] (news/missed-stories sources "Told [2]." 8))
+        "a story counts as covered when any of its reports is cited")
+    (is (= [] (news/missed-stories sources "Told [2], [3]." 8)))
+    (is (= [] (news/missed-stories sources "Nothing." nil)) "no threshold, nothing is a must")
+    (let [missed [{:title "Kospi plunges" :ns [3 4]}]]
+      (is (str/includes? (news/coverage-request missed) "- Kospi plunges [3, 4]"))
+      (is (= "# Day\n\nText [1].\n\n## Also today\n\n- Kospi plunges [3, 4]"
+             (news/also-today "# Day\n\nText [1].\n" missed))))))

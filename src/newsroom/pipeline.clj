@@ -603,13 +603,16 @@
              nil)))))
 
 (defn- ask
-  "Task: the model's answer to `prompt`, not streamed."
-  [ctx llm-config prompt]
-  (m/sp
-    (let [chat (or (:chat ctx) llm/chat)
-          reply (m/? (m/via m/blk (chat llm-config {:messages [{:role "user" :content prompt}]
-                                                    :on-delta (fn [_])})))]
-      (str (:content reply)))))
+  "Task: the model's answer to `prompt`, not streamed, `opts` merged into
+  the request."
+  ([ctx llm-config prompt] (ask ctx llm-config prompt {}))
+  ([ctx llm-config prompt opts]
+   (m/sp
+     (let [chat (or (:chat ctx) llm/chat)
+           reply (m/? (m/via m/blk (chat llm-config (merge {:messages [{:role "user" :content prompt}]
+                                                            :on-delta (fn [_])}
+                                                           opts))))]
+       (str (:content reply))))))
 
 (defn- desk-llm
   "The model the desk works with: the :desk role's when the config gives
@@ -621,22 +624,29 @@
 
 (defn- dated [day] (str (sources/long-date day) " (" day ")"))
 
+(defn- effort
+  "The request opts that keep `llm-config`'s thinking to `level`, where its
+  provider lets it be set."
+  [llm-config level]
+  (if (contains? (:features llm-config) :reasoning-effort) {:reasoning-effort level} {}))
+
 (def ^:private sorting-wave
   "How many sorting calls go at once."
-  6)
+  10)
 
 (defn- sort-once
   "Task: the desk's sorting of `items`, parsed, asked once more when the
-  answer is cut off or can't be read; nil when it still can't be."
+  answer is cut off or can't be read, with less thinking, which is what
+  runs a model out of tokens; nil when it still can't be."
   [{:keys [run-id] :as ctx} llm-config day items notes]
   (m/sp
     (let [prompt (analysis/grouping-prompt (dated day) items notes)
-          try! #(m/? (softly run-id "Sorting the reports into stories" (ask ctx llm-config prompt)))
-          parsed (some-> (try!) (analysis/parse-grouping (count items)))]
+          try! #(m/? (softly run-id "Sorting the reports into stories" (ask ctx llm-config prompt %)))
+          parsed (some-> (try! {}) (analysis/parse-grouping (count items)))]
       (or parsed
           (do (log! run-id {:text (str "The sorting of " (counted (count items) "report" "reports")
                                        " came back cut off or unreadable, so it was asked again")})
-              (some-> (try!) (analysis/parse-grouping (count items))))))))
+              (some-> (try! (effort llm-config "low")) (analysis/parse-grouping (count items))))))))
 
 (defn- sort-batch
   "Task: the desk's sorting of one batch of `items`, {:groups :junk} by
@@ -656,6 +666,48 @@
             (cond-> parsed
               again (-> (update :groups into (map #(update % :members (partial mapv back)) (:groups again)))
                         (update :junk into (map back (:junk again)))))))))))
+
+(def ^:private review-pool
+  "How many of the day's heaviest stories the editor looks over: well over
+  what :max-items has room for, so a story underrated by its batch can
+  still climb into the briefing, and few enough for one call to weigh
+  together with a little thinking."
+  200)
+
+(defn- review-task
+  "Task: the `ranked` items, sorted into stories, once the editor has
+  looked over the heaviest review-pool of them together, merging the ones
+  two batches each started on one event and rating again the importances
+  that don't hold up against the rest of the day; as they were when the
+  call fails or can't be read."
+  [{:keys [config run-id] :as ctx} day ranked]
+  (m/sp
+    (let [llm-config (desk-llm config)
+          keys (take review-pool (distinct (map :group ranked)))
+          pool (filterv (comp (set keys) :group) ranked)
+          _ (log! run-id {:text (str "Asking the editor to look over the day's " (count keys)
+                                     " heaviest stories together")})
+          answer (m/? (softly run-id "The editor's look at the day"
+                              (ask ctx llm-config (analysis/review-prompt (dated day) pool) (effort llm-config "low"))))
+          review (some-> answer (analysis/parse-review keys))
+          items ranked]
+      (if-not review
+        (do (when answer
+              (log! run-id {:text "The editor's answer couldn't be read, so the stories stay as sorted"
+                            :level :error}))
+            items)
+        (let [merged (reduce + (map (comp dec count) (:same review)))
+              was (into {} (map (juxt :group :importance)) (reverse items))
+              rerated (count (remove (fn [[k v]] (= v (was k))) (:importance review)))]
+          (log! run-id {:text (str "The editor "
+                                   (str/join " and " (remove nil? [(when (pos? merged)
+                                                                     (str "merged " (counted merged "story" "stories")
+                                                                          " into others"))
+                                                                   (when (pos? rerated)
+                                                                     (str "re-rated " (counted rerated "story" "stories")))]))
+                                   (when (and (zero? merged) (zero? rerated)) "changed nothing"))
+                        :level :ok})
+          (analysis/apply-review items review))))))
 
 (defn- group-task
   "Task: the day's `items` sorted into stories by the desk (see
@@ -917,6 +969,45 @@
                 (do (log! run-id {:text "Revised the briefing" :level :ok})
                     (assoc revised :issues issues))))))))))
 
+;; --- the coverage check -----------------------------------------------------------
+;; A story the desk rated :must-cover-importance or more is never cut for
+;; space, and a briefing that cites none of its reports is asked once to
+;; cover it; what is still left out is listed under the briefing.
+
+(defn- coverage-task
+  "Task: {:answer :reply}, the briefing `answer` with every story rated
+  :must-cover-importance or more in it: the analyst asked to work in those
+  it left out, in the conversation that wrote it from `prompt`, and any
+  still left out listed under it, Also today."
+  [{:keys [config run-id] :as ctx} numbered llm-config prompt answer reply]
+  (m/sp
+    (let [threshold (:must-cover-importance config)
+          missed (news/missed-stories numbered answer threshold)]
+      (if (empty? missed)
+        {:answer answer :reply reply}
+        (let [_ (log! run-id {:text (str "The briefing left out " (counted (count missed) "story" "stories")
+                                         " rated " threshold " or more, so the analyst was asked to cover "
+                                         (if (= 1 (count missed)) "it" "them"))})
+              _ (update-status! run-id assoc :state :revising
+                                :provider (name (:alias llm-config)) :model (:model llm-config))
+              revised (m/? (softly run-id "Covering the stories left out"
+                                   (write-up ctx llm-config
+                                             [{:role "user" :content prompt}
+                                              {:role "assistant" :content answer}
+                                              {:role "user" :content (news/coverage-request missed)}]
+                                             "the briefing again with the stories it left out")))
+              [answer reply] (if (and revised (critique/usable-revision? answer (:answer revised)))
+                               [(:answer revised) (:reply revised)]
+                               [answer reply])
+              still (news/missed-stories numbered answer threshold)]
+          (if (empty? still)
+            (do (log! run-id {:text "Every story rated that important is in the briefing now" :level :ok})
+                {:answer answer :reply reply})
+            (do (log! run-id {:text (str "Listed " (counted (count still) "story" "stories")
+                                         " still left out under the briefing, Also today")
+                              :level :error})
+                {:answer (news/also-today answer still) :reply reply})))))))
+
 (defn- notes-llm
   "The model that keeps the notes: the :notes role's when the config gives
   it one, else the analyst's."
@@ -1163,6 +1254,12 @@
             ranked (if grouped
                      (trends/rank-groups grouped lines day half-life)
                      (trends/rank linked lines day half-life))
+            ;; each sorting call saw only its own reports, so the editor
+            ;; looks over the heaviest stories together, and they are
+            ;; ranked again
+            ranked (if (and grouped (< analysis/sorting-batch (count grouped)))
+                     (trends/rank-groups (m/? (review-task ctx day ranked)) lines day half-life)
+                     ranked)
             _ (when-let [followed (seq (filter #(> (:days %) 1) ranked))]
                 (log! run-id {:text (str "Followed " (count followed) " stories from earlier days, the longest"
                                          " in the news for " (apply max (map :days followed)) " days")}))
@@ -1237,6 +1334,7 @@
                               :provider (name (:alias llm-config)) :model (:model llm-config))
             {:keys [answer reply]} (m/? (critique-task ctx day numbered analysed llm-config prompt
                                                        (m/? (write-up ctx llm-config prompt "the briefing"))))
+            {:keys [answer reply]} (m/? (coverage-task ctx numbered llm-config prompt answer reply))
             ;; the projections are read from the briefing as written, without the graph
             written answer
             answer (analysis/with-graph answer graph)
