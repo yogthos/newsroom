@@ -209,19 +209,22 @@
   sources/lookback-days)
 
 (defn item
-  "An item from `m`, {:title :url :summary :published :text}: markup
+  "An item from `m`, {:title :url :summary :published :text :origin}: markup
   dropped from the title and summary, the summary clipped, and credited to
   `source` unless `m` has a :source of its own. :published is a date
   string in RSS or ISO 8601 form, or nil when unknown. :text, when given,
   is the item's full text, like a video's transcript, which the desk reads
   in place of fetching the page at :url; it's kept as it is, so the plugin
-  decides how much of it the analysis gets."
+  decides how much of it the analysis gets. :origin, when given, is what
+  counts as its outlet, and keeps its record in the retrospective, in place
+  of its address's publisher: a channel, where every video is on one host."
   [source m]
   (cond-> {:title (feed/plain-text (:title m))
            :url (str (:url m))
            :source (or (:source m) (source-name source))
            :summary (feed/clip (feed/plain-text (:summary m)) feed/summary-chars)
            :published (:published m)}
+    (not (str/blank? (:origin m))) (assoc :origin (str (:origin m)))
     (not (str/blank? (:text m))) (assoc :text (str (:text m)))))
 
 (defn request-json

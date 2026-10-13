@@ -221,15 +221,19 @@
   leaves its coverage to the story, and one the desk wrote a dossier on
   leaves its summary to the dossier."
   [s grouped?]
-  (str "[" (:n s) "] " (:title s)
-       (when-not (str/blank? (:source s)) (str " (" (:source s) ")"))
+  (let [analysis? (= :analysis (:kind s))
+        credit (str/join ", " (cond-> []
+                                (not (str/blank? (:source s))) (conj (:source s))
+                                analysis? (conj "analysis")))]
+    (str "[" (:n s) "] " (:title s)
+       (when-not (str/blank? credit) (str " (" credit ")"))
        (when-let [p (:published s)] (str ", " p))
        "\n" (:url s)
-       (when-not grouped? (when-let [c (coverage s)] (str "\n" c)))
+       (when-not (or grouped? analysis?) (when-let [c (coverage s)] (str "\n" c)))
        (when (and (:covered s) (not grouped?)) (str "\n" covered-note))
        (when-let [g (:gap s)]
          (str "\nFound for what the reporting on " (:gap-story s) " left out: " g))
-       (when-not (or (:briefed s) (str/blank? (:summary s))) (str "\n" (:summary s)))))
+       (when-not (or (:briefed s) (str/blank? (:summary s))) (str "\n" (:summary s))))))
 
 (defn- group-header
   "The line a story told in several reports opens with: its title, status
@@ -275,13 +279,21 @@
                    [[] #{}]
                    today))))
 
+(def ^:private analysis-note
+  (str "Sources marked analysis are commentary: a commentator's or columnist's reading of the news, not "
+       "reporting of it. Use them to frame and interpret the facts, crediting each argument to whoever "
+       "makes it, and take the facts themselves from the reporting. A fact that rests only on an analysis "
+       "is unsupported."))
+
 (defn source-block
   "The numbered `sources` as the model reads them: the day's, a story told
-  in several reports under its header, then the precedents."
+  in several reports under its header, then the precedents. When any is
+  an analysis, a note on how to read them comes first."
   [sources]
   (let [today (remove :precedent sources)
         precedents (filter :precedent sources)]
-    (str/join "\n\n" (concat (today-block today)
+    (str/join "\n\n" (concat (when (some #(= :analysis (:kind %)) today) [analysis-note])
+                             (today-block today)
                              (when (seq precedents) [precedents-note])
                              (map precedent-line precedents)))))
 

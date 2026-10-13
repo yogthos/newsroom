@@ -67,6 +67,13 @@
  ;; be cut.
  :max-items 180
  :reports-per-story 6
+ ;; A source whose :kind is :analysis, commentary like a YouTube channel's
+ ;; (the default for that type) or an opinion feed, isn't sorted or
+ ;; counted with the reporting. At most :max-analysis pieces of it go to
+ ;; the analyst, each under the story it argues about, to frame the facts
+ ;; the reporting carries; its arguments are credited to whoever makes
+ ;; them, and never taken as facts.
+ :max-analysis 12
  :must-cover-importance 8
 
  ;; How many past briefings a story is remembered from. A story told in any

@@ -329,6 +329,8 @@
         {:keys [get request]} (youtube-http seen)]
     (is (:ok (report "youtube")) (:error (report "youtube")))
     (is (= 3 (:lookback-days (sources/shape :youtube))))
+    (is (= :analysis (sources/kind {:type :youtube})) "a channel's videos are commentary, not reporting")
+    (is (= :news (sources/kind {:type :youtube :kind :news})) "unless the source says otherwise")
     (with-redefs [http/get get http/request request]
       (let [items (sources/fetch-items {:type :youtube :channels ["@chan"] :videos 2}
                                        {:day "2026-09-30" :config {}})]
@@ -338,6 +340,7 @@
           (is (= {:title "The latest"
                   :url "https://www.youtube.com/watch?v=new1"
                   :source "Chan"
+                  :origin "Chan"
                   :summary "What it's about. Today we're looking at \"tariffs\"."
                   :published "2026-09-29T12:00:00+00:00"
                   :text "Transcript of the video on Chan:\nToday we're looking at \"tariffs\"."}
@@ -357,8 +360,9 @@
       (let [[item :as items] (sources/fetch-items {:type :youtube :name "Mine" :channels ["UCaaaaaaaaaaaaaaaaaaaaaa"]}
                                                   {:day "2026-09-30" :config {}})]
         (is (= 1 (count items)))
-        (is (= {:title "The latest" :source "Mine" :summary "What it's about."}
-               (select-keys item [:title :source :summary :text])))
+        (is (= {:title "The latest" :source "Chan" :origin "Chan" :summary "What it's about."}
+               (select-keys item [:title :source :origin :summary :text]))
+            "credited to its channel even in a source of several, so each commentator keeps a record of their own")
         (is (= "99.0" (get-in (first (filter map? @seen)) [:context :client :clientVersion]))
             "the app version from the settings")
         (is (not-any? #{"https://www.youtube.com/@chan"} @seen) "an ID needs no lookup")))))

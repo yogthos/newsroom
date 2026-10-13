@@ -261,7 +261,9 @@
                                     timeout-ms ::timed-out))
             result (if (= ::timed-out outcome)
                      {:error (str "timed out after " (quot timeout-ms 1000) "s")}
-                     (try {:items (vec (outcome))}
+                     (try {:items (cond->> (vec (outcome))
+                                    ;; commentary frames the day's news; it isn't reporting
+                                    (= :analysis (sources/kind source)) (mapv #(assoc % :kind :analysis)))}
                           (catch Throwable e
                             ;; the run's cancel can reach the source's thread as
                             ;; an interrupt before it reaches this task
@@ -738,6 +740,43 @@
                         :level :ok})
           (analysis/apply-review items review))))))
 
+(def ^:private analysis-per-story
+  "The most pieces of analysis one story is given."
+  2)
+
+(def ^:private analysis-candidates
+  "The most pieces of analysis the desk is asked about, the latest first."
+  60)
+
+(defn- analysis-task
+  "Task: the day's `selected` reports with the `commentary` among them, at
+  most :max-analysis (12) pieces: each under the story the desk says it
+  argues about most, the heaviest stories' first, and those about none of
+  them after every story while there is room (see analysis/place-analysis).
+  A failed call leaves every piece about none."
+  [{:keys [config run-id] :as ctx} day selected commentary]
+  (m/sp
+    (let [budget (or (:max-analysis config) 12)]
+      (if (or (empty? commentary) (not (pos? budget)))
+        selected
+        (let [pieces (vec (take analysis-candidates (sort-by #(str (:published %)) #(compare %2 %1) commentary)))
+              titles (into {} (map (juxt :group :group-title)) (reverse selected))
+              stories (vec (for [g (distinct (keep :group selected))] {:key g :title (titles g)}))
+              llm-config (desk-llm config)
+              attached (when (seq stories)
+                         (log! run-id {:text (str "Asking which stories " (counted (count pieces) "piece" "pieces")
+                                                  " of analysis argue about")})
+                         (some-> (m/? (softly run-id "Placing the analysis"
+                                              (ask ctx llm-config (analysis/attach-prompt (dated day) stories pieces))))
+                                 (analysis/parse-attachments (count pieces) (map :key stories))))
+              placed (analysis/place-analysis selected pieces (or attached {}) budget analysis-per-story)
+              in (filter analysis/analysis? placed)]
+          (log! run-id {:text (str "Gave the analyst " (counted (count in) "piece" "pieces") " of analysis"
+                                   (let [under (count (filter :group in))]
+                                     (when (pos? under) (str ", " under " under the stories they argue about"))))
+                        :level :ok})
+          placed)))))
+
 (defn- group-task
   "Task: the day's `items` sorted into stories by the desk (see
   analysis/apply-grouping), or nil when :group-stories is off, or the
@@ -919,7 +958,7 @@
   (m/sp
     (let [n (:dossier-stories config)]
       (when (pos? (or n 0))
-        (let [main (vec (take n stories))
+        (let [main (vec (take n (filter (comp seq :sources) stories)))
               _ (update-status! run-id assoc :state :preparing :items (count main))
               main (or (m/? (softly run-id "Reading the articles" (read-articles ctx main))) main)
               dossiers (m/? (dossiers-task ctx day main notes))]
@@ -1278,6 +1317,13 @@
                 (log! run-id {:text (str "Left out " (- (count gathered) (count fresh))
                                          " stories already in the briefings up to "
                                          (sources/long-date (:day earlier)))}))
+            ;; analysis argues about the day's stories rather than reporting
+            ;; them, so it isn't sorted, weighed or cut with the reports
+            commentary (filterv analysis/analysis? fresh)
+            fresh (filterv (complement analysis/analysis?) fresh)
+            _ (when (seq commentary)
+                (log! run-id {:text (str "Set aside " (counted (count commentary) "piece" "pieces")
+                                         " of analysis to frame the stories they argue about")}))
             _ (when (:story-threshold config)
                 (m/? (follow-old-days ctx (minus-days day (:trend-days config 7)) (minus-days day 1))))
             threshold (:dupe-threshold config)
@@ -1309,7 +1355,9 @@
                                          " in the news for " (apply max (map :days followed)) " days")}))
             ;; a story that starts today is named by the day and number of
             ;; its first source
-            ranked (-> (trends/select-stories ranked config) news/cite (analysis/story-ids day))
+            ranked (-> (m/? (analysis-task ctx day (trends/select-stories ranked config) commentary))
+                       news/cite
+                       (analysis/story-ids day))
             ;; a story the last briefing cited is flagged, so today's says
             ;; only what is new in it
             covered (set (keep :story (:cited earlier)))
@@ -1440,7 +1488,7 @@
   (vec (keep (fn [{:keys [story] :as line}]
                (let [note (get kept story)
                      facts (some-> note (notes/facts-between from to))
-                     own (get stored story)
+                     own (remove analysis/analysis? (get stored story))
                      candidates (if (seq facts)
                                   (vec (take-last facts-per-storyline facts))
                                   (trends/digest-sources own sources-per-storyline))]
