@@ -28,7 +28,8 @@
     POST /config/test-provider
                             ask one provider of the form, or a built-in, a
                             one-word question, without saving it
-    POST /run?day=...       gather and analyse a day (today by default)
+    POST /run?day=...       gather and analyse a day (today by default);
+                            &fresh=true asks the models afresh
     POST /digest?kind=week&period=YYYY-Www
                             write a digest (kind week or month)
     POST /cancel            cancel the run in flight
@@ -350,7 +351,7 @@
 (defn- start-run [{:keys [params] :as req}]
   (let [day (get params "day" (pipeline/today))]
     (if (news/valid-day? day)
-      (do (pipeline/start-run! (ctx req) day)
+      (do (pipeline/start-run! (ctx req) day (= "true" (get params "fresh")))
           (ds/patch-signals {}))
       {:status 400 :body "bad day\n"})))
 

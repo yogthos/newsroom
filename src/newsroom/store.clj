@@ -260,7 +260,12 @@
    "create table if not exists shared_vectors (
       hash text primary key,
       vector text not null,
-      used_at integer not null)"])
+      used_at integer not null)"
+   ;; a model's answer, by the hash of exactly what it was asked
+   "create table if not exists shared_replies (
+      hash text primary key,
+      reply text not null,
+      saved_at integer not null)"])
 
 (def ^:private search-schema
   ;; ref is what a document is replaced and deleted by: the day for a
@@ -631,9 +636,28 @@
                              h (pr-str (vec v)) (now-ms)]))))
   nil)
 
+(defn saved-reply
+  "The model's answer kept under `hash`, when it was kept less than
+  `max-age-ms` ago, else nil."
+  [store hash max-age-ms]
+  (with-db [conn store]
+    (some-> (jdbc/fetch-one conn ["select reply from shared_replies where hash = ? and saved_at > ?"
+                                  hash (- (now-ms) max-age-ms)])
+            :reply
+            edn/read-string)))
+
+(defn save-reply!
+  "Keep the model's answer `reply` under `hash`, replacing any there was."
+  [store hash reply]
+  (with-db [conn store]
+    (jdbc/execute! conn ["insert or replace into shared_replies (hash, reply, saved_at) values (?, ?, ?)"
+                         hash (pr-str reply) (now-ms)]))
+  nil)
+
 (defn prune-shared!
   "Drop what is shared that is older than `max-age-ms`, an embedding by
-  when it was last used, and the sessions that have expired."
+  when it was last used, a model's answer by when it was kept, and the
+  sessions that have expired."
   [store max-age-ms]
   (let [before (- (now-ms) max-age-ms)]
     (with-db [conn store]
@@ -641,6 +665,7 @@
         (jdbc/execute! conn ["delete from shared_fetches where fetched_at < ?" before])
         (jdbc/execute! conn ["delete from shared_articles where fetched_at < ?" before])
         (jdbc/execute! conn ["delete from shared_vectors where used_at < ?" before])
+        (jdbc/execute! conn ["delete from shared_replies where saved_at < ?" before])
         (jdbc/execute! conn ["delete from sessions where expires_at <= ?" (now-ms)]))))
   nil)
 

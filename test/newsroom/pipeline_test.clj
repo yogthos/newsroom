@@ -596,6 +596,22 @@
         (is (= 1 (count (filter #(= "https://desk.example.com/fed" (:url %)) (:facts note))))
             "and the day's facts aren't added twice")))))
 
+(deftest running-a-day-again-reuses-the-answers-it-was-given
+  (let [prompts (atom [])
+        c (-> (ctx [{:type ::running :name "Desk"}] (notes-chat prompts))
+              (assoc-in [:config :story-threshold] 0.5)
+              (assoc-in [:config :story-notes] 12)
+              (assoc-in [:config :reply-cache-hours] 48))
+        _ (m/? (pipeline/run-task c "2026-09-30"))
+        asked (count @prompts)]
+    (is (pos? asked))
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (= asked (count @prompts)) "nothing that came out the same is asked again")
+    (is (some #(re-find #"Reused \d+ answers? saved from an earlier run" (:text %)) (:events @pipeline/status)))
+    (testing "unless the run is asked to start afresh"
+      (m/? (pipeline/run-task (assoc c :fresh? true) "2026-09-30"))
+      (is (= (* 2 asked) (count @prompts))))))
+
 (deftest a-failed-compaction-leaves-the-briefing-filed
   (let [c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]
                    (fn [_ req] (if (str/starts-with? (-> req :messages first :content) "You keep")

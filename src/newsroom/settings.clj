@@ -103,7 +103,12 @@
                         "as precedents, for the analyst to ground its projections in and cite. This is the "
                         "most searches it may run; blank turns the research off.")}]}
    {:title "Analysis"
-    :fields [{:key :group-stories :type :boolean :default true
+    :fields [{:key :reply-cache-hours :type :int :min 0 :default 48
+              :doc (str "How long the models' answers are kept to reuse, in hours: a run that asks what an earlier "
+                        "one asked, as running a day again does for every step whose reports and notes came out "
+                        "the same, takes the answer it got rather than paying for it again. 0 asks every time, "
+                        "and the run button's \"ask afresh\" does for one run.")}
+             {:key :group-stories :type :boolean :default true
               :doc (str "Before the briefing, the model sorts the day's reports into stories, the reports on one "
                         "event from different sides together, and gives each an importance, a status and the people, "
                         "organisations, countries, places and markets it's about, kept as a knowledge graph. A "

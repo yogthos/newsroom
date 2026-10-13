@@ -191,8 +191,13 @@
      (wire events)
      (if busy?
        [:button {"data-on:click" "@post('/cancel')"} "Cancel run"]
-       [:button {"data-on:click" (str "@post('/run?day=" today "')")}
-        "Gather today’s news"])]))
+       (list
+        [:button {"data-on:click" (str "@post('/run?day=" today "')")}
+         "Gather today’s news"]
+        (when (= today (:day st))
+          [:button.secondary {"data-on:click" (str "@post('/run?day=" today "&fresh=true')")
+                              :title "Run again without reusing the models' answers from the last run"}
+           "Ask afresh"])))]))
 
 (defn- narration-panel
   "What the desk says about the podcast being made or made last, a line

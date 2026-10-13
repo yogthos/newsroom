@@ -53,6 +53,12 @@
  ;; be compared with the four months before it.
  :keep-days 100
 
+ ;; How long the models' answers are kept, in hours. A run that asks what
+ ;; an earlier one asked, as running a day again does for every step whose
+ ;; reports and notes came out the same, reuses the answer instead of
+ ;; paying for it again. 0 asks every time.
+ :reply-cache-hours 48
+
  ;; How far back an item's date may be, in days before the briefing's day.
  ;; Undated items are always kept.
  :lookback-days 1

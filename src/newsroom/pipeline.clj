@@ -60,6 +60,7 @@
             [newsroom.embed :as embed]
             [newsroom.entities :as entities]
             [newsroom.feed :as feed]
+            [newsroom.llm.cache :as cache]
             [newsroom.llm.client :as llm]
             [newsroom.llm.providers :as providers]
             [newsroom.narration :as narration]
@@ -1283,18 +1284,31 @@
                         (if (seq previous) (entities/changes today previous window) {})
                         (when (seq previous) (sources/long-date previous-day)))))
 
+(defn- with-saved-answers
+  "`ctx` with its model call answering what an earlier run asked from the
+  answer it got, for :reply-cache-hours (see newsroom.llm.cache), unless
+  the run is to ask afresh, :fresh?. Each answer reused counts in `hits`."
+  [{:keys [config store fresh?] :as ctx} hits]
+  (assoc ctx :chat (cache/cached (or (:chat ctx) llm/chat) store
+                                 {:max-age-ms (some-> (:reply-cache-hours config) (* 60 60 1000))
+                                  :fresh? fresh?
+                                  :on-hit (fn [_] (swap! hits inc))})))
+
 (defn run-task
   "Task: gather, analyse and store `day`. Completes with the stored day's
   summary; fails when nothing was gathered or the model call fails.
 
   `ctx` is {:config :store}, and optionally :chat (the model call, llm/chat
-  by default), :template (the prompt, prompt.md by default) and :run-id
+  by default), :template (the prompt, prompt.md by default), :run-id
   (the status the run reports to; start-run! sets it, and a run without
-  one takes over the status)."
+  one takes over the status) and :fresh?, to ask the models afresh rather
+  than reuse the answers an earlier run got to the same questions."
   [{:keys [config store] :as ctx} day]
   (let [own? (nil? (:run-id ctx))
         run-id (or (:run-id ctx) (Run. (:status (lane-of ctx))))
-        ctx (assoc ctx :run-id run-id :day day :emit #(log! run-id %))]
+        reused (atom 0)
+        ctx (-> (assoc ctx :run-id run-id :day day :emit #(log! run-id %))
+                (with-saved-answers reused))]
     (m/sp
       (let [srcs (:sources config)
             _ (when own? (reset! (status-of run-id) {:run run-id :state :starting :day day :started (now)}))
@@ -1461,6 +1475,8 @@
                                    (if (= 1 (count gone)) "day" "days")
                                    " past the limit of " (:keep-days config default-keep-days))}))
         (store/prune-shared! store shared-days-ms)
+        (when (pos? @reused)
+          (log! run-id {:text (str "Reused " (counted @reused "answer" "answers") " saved from an earlier run")}))
         ;; the podcast takes minutes, so it is recorded once the run is over
         (when (and (:podcast config) (:podcast-auto config) (tts/available? (:podcast-engine config :kitten-2)))
           (log! run-id {:text "The podcast of the briefing will be written and recorded next"})
@@ -1583,7 +1599,7 @@
   [{:keys [config store] :as ctx} kind period]
   (let [own? (nil? (:run-id ctx))
         run-id (or (:run-id ctx) (Run. (:status (lane-of ctx))))
-        ctx (assoc ctx :run-id run-id)
+        ctx (with-saved-answers (assoc ctx :run-id run-id) (atom 0))
         label (period-label kind period)
         job {:kind kind :period period}]
     (m/sp
@@ -1709,10 +1725,11 @@
         true))))
 
 (defn start-run!
-  "Start a run for `day` unless the reader has one in flight. Returns true
-  when started."
-  [ctx day]
-  (start-job! ctx {:day day} #(run-task (assoc ctx :run-id %) day)))
+  "Start a run for `day` unless the reader has one in flight, asking the
+  models afresh when `fresh?`. Returns true when started."
+  ([ctx day] (start-run! ctx day false))
+  ([ctx day fresh?]
+   (start-job! ctx {:day day} #(run-task (assoc ctx :run-id % :fresh? fresh?) day))))
 
 (defn start-digest!
   "Start writing the digest of `kind` for `period` unless the reader has a
