@@ -32,8 +32,18 @@
 
 (def static-keys
   "What config.edn says: what has to be known before the database is open,
-  or can't change while the server runs."
-  #{:host :port :db})
+  or can't change while the server runs, or is the server's to decide
+  rather than any one reader's: whether it has readers who sign in
+  (:single-user, :oauth), which secrets they may use (:shared-secrets) and
+  how long what one reader's run fetched serves the others
+  (:shared-fetch-minutes)."
+  #{:host :port :db :single-user :oauth :shared-secrets :shared-fetch-minutes})
+
+(defn single-user?
+  "Whether newsroom runs for one person, with no sign-in: the default,
+  unless config.edn says :single-user false."
+  [cfg]
+  (not (false? (:single-user cfg))))
 
 ;; --- secrets -------------------------------------------------------------------------
 ;; secrets.edn holds credentials as {"NAME" "value"}, so a key need not be
@@ -99,6 +109,17 @@
     (or (env name)
         (let [v (get @secrets name)]
           (when-not (str/blank? v) v)))))
+
+(defn secret-for
+  "The value of `name` for a reader running with `cfg`. When newsroom runs
+  for one person, that is `secret`. With several readers, a reader's
+  settings are theirs to write, so only the names config.edn lists under
+  :shared-secrets are read from the environment or secrets.edn: anything
+  else there is the server's, and a reader must not be able to have it
+  sent wherever their settings say."
+  [cfg name]
+  (when (or (single-user? cfg) (contains? (set (:shared-secrets cfg)) name))
+    (secret name)))
 
 (defn default-text [name]
   (slurp (io/resource (str "defaults/" name))))

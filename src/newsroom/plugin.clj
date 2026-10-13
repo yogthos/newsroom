@@ -13,7 +13,10 @@
 
   Its settings are the entry named after the folder under :plugins in the
   settings, edited on the config page, and a string there written as
-  \"${VAR}\" is read from the environment:
+  \"${VAR}\" is read from the environment. With several readers, each has
+  settings of their own, `config` reads those of the reader whose source
+  is being read, and ${VAR} reads only what config.edn's :shared-secrets
+  shares:
 
     :plugins {:slack {:token \"${SLACK_BOT_TOKEN}\" :workspace \"acme\"}}
 
@@ -103,13 +106,16 @@
 
 (defn- expand-vars
   "`v` with every string that is exactly ${VAR} read from the environment or
-  secrets.edn. An unset variable is an error naming it and `plugin`."
-  [plugin v]
+  secrets.edn, as `cfg` lets its reader (see newsroom.config/secret-for).
+  An unset variable is an error naming it and `plugin`, and so is one
+  that isn't shared with the readers."
+  [cfg plugin v]
   (walk/postwalk
    (fn [x]
      (if-let [[_ var] (and (string? x) (re-matches #"\$\{([A-Za-z_][A-Za-z0-9_]*)\}" x))]
-       (or (config/secret var)
-           (throw (ex-info (str "plugin " plugin " names ${" var "}, which is not set")
+       (or (config/secret-for cfg var)
+           (throw (ex-info (str "plugin " plugin " names ${" var "}, which "
+                                (if (config/secret var) "isn't shared with readers" "is not set"))
                            {:plugin plugin :var var})))
        x))
    v))
@@ -122,9 +128,11 @@
      (config (:name *plugin*))
      (throw (ex-info "(config) names no plugin outside of loading one" {}))))
   ([plugin]
-   (let [plugins (:plugins @app-config)
+   ;; a source is read with its reader's config, which read-source binds
+   (let [cfg (or sources/*config* @app-config)
+         plugins (:plugins cfg)
          entry (or (get plugins (keyword (name plugin))) (get plugins (name plugin)))]
-     (expand-vars (name plugin) entry))))
+     (expand-vars cfg (name plugin) entry))))
 
 (defonce ^:private plugin-types (atom {}))
 

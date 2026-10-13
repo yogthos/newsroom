@@ -19,7 +19,13 @@
   :reasoning-effort, :features).
 
   With no :roles, the first built-in whose key is in the environment serves
-  (DeepSeek, GLM, OpenAI), and a local endpoint when none is."
+  (DeepSeek, GLM, OpenAI), and a local endpoint when none is.
+
+  With several readers, the settings are a reader's own, so a key read from
+  the environment or secrets.edn has to be one config.edn shares, and it
+  is sent only where its built-in sends it: a :type :deepseek entry may use
+  DEEPSEEK_API_KEY at DeepSeek's own endpoint, and nowhere else. A key
+  typed into the settings is the reader's to send where they like."
   (:require [clojure.string :as str]
             [newsroom.config :as config]))
 
@@ -57,19 +63,37 @@
    :timeout-ms 600000
    :conn-timeout-ms 15000})
 
-(defn- env [k]
-  (config/secret k))
+(defn- env [config k]
+  (config/secret-for config k))
 
 (defn- as-key [x]
   (some-> x name str/lower-case not-empty keyword))
 
+(defn- shared-key-error
+  "Why the shared secret `v` can't be sent to the endpoint `llm` resolves
+  to, or nil when it can: with several readers, only to the built-in whose
+  key it is, at that built-in's own endpoint."
+  [config where v llm]
+  (when-not (config/single-user? config)
+    (let [preset (presets (:type llm))]
+      (when-not (and (= v (:key-env preset)) (= (:base-url llm) (:base-url preset)))
+        (ex-info (str where " can't use ${" v "}: a key the server shares is only sent to its own provider's "
+                      "endpoint, so type the key in to use it elsewhere")
+                 {:var v :shared true})))))
+
 (defn- expand-var
-  "`s` with an exact ${VAR} replaced from the environment or secrets.edn. An
-  unset variable is an error naming it."
-  [where s]
+  "`s` with an exact ${VAR} replaced from the environment or secrets.edn,
+  checked by `allowed` first, which returns an error to throw or nil. An
+  unset variable is an error naming it, and so is one that isn't shared
+  with readers."
+  [config where s allowed]
   (if-let [[_ v] (and (string? s) (re-matches #"\$\{([A-Za-z_][A-Za-z0-9_]*)\}" s))]
-    (or (env v)
-        (throw (ex-info (str where " names ${" v "}, which is not set") {:var v})))
+    (let [value (env config v)]
+      (cond
+        value (if-let [e (allowed v)] (throw e) value)
+        (config/secret v) (throw (ex-info (str where " names ${" v "}, which isn't shared with readers")
+                                          {:var v :shared false}))
+        :else (throw (ex-info (str where " names ${" v "}, which is not set") {:var v}))))
     s))
 
 (defn- declared-entry [config alias]
@@ -80,9 +104,9 @@
   [config]
   (distinct (concat (keys presets) (keep as-key (keys (:providers config))))))
 
-(defn- detect-provider []
+(defn- detect-provider [config]
   (or (first (for [p [:deepseek :glm :openai]
-                   :when (env (:key-env (presets p)))]
+                   :when (env config (:key-env (presets p)))]
                p))
       :local))
 
@@ -113,22 +137,27 @@
 
       :else
       (let [preset (presets type)
-            key-env (or (:api-key-env entry) (:key-env preset))]
-        (cond-> (merge default-llm
-                       (dissoc preset :key-env)
-                       (dissoc (or entry {}) :type :api-key-env))
-          true (assoc :type type :alias alias)
-          (and key-env (not (:api-key entry))) (assoc :api-key (env key-env))
-          (:api-key entry) (update :api-key #(expand-var where %))
+            key-env (or (:api-key-env entry) (:key-env preset))
+            llm (-> (merge default-llm
+                           (dissoc preset :key-env)
+                           (dissoc (or entry {}) :type :api-key-env))
+                    (assoc :type type :alias alias))
+            allowed #(shared-key-error config where % llm)
+            env-key (when (and key-env (not (:api-key entry)) (env config key-env))
+                      (when-let [e (allowed key-env)] (throw e))
+                      (env config key-env))]
+        (cond-> llm
+          (and key-env (not (:api-key entry))) (assoc :api-key env-key)
+          (:api-key entry) (update :api-key #(expand-var config where % allowed))
           (:headers entry) (update :headers
-                                   #(into {} (for [[k v] %] [k (expand-var where v)]))))))))
+                                   #(into {} (for [[k v] %] [k (expand-var config where v allowed)]))))))))
 
 (defn role-llm
   "The llm config serving `role`: the alias :roles assigns it, else the
   :default role's, else whichever built-in has a key in the environment."
   [config role]
   (let [roles (:roles config)
-        alias (or (get roles role) (get roles :default) (detect-provider))]
+        alias (or (get roles role) (get roles :default) (detect-provider config))]
     (resolve-provider config alias)))
 
 (defn redacted

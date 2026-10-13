@@ -104,3 +104,42 @@
 (deftest an-empty-file-is-no-secrets
   (doseq [text ["" ";; nothing yet\n"]]
     (is (= {} (config/read-secrets (secrets-file text "rw-------"))) (pr-str text))))
+
+(deftest with-several-readers-only-the-shared-secrets-are-read
+  (let [f (secrets-file (pr-str {"DEEPSEEK_API_KEY" "sk-shared" "NEWSROOM_TEST_KEY" "sk-private"}) "rw-------")
+        multi {:single-user false :shared-secrets ["DEEPSEEK_API_KEY"]}]
+    (try
+      (config/load-secrets! f)
+      (testing "one reader reads every secret, as before"
+        (is (= "sk-private" (config/secret-for {} "NEWSROOM_TEST_KEY")))
+        (is (= "sk-private" (config/secret-for {:single-user true} "NEWSROOM_TEST_KEY"))))
+      (testing "several read only what config.edn shares"
+        (is (= (config/secret "DEEPSEEK_API_KEY") (config/secret-for multi "DEEPSEEK_API_KEY")))
+        (is (nil? (config/secret-for multi "NEWSROOM_TEST_KEY")))
+        (is (nil? (config/secret-for (dissoc multi :shared-secrets) "DEEPSEEK_API_KEY")) "none, unless shared"))
+      (testing "a shared key serves its own provider"
+        (is (= (config/secret "DEEPSEEK_API_KEY")
+               (:api-key (providers/resolve-provider (assoc multi :providers {:deepseek {}}) :deepseek))))
+        (is (= :deepseek (:alias (providers/role-llm multi :analyst))) "and is found for the analyst"))
+      (testing "but isn't sent anywhere a reader's settings point it"
+        (doseq [entry [{:type :deepseek :base-url "https://collector.example/v1"}
+                       {:type :openai :api-key-env "DEEPSEEK_API_KEY"}
+                       {:type :openai :api-key "${DEEPSEEK_API_KEY}"}
+                       {:type :deepseek :base-url "https://collector.example/v1" :headers {"X-Key" "${DEEPSEEK_API_KEY}"}}]]
+          (let [msg (message #(providers/resolve-provider (assoc multi :providers {:p entry}) :p))]
+            (is (some? msg) (pr-str entry))
+            (is (not (str/includes? (str msg) (config/secret "DEEPSEEK_API_KEY")))))))
+      (testing "a secret that isn't shared is an error, not a value"
+        (is (str/includes? (message #(providers/resolve-provider
+                                      (assoc multi :providers {:p {:type :openai :api-key "${NEWSROOM_TEST_KEY}"}}) :p))
+                           "isn't shared"))
+        (plugin/set-config! (assoc multi :plugins {:gamma {:token "${NEWSROOM_TEST_KEY}"}}))
+        (is (str/includes? (message #(plugin/config :gamma)) "isn't shared")))
+      (testing "a key the reader typed in is theirs to send"
+        (is (= "sk-own" (:api-key (providers/resolve-provider
+                                   (assoc multi :providers {:p {:type :openai :base-url "https://mine.example/v1"
+                                                                :api-key "sk-own"}})
+                                   :p)))))
+      (finally
+        (plugin/set-config! {})
+        (config/load-secrets! nil)))))

@@ -176,13 +176,20 @@
                   (recur (inc n)))
               (throw e))))))))
 
+(def ^:dynamic *config*
+  "The config of the reader whose source is being read, bound by
+  `read-source`, for newsroom.plugin/config to read the plugins' settings
+  from."
+  nil)
+
 (defn read-source
   "The items `source` has, as `fetch-items` gives them, read under its
   policy: its requests are retried within its :timeout-ms. Blocking; the
   caller still bounds it by the same :timeout-ms, which this only spends."
   [source ctx]
   (let [{:keys [timeout-ms] :as p} (policy source (:config ctx))]
-    (binding [*policy* (assoc p :deadline (+ (now) timeout-ms) :emit (:emit ctx))]
+    (binding [*policy* (assoc p :deadline (+ (now) timeout-ms) :emit (:emit ctx))
+              *config* (:config ctx)]
       (vec (fetch-items source ctx)))))
 
 (defn- get-once [url timeout-ms user-agent]
