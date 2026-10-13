@@ -33,9 +33,24 @@
   (see newsroom.narration).
 
   Progress is published to `status`, a glimmer ratom, so every open page
-  shows it live."
+  shows it live.
+
+  With several readers, each runs on their own: a reader's `lane` is the
+  status their pages show, the run they have in flight and the count their
+  pages refresh by, so one reader's run neither waits for another's nor
+  shows on their pages. The local reader's lane is `status`, `current` and
+  `stored`.
+
+  What a source gives doesn't depend on who reads it, so a reader's run
+  takes what another's read of the same source for the same day, when it
+  is no more than :shared-fetch-minutes old, and when the other is reading
+  it right then, waits for that read rather than making its own. The text
+  of an article read in full and the embedding of an item are shared the
+  same way. With one reader there is no one to share with, and every run
+  reads afresh unless config.edn says otherwise."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure.walk :as walk]
             [ebb.core :as m]
             [glimmer.ratom :as ratom]
             [jolt.time]
@@ -49,6 +64,7 @@
             [newsroom.narration :as narration]
             [newsroom.news :as news]
             [newsroom.notes :as notes]
+            [newsroom.plugin :as plugin]
             [newsroom.precedents :as precedents]
             [newsroom.progress :as progress]
             [newsroom.retrospective :as retrospective]
@@ -65,6 +81,33 @@
 
 (defonce ^{:doc "Bumped whenever a day is stored, so pages showing it refresh."}
   stored (ratom/atom 0))
+
+(defonce ^:private lanes (atom {}))
+
+(defn lane
+  "The reader `uid`'s runs: {:status :current :stored}, as `status`,
+  `current` and `stored` are the local reader's, which they are for
+  `uid` nil."
+  [uid]
+  (if (or (nil? uid) (= store/local-user-id uid))
+    {:status status :current current :stored stored}
+    (or (get @lanes uid)
+        (get (swap! lanes (fn [m]
+                            (if (contains? m uid)
+                              m
+                              (assoc m uid {:status (ratom/atom {:state :idle}) :current (atom nil)
+                                            :stored (ratom/atom 0)}))))
+             uid))))
+
+(defn- lane-of [ctx] (lane (some-> (:store ctx) store/user-id)))
+
+(deftype ^:private Run [status])
+
+(defn- status-of
+  "The status run `run-id` reports to: its reader's, or the local reader's
+  for a run-id that isn't a Run, as a test's may not be."
+  [run-id]
+  (if (instance? Run run-id) (.-status ^Run run-id) status))
 
 (def ^:private embed-model
   "The embedding model, loaded once on first use: 6MB of resources that
@@ -87,7 +130,7 @@
   over the status of the run that replaced it. Sources report from several
   threads at once, which relies on swap! being atomic (glimmer v0.1.4)."
   [run-id f & args]
-  (swap! status (fn [st] (if (identical? run-id (:run st)) (apply f st args) st))))
+  (swap! (status-of run-id) (fn [st] (if (identical? run-id (:run st)) (apply f st args) st))))
 
 (def ^:private max-events 60)
 
@@ -115,17 +158,105 @@
 
 ;; --- gathering ---------------------------------------------------------------------
 
+(def ^:private minute-ms 60000)
+
+(defn shared-minutes
+  "How long what a run reads serves another's: :shared-fetch-minutes, 30
+  by default with several readers and 0, nothing kept, with one."
+  [config]
+  (or (:shared-fetch-minutes config) (if (config/single-user? config) 0 30)))
+
+(defn- sorted-deep
+  "`x` with every map in it sorted by its keys' printed form, so two
+  sources that ask for the same thing print the same however their maps
+  were built."
+  [x]
+  (walk/postwalk
+   (fn [v] (if (map? v) (into (sorted-map-by #(compare (pr-str %1) (pr-str %2))) v) v))
+   x))
+
+(defn share-key
+  "What `source` asks for on `day`, as the key what it gives is shared by:
+  the source without what only names it or says how long to wait for it,
+  and, for a source a plugin reads, the plugin's settings in `config`,
+  since they may hold the credentials it reads with."
+  [source config day]
+  (config/sha-256
+   (pr-str (sorted-deep [(dissoc source :name :timeout-ms :retries :retry-wait-ms :lookback-days)
+                         (when-let [p (plugin/owner (:type source))]
+                           (or (get-in config [:plugins (keyword p)]) (get-in config [:plugins p])))
+                         day]))))
+
+(defonce ^{:private true :doc "The reads going on now, by share-key, each a promise of {:items} or {:error}."}
+  in-flight (atom {}))
+
+(defn- once-in-flight
+  "What (f) returns, {:name :items}, unless a read for `key` is already
+  going on, when it is that read's, waited on for at most `wait-ms`. When
+  that read fails or isn't done in time, (f) is tried here instead."
+  [key wait-ms f]
+  (let [p (promise)
+        [old _] (swap-vals! in-flight #(if (contains? % key) % (assoc % key p)))
+        other (get old key)]
+    (if other
+      (let [r (deref other wait-ms nil)]
+        (if (contains? r :items) r (f)))
+      (try (let [r (f)]
+             (deliver p r)
+             r)
+           (catch Throwable e
+             (deliver p {:error e})
+             (throw e))
+           (finally
+             (swap! in-flight #(if (identical? p (get % key)) (dissoc % key) %)))))))
+
+(defn- recredit
+  "`items` read for a source called `from`, credited to `to` instead: a
+  reader's own name for the source, where the outlet isn't one of its
+  own."
+  [items from to]
+  (if (= from to)
+    items
+    (mapv #(if (= from (:source %)) (assoc % :source to) %) items)))
+
+(defn- minutes-ago [ms]
+  (let [m (quot (- (System/currentTimeMillis) ms) minute-ms)]
+    (cond (< m 1) "just now" (= 1 m) "a minute ago" :else (str m " minutes ago"))))
+
+(defn read-shared
+  "The items `source` has for the context's day, as read-source reads
+  them, unless another run read the same within :shared-fetch-minutes or
+  is reading it now: then that run's, credited to this source's name.
+  Blocks."
+  [source {:keys [config store day] :as ctx}]
+  (let [minutes (shared-minutes config)
+        name (sources/source-name source)]
+    (if-not (and store (pos? minutes))
+      (sources/read-source source ctx)
+      (let [key (share-key source config day)]
+        (if-let [{old :name :keys [items fetched-at]} (store/shared-fetch store key (* minutes minute-ms))]
+          (do (sources/emit! ctx (str name ": " (count items) " items, as read by a run " (minutes-ago fetched-at)))
+              (recredit items old name))
+          (let [{old :name :keys [items]}
+                (once-in-flight key (:timeout-ms (sources/policy source config))
+                                (fn []
+                                  (let [items (sources/read-source source ctx)]
+                                    (store/save-shared-fetch! store key name items)
+                                    {:name name :items items})))]
+            (recredit items old name)))))))
+
 (defn- gather-one
   "Task: one source's items for the day, never failing. A failure or a
   timeout is recorded as that source's :error, so the run goes on without
   it. Only a cancel of the run itself propagates. The source is read under
   its own policy, its :timeout-ms bounding it and its retries (see
-  newsroom.sources/read-source)."
+  newsroom.sources/read-source), or shared with another reader's run (see
+  read-shared)."
   [source {:keys [config] :as ctx}]
   (let [name (sources/source-name source)
         timeout-ms (:timeout-ms (sources/policy source config))]
     (m/sp
-      (let [outcome (m/? (m/timeout (m/attempt (m/via m/blk (sources/read-source source ctx)))
+      (let [outcome (m/? (m/timeout (m/attempt (m/via m/blk (read-shared source ctx)))
                                     timeout-ms ::timed-out))
             result (if (= ::timed-out outcome)
                      {:error (str "timed out after " (quot timeout-ms 1000) "s")}
@@ -216,6 +347,11 @@
 
 (def default-keep-days 100)
 
+(def ^:private shared-days-ms
+  "How long what readers share is kept at most: a week, an embedding a
+  week from when it was last used."
+  (* 7 24 60 60 1000))
+
 (defn prune-days!
   "Drop the days past :keep-days (100 by default, -1 for no limit) from the
   store. Returns the days dropped."
@@ -302,10 +438,19 @@
   (str title ". " title ". " summary))
 
 (defn- embed-items
-  "The items with the :vector of their embed-text."
-  [items]
-  (let [model @embed-model]
-    (mapv (fn [i] (assoc i :vector (embed/embed model (embed-text i)))) items)))
+  "The items with the :vector of their embed-text, those another run
+  embedded already taken from `store`'s shared vectors, when it has
+  them."
+  [store items]
+  (let [hashes (mapv #(config/sha-256 (embed-text %)) items)
+        known (if store (store/shared-vectors store hashes) {})
+        model (delay @embed-model)
+        fresh (into {} (for [[h i] (map vector hashes items)
+                             :when (not (contains? known h))]
+                         [h (embed/embed @model (embed-text i))]))]
+    (when (and store (seq fresh))
+      (store/save-shared-vectors! store fresh))
+    (mapv (fn [h i] (assoc i :vector (or (get known h) (get fresh h)))) hashes items)))
 
 (defn- follow-old-days!
   "Storylines for the days from `from` to `to` that were stored before
@@ -515,20 +660,34 @@
          (when (interrupted? e) (throw e))
          nil)))
 
+(def ^:private article-days
+  "How long the text of an article read in full serves another reader's
+  run."
+  1)
+
+(defn- read-article-shared
+  "The text of the article at `url`, read by another run within a day or
+  read now and kept, or nil when it can't be read. Blocks."
+  [store url]
+  (or (some-> store (store/shared-article url (* article-days 24 60 minute-ms)))
+      (when-let [text (read-article url)]
+        (when store (store/save-shared-article! store url text))
+        text)))
+
 (defn- read-articles
   "Task: `stories` with the text of their main reports, :read-articles of
   each (none when it is 0), read from the outlets' pages, all at once. A
   page that can't be read, or holds too little to be the article, leaves
   its report with its summary. A report whose source handed over its
   text, like a video's transcript, keeps that text and isn't read."
-  [{:keys [config run-id]} stories]
+  [{:keys [config store run-id]} stories]
   (m/sp
     (let [wanted (vec (remove :text (mapcat #(analysis/readers % (:read-articles config 0)) stories)))]
       (if (empty? wanted)
         stories
         (let [_ (log! run-id {:text (str "Reading " (count wanted) " articles in full for the dossiers")})
               texts (m/? (apply m/join vector
-                                (map (fn [s] (m/timeout (m/via m/blk (read-article (:url s)))
+                                (map (fn [s] (m/timeout (m/via m/blk (read-article-shared store (:url s)))
                                                         (+ article-timeout-ms 5000) nil))
                                      wanted)))
               by-url (into {} (keep (fn [[s t]] (when t [(:url s) t]))) (map vector wanted texts))]
@@ -901,7 +1060,8 @@
   worker rather than as a run (see newsroom.narration), the pages showing
   the day refreshed once it is stored."
   [ctx day]
-  (narration/enqueue! (assoc (select-keys ctx [:config :store :chat]) :on-saved #(swap! stored inc)) day))
+  (let [{:keys [stored]} (lane-of ctx)]
+    (narration/enqueue! (assoc (select-keys ctx [:config :store :chat]) :on-saved #(swap! stored inc)) day)))
 
 (defn run-task
   "Task: gather, analyse and store `day`. Completes with the stored day's
@@ -913,11 +1073,11 @@
   one takes over the status)."
   [{:keys [config store] :as ctx} day]
   (let [own? (nil? (:run-id ctx))
-        run-id (or (:run-id ctx) (Object.))
+        run-id (or (:run-id ctx) (Run. (:status (lane-of ctx))))
         ctx (assoc ctx :run-id run-id :day day :emit #(log! run-id %))]
     (m/sp
       (let [srcs (:sources config)
-            _ (when own? (reset! status {:run run-id :state :starting :day day :started (now)}))
+            _ (when own? (reset! (status-of run-id) {:run run-id :state :starting :day day :started (now)}))
             _ (update-status! run-id assoc :state :gathering
                               :sources (into {} (map (fn [s] [(sources/source-name s) {:state :pending}]) srcs)))
             _ (log! run-id {:text (str "Gathering the news for " (sources/long-date day)
@@ -941,7 +1101,7 @@
                 (m/? (follow-old-days ctx (minus-days day (:trend-days config 7)) (minus-days day 1))))
             threshold (:dupe-threshold config)
             embedded-items (if (or threshold (:story-threshold config))
-                             (embed-items fresh)
+                             (embed-items store fresh)
                              fresh)
             collapsed (news/collapse-similar embedded-items threshold)
             _ (when (< (count collapsed) (count embedded-items))
@@ -1059,11 +1219,12 @@
           (log! run-id {:text (str "Dropped " (count gone) " old "
                                    (if (= 1 (count gone)) "day" "days")
                                    " past the limit of " (:keep-days config default-keep-days))}))
+        (store/prune-shared! store shared-days-ms)
         ;; the podcast takes minutes, so it is recorded once the run is over
         (when (and (:podcast config) (:podcast-auto config) (tts/available? (:podcast-engine config :kitten-2)))
           (log! run-id {:text "The podcast of the briefing will be written and recorded next"})
           (narrate! ctx day))
-        (swap! stored inc)
+        (swap! (:stored (lane-of ctx)) inc)
         {:day day :digest nil :items (count numbered) :cited (count cited)}))))
 
 ;; --- digests -----------------------------------------------------------------------
@@ -1172,12 +1333,12 @@
   `ctx` is as for run-task, plus an optional :digest-template."
   [{:keys [config store] :as ctx} kind period]
   (let [own? (nil? (:run-id ctx))
-        run-id (or (:run-id ctx) (Object.))
+        run-id (or (:run-id ctx) (Run. (:status (lane-of ctx))))
         ctx (assoc ctx :run-id run-id)
         label (period-label kind period)
         job {:kind kind :period period}]
     (m/sp
-      (when own? (reset! status {:run run-id :state :starting :digest job :started (now)}))
+      (when own? (reset! (status-of run-id) {:run run-id :state :starting :digest job :started (now)}))
       (update-status! run-id assoc :state :starting :digest job :sources {} :writing nil)
       (log! run-id {:text (str "Reading the briefings for " label)})
       (let [[from to] (trends/period-range kind period)
@@ -1252,7 +1413,7 @@
                                    (vec (mapcat (fn [l] (map #(assoc % :story (:story l)) (:cites l))) lines))
                                    nil))
           (m/? (retrospective-task ctx kind period to doc)))
-        (swap! stored inc)
+        (swap! (:stored (lane-of ctx)) inc)
         {:digest job :items (count numbered) :cited (count cited)}))))
 
 (defn due-digests
@@ -1269,15 +1430,21 @@
                           (nil? (store/digest store kind period)))]
            [kind period]))))
 
-(defn running? [] (some? @current))
+(defn running?
+  "Whether the reader `uid`, the local one by default, has a run in
+  flight."
+  ([] (running? nil))
+  ([uid] (some? @(:current (lane uid)))))
 
 (defn- start-job!
-  "Start the task `(make-task token)` unless a run is in flight, with the
-  status starting from `init`. Returns true when started."
-  [init make-task]
-  (let [token (Object.)]
+  "Start the task `(make-task run-id)` in `ctx`'s reader's lane unless
+  they have a run in flight, with the status starting from `init`.
+  Returns true when started."
+  [ctx init make-task]
+  (let [{:keys [current] lane-status :status} (lane-of ctx)
+        token (Run. lane-status)]
     (when (compare-and-set! current nil {:token token})
-      (reset! status (merge {:run token :state :starting :started (now) :sources {}} init))
+      (reset! lane-status (merge {:run token :state :starting :started (now) :sources {}} init))
       (let [finish! (fn [m]
                       (update-status! token merge m {:finished (now)})
                       (swap! current #(when-not (= token (:token %)) %)))
@@ -1292,15 +1459,16 @@
         true))))
 
 (defn start-run!
-  "Start a run for `day` unless one is in flight. Returns true when started."
+  "Start a run for `day` unless the reader has one in flight. Returns true
+  when started."
   [ctx day]
-  (start-job! {:day day} #(run-task (assoc ctx :run-id %) day)))
+  (start-job! ctx {:day day} #(run-task (assoc ctx :run-id %) day)))
 
 (defn start-digest!
-  "Start writing the digest of `kind` for `period` unless a run is in
-  flight. Returns true when started."
+  "Start writing the digest of `kind` for `period` unless the reader has a
+  run in flight. Returns true when started."
   [ctx kind period]
-  (start-job! {:digest {:kind kind :period period}}
+  (start-job! ctx {:digest {:kind kind :period period}}
               #(digest-task (assoc ctx :run-id %) kind period)))
 
 (defn- scheduled-task
@@ -1333,11 +1501,13 @@
         (last-digest)))))
 
 (defn cancel-run!
-  "Cancel the run in flight, if any."
-  []
-  (when-let [cancel (:cancel @current)]
-    (cancel)
-    true))
+  "Cancel the run the reader `uid`, the local one by default, has in
+  flight, if any."
+  ([] (cancel-run! nil))
+  ([uid]
+   (when-let [cancel (:cancel @(:current (lane uid)))]
+     (cancel)
+     true)))
 
 ;; --- the schedule ------------------------------------------------------------------
 ;; The first run is at :run-at, local time, and the next ones every
@@ -1398,7 +1568,7 @@
         daily? (due? (some->> created (- (now))) interval)
         digests (due-digests store config day)]
     (when (or daily? (seq digests))
-      (start-job! (if daily? {:day day} {:digest (zipmap [:kind :period] (first digests))})
+      (start-job! ctx (if daily? {:day day} {:digest (zipmap [:kind :period] (first digests))})
                   #(scheduled-task (assoc ctx :run-id %) day daily? digests)))))
 
 (defn schedule-task

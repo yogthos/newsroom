@@ -149,6 +149,11 @@
   [plugin]
   (vec (get @plugin-types (name plugin))))
 
+(defn owner
+  "The name of the plugin that added source `type`, nil for a built-in."
+  [type]
+  (some (fn [[p types]] (when (contains? types type) p)) @plugin-types))
+
 (defmacro defsource
   "Add a source type: `body` returns the items a source of `type` has, for
   the context {:day \"YYYY-MM-DD\" :config ...}. An optional map before the
