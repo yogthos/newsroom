@@ -53,6 +53,18 @@
     :summary "Finance ministers from the G7 met to discuss rising sovereign debt levels."
     :published (str day "T08:00:00Z")}])
 
+(def ^:private reads (atom 0))
+
+(defmethod sources/fetch-items ::changing [{:keys [name]} {:keys [day]}]
+  ;; a feed that has one more update each time it's read
+  (let [n (swap! reads inc)]
+    [{:title "Federal Reserve holds rates steady as inflation cools"
+      :url "https://desk.example.com/fed" :source name
+      :summary "The central bank kept its benchmark rate unchanged." :published (str day "T08:00:00Z")}
+     {:title (str "Live: the summit, update " n)
+      :url (str "https://desk.example.com/summit/" n) :source name
+      :summary "Leaders met for a second day." :published (str day "T09:00:00Z")}]))
+
 (defmethod sources/fetch-items ::running [{:keys [name]} {:keys [day]}]
   ;; the outlet's headlines for the day: listed first is a one-off, then a
   ;; story that has been running all week
@@ -611,6 +623,23 @@
     (testing "unless the run is asked to start afresh"
       (m/? (pipeline/run-task (assoc c :fresh? true) "2026-09-30"))
       (is (= (* 2 asked) (count @prompts))))))
+
+(deftest analysing-a-day-again-reads-the-news-its-last-run-read
+  (reset! reads 0)
+  (let [prompts (atom [])
+        c (-> (ctx [{:type ::changing :name "Desk"}] (notes-chat prompts))
+              (assoc-in [:config :reply-cache-hours] 48))]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (= 2 @reads) "gathering again reads the sources again")
+    (let [asked (count @prompts)]
+      (m/? (pipeline/run-task (assoc c :reread? true) "2026-09-30"))
+      (is (= 2 @reads) "analysing again doesn't")
+      (is (= asked (count @prompts)) "and, the news being the same, asks nothing it asked before")
+      (is (some #(str/includes? (:text %) "Desk: 2 items, as read by a run") (:events @pipeline/status))))
+    (testing "with nothing kept to read again, the sources are read"
+      (m/? (pipeline/run-task (assoc c :reread? true) "2026-10-01"))
+      (is (= 3 @reads)))))
 
 (deftest a-failed-compaction-leaves-the-briefing-filed
   (let [c (-> (ctx [{:type ::fixture :name "A" :ns [1]}]

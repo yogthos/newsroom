@@ -225,18 +225,29 @@
   (let [m (quot (- (System/currentTimeMillis) ms) minute-ms)]
     (cond (< m 1) "just now" (= 1 m) "a minute ago" :else (str m " minutes ago"))))
 
+(defn- kept-ms
+  "How long what a run reads is kept for one that analyses the day again:
+  as long as the models' answers are, :reply-cache-hours."
+  [config]
+  (* (or (:reply-cache-hours config) 0) 60 minute-ms))
+
 (defn read-shared
   "The items `source` has for the context's day, as read-source reads
   them, unless another run read the same within :shared-fetch-minutes or
-  is reading it now: then that run's, credited to this source's name.
-  Blocks."
-  [source {:keys [config store day] :as ctx}]
-  (let [minutes (shared-minutes config)
+  is reading it now: then that run's, credited to this source's name. A
+  run that analyses the day again, :reread?, takes what the last run read
+  within :reply-cache-hours, and reads the source only when nothing is
+  kept. What's read is kept for as long as either asks. Blocks."
+  [source {:keys [config store day reread?] :as ctx}]
+  (let [shared-ms (* (shared-minutes config) minute-ms)
+        kept (kept-ms config)
+        reuse-ms (if reread? (max shared-ms kept) shared-ms)
         name (sources/source-name source)]
-    (if-not (and store (pos? minutes))
+    (if-not (and store (pos? (max shared-ms kept)))
       (sources/read-source source ctx)
       (let [key (share-key source config day)]
-        (if-let [{old :name :keys [items fetched-at]} (store/shared-fetch store key (* minutes minute-ms))]
+        (if-let [{old :name :keys [items fetched-at]} (when (pos? reuse-ms)
+                                                        (store/shared-fetch store key reuse-ms))]
           (do (sources/emit! ctx (str name ": " (count items) " items, as read by a run " (minutes-ago fetched-at)))
               (recredit items old name))
           (let [{old :name :keys [items]}
@@ -1301,8 +1312,10 @@
   `ctx` is {:config :store}, and optionally :chat (the model call, llm/chat
   by default), :template (the prompt, prompt.md by default), :run-id
   (the status the run reports to; start-run! sets it, and a run without
-  one takes over the status) and :fresh?, to ask the models afresh rather
-  than reuse the answers an earlier run got to the same questions."
+  one takes over the status), :reread?, to analyse the news the day's last
+  run read rather than read the sources again (see read-shared), and
+  :fresh?, to ask the models afresh rather than reuse the answers an
+  earlier run got to the same questions."
   [{:keys [config store] :as ctx} day]
   (let [own? (nil? (:run-id ctx))
         run-id (or (:run-id ctx) (Run. (:status (lane-of ctx))))
@@ -1725,11 +1738,12 @@
         true))))
 
 (defn start-run!
-  "Start a run for `day` unless the reader has one in flight, asking the
-  models afresh when `fresh?`. Returns true when started."
-  ([ctx day] (start-run! ctx day false))
-  ([ctx day fresh?]
-   (start-job! ctx {:day day} #(run-task (assoc ctx :run-id % :fresh? fresh?) day))))
+  "Start a run for `day` unless the reader has one in flight. `opts` may
+  say :reread?, to analyse the news the day's last run read again, and
+  :fresh?, to ask the models afresh. Returns true when started."
+  ([ctx day] (start-run! ctx day {}))
+  ([ctx day {:keys [reread? fresh?]}]
+   (start-job! ctx {:day day} #(run-task (assoc ctx :run-id % :reread? reread? :fresh? fresh?) day))))
 
 (defn start-digest!
   "Start writing the digest of `kind` for `period` unless the reader has a
