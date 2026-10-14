@@ -44,7 +44,9 @@
 (defn- env [config k]
   (config/secret-for config k))
 
-(defn- as-key [x]
+(defn as-key
+  "The provider `x` names, as aliases are matched: case aside."
+  [x]
   (some-> x name str/lower-case not-empty keyword))
 
 (defn- shared-key-error

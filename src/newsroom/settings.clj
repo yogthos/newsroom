@@ -527,7 +527,7 @@
               (cond
                 (and (nil? alias) (empty? entry)) m
                 (nil? alias) (do (swap! errors assoc (field-name n "_alias") "is needed") m)
-                (contains? m alias) (do (swap! errors assoc (field-name n "_alias") "is given twice") m)
+                (some #(= (providers/as-key alias) (providers/as-key %)) (keys m)) (do (swap! errors assoc (field-name n "_alias") "is given twice") m)
                 :else (do (swap! index assoc alias i)
                           (assoc m alias entry)))))
           {}
@@ -563,7 +563,7 @@
              (when-not (:var (ex-data e))
                (swap! errors assoc (field-name :providers (index alias) :type) (ex-message e))))))
     (doseq [[role alias] (:roles settings)
-            :when (not (names alias))]
+            :when (not (names (providers/as-key alias)))]
       (swap! errors assoc (field-name :roles role)
              (str "names " (name alias) ", which no provider is")))))
 
