@@ -5,10 +5,18 @@
   and shows the run in progress.
 
   `fragment` is what the SSE stream re-renders: it reads the pipeline's
-  ratoms, so a page updates as a run progresses and when a day is stored."
+  ratoms, so a page updates as a run progresses and when a day is stored.
+
+  The pages are hiccup, rendered by jolt.datastar.html. The parts that change
+  while the rest stays put, the desk, the podcast's line and the podcast's
+  place in the article, are components with ids, [desk uid today], so a
+  stream sends only them. A component's HTML is cached and shared by every
+  reader's stream, keyed by its arguments, so it takes what it shows as
+  arguments and reads nothing else but ratoms: not the store, *config* or
+  *reader*."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [hiccup2.core :as h]
+            [jolt.datastar.html :as h]
             [newsroom.config-page :as config-page]
             [jolt.datastar.core :as ds]
             [newsroom.markdown :as md]
@@ -176,7 +184,7 @@
 (defn- run-panel [{:keys [state day error items cited provider model sources events digest] :as st} today]
   (let [busy? (contains? #{:starting :gathering :sorting :preparing :analysing :researching
                            :reviewing :revising :checking :finishing} state)]
-    [:section.run
+    [:section#desk.run
      [:h2 "Desk"]
      (cond-> (cond
                (:finishing st) (finishing-panel st)
@@ -247,9 +255,20 @@
                              " was cut short when the server restarted."]
                nil)]
     (when line
-      [:div.narration
+      [:div#narration.narration
        (cond-> line (#{:writing :speaking} state) with-spinner)
        (when pending [:p.muted "The podcast of " (sources/long-date pending) " is next."])])))
+
+(defn- desk
+  "The run desk for the reader `uid`, a part of the sidebar: it changes
+  several times a second during a run, and is all a stream sends then."
+  [uid today]
+  (run-panel @(:status (pipeline/lane uid)) today))
+
+(defn- narration-line
+  "The podcast's line under the desk, for the reader `uid`."
+  [uid]
+  (narration-panel @(:status (narration/lane uid))))
 
 (defn- feed-health
   "The run desk's long view of which feeds have been failing: each source's
@@ -333,8 +352,8 @@
     [:input {:type "date" :value (:day current)
              "data-on:change" "evt.target.value && (window.location = '/day/' + evt.target.value)"}]]
    (stepper archive digests current)
-   (run-panel @(:status (pipeline/lane uid)) (pipeline/today))
-   (narration-panel @(:status (narration/lane uid)))
+   [desk uid (pipeline/today)]
+   [narration-line uid]
    (feed-health health)
    (story-list stories current)
    (digest-list :month "Monthly" digests current)
@@ -466,16 +485,15 @@
       (format "%d:%02d:%02d" h m (rem s 60))
       (format "%d:%02d" m (rem s 60)))))
 
-(defn- podcast-player
+(defn- podcast-slot
   "The day's podcast, a player with its transcript, under the dateline.
   The player keeps its id, so the article drawn again while it plays
-  leaves it playing. With no podcast yet, what the narration is doing on
-  the day, or a button to record one when podcasts are on and speech can
-  be made; how far it
-  has got is the desk's to show, since the article is drawn again only as
-  the work moves on (see `fragment`)."
-  [st day]
-  (if-let [{:keys [created-at seconds transcript]} (store/narration st day)]
+  leaves it playing. With no podcast yet (`recorded` nil), what the
+  narration of the reader `uid` is doing on the day, or a button to record
+  one when `offer?`; how far it has got is the desk's to show, since the
+  article is drawn again only as the work moves on (see `fragment`)."
+  [uid day recorded offer?]
+  (if-let [{:keys [created-at seconds transcript]} recorded]
     [:section#podcast.podcast
      [:p.podcast-label "Podcast" (when seconds [:span.muted " · " (duration seconds)])]
      [:audio#podcast-player {:controls true :preload "none"
@@ -485,7 +503,7 @@
         [:summary "Transcript"]
         (for [{:keys [speaker text]} transcript]
           [:p [:strong speaker] " " (podcast/readable text)])])]
-    (let [{:keys [state pending] :as now} @(:phase (narration/lane (store/user-id st)))]
+    (let [{:keys [state pending] :as now} @(:phase (narration/lane uid))]
       (cond
         (and (= day (:day now)) (= :writing state))
         [:p#podcast.podcast.muted "The podcast of this briefing is being written…"]
@@ -493,9 +511,19 @@
         [:p#podcast.podcast.muted "The podcast of this briefing is being recorded…"]
         (= day pending)
         [:p#podcast.podcast.muted "The podcast of this briefing will be recorded next."]
-        (and (not (false? (:podcast (current-config)))) (tts/available? (:podcast-engine (current-config) :kitten-2)))
+        offer?
         [:p#podcast.podcast
          [:button.quiet {"data-on:click" (str "@post('/podcast?day=" day "')")} "Record a podcast of this briefing"]]))))
+
+(defn- podcast-player
+  "The podcast's place in the article for `day`: a part of its own, with
+  what it shows read here, since the part is shared between readers."
+  [st day]
+  (let [recorded (store/narration st day)]
+    [podcast-slot (store/user-id st) day recorded
+     (boolean (and (nil? recorded)
+                   (not (false? (:podcast (current-config))))
+                   (tts/available? (:podcast-engine (current-config) :kitten-2))))]))
 
 (defn- article [st day]
   (if-let [{:keys [markdown sources model provider created-at]} (store/day st day)]

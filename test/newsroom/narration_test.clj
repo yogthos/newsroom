@@ -298,7 +298,7 @@
     (try
       (testing "with none, a button records one when speech is there"
         (with-redefs [tts/available? (constantly true)]
-          (is (str/includes? (article) "@post(&apos;/podcast?day=2026-09-30&apos;)"))
+          (is (str/includes? (article) "@post(&#39;/podcast?day=2026-09-30&#39;)"))
           (is (str/includes? (article) "Record a podcast of this briefing")))
         (with-redefs [tts/available? (constantly false)]
           (is (not (str/includes? (article) "Record a podcast"))))

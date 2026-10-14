@@ -153,7 +153,7 @@
      (is (not (pipeline/running?)) "and nothing is run unasked")
      (let [page (ui/page st "2026-09-30")]
        (is (str/includes? page "cut short when the server restarted"))
-       (is (str/includes? page "@post(&apos;/run?day=2026-10-01&apos;)"))))))
+       (is (str/includes? page "@post(&#39;/run?day=2026-10-01&#39;)"))))))
 
 (deftest a-podcast-is-recorded-and-a-stop-leaves-it-for-the-next-start
   (keeping-status
