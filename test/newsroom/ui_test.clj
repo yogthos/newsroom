@@ -23,6 +23,15 @@
       (f st)
       (finally (store/close st)))))
 
+(deftest topics-are-kept-per-reader
+  (with-store
+    (fn [st]
+      (testing "for one reader the pane names no one, and the browser keeps the topics as before"
+        (is (not (str/includes? (ui/page st "2026-09-30") "data-reader"))))
+      (testing "with several, the pane carries the reader's id, which keys their topics in the browser"
+        (binding [ui/*reader* {:name "Ann"}]
+          (is (str/includes? (ui/page (store/for-user st 7) "2026-09-30") "data-reader=\"7\"")))))))
+
 (deftest a-day-page
   (with-store
     (fn [st]

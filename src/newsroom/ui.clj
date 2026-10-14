@@ -678,12 +678,15 @@
   "The reader's topics, a pane on the right that topics.js fills from what
   the reader picked: the passages, a report on them, and a conversation
   about them. It sits outside the live parts of the page, so a re-render
-  doesn't touch it."
-  []
+  doesn't touch it. The browser keeps them, and with several readers under
+  the reader `uid`, so whoever signs in next on the same browser doesn't
+  see them."
+  [uid]
   (list
    [:button.topics-toggle {:type "button" :data-topics "toggle" :aria-controls "topics" :aria-expanded "false"}
     "Topics " [:span.count {:data-topics-count ""} "0"]]
-   [:aside#topics.topics {:hidden true :aria-label "Your topics"}
+   [:aside#topics.topics (cond-> {:hidden true :aria-label "Your topics"}
+                           uid (assoc :data-reader uid))
     [:header
      [:h2 "Your topics"]
      [:button.quiet {:type "button" :data-topics "wide" :title "Widen the pane"} "⤢"]
@@ -738,7 +741,7 @@
               [:main#article (config-page/article (assoc cfg :config (current-config)))]
               [:main#article (dissoc (ds/init-opts {:selector "#article"}) :data-signals)
                (fragment st current "#article")])]
-            (when-not (:config current) (topics-pane))
+            (when-not (:config current) (topics-pane (when *reader* (store/user-id st))))
             (if (:config current)
               [:script {:type "module" :src (asset "/js/config.js")}]
               (list [:script {:type "module" :src (asset "/js/diagrams.js")}]
