@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **YouTube channels whose feed fails.** YouTube's channel feeds answer
+  404 or 500 for many channels, which failed them with "couldn't read the
+  channel". Such a channel is now read from its videos tab instead, each
+  video's date taken from the player API. That tab has no Shorts.
+
 ## v0.13.0 — 13 October 2026
 
 ### Added

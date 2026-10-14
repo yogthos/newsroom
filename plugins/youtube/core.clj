@@ -25,6 +25,9 @@
   the analysis reads. A video with no captions is still an item, from its
   description.
 
+  YouTube's channel feeds fail for many channels; a channel whose feed
+  can't be read is read from its videos tab instead, which has no Shorts.
+
   Nothing is needed in the plugin's settings. Transcripts are read through
   the API YouTube's apps use, which asks which app is calling; when
   YouTube stops answering one, a newer one can be set there:
@@ -110,6 +113,61 @@
        (remove #(and (:short? %) (not shorts?)))
        (take n)))
 
+;; --- the videos tab, when the feed fails -------------------------------------------
+;; YouTube's feeds answer 404 or 500 for many channels, so a channel whose feed
+;; can't be read is read from its videos tab instead: the video IDs from the
+;; browse API, then each video's date from the player API, newest first.
+
+(def ^:private web-client {:clientName "WEB" :clientVersion "2.20250101.00.00" :hl "en"})
+
+;; the videos tab of a channel, as the browse API is asked for it
+(def ^:private videos-tab "EgZ2aWRlb3PyBgQKAjoA")
+
+(defn tab-video-ids
+  "The IDs of the videos in a browse API answer, in the order given."
+  [browse]
+  (->> (tree-seq coll? #(if (map? %) (vals %) %) browse)
+       (keep (fn [x]
+               (when (map? x)
+                 (or (some-> (:videoRenderer x) :videoId)
+                     (let [l (:lockupViewModel x)]
+                       (when (= "LOCKUP_CONTENT_TYPE_VIDEO" (:contentType l)) (:contentId l)))))))
+       distinct))
+
+(defn player-video
+  "A video as the player API describes it, as videos gives one, or nil
+  for a premiere or stream still to come."
+  [player]
+  (let [d (:videoDetails player)
+        id (:videoId d)]
+    (when (and id (not (:isUpcoming d)))
+      {:id id
+       :title (:title d)
+       :url (str "https://www.youtube.com/watch?v=" id)
+       :published (get-in player [:microformat :playerMicroformatRenderer :publishDate])
+       :description (:shortDescription d)
+       :channel (:author d)
+       :short? false})))
+
+(defn- tab-videos
+  "The latest `n` videos of channel `id` published from day `from` on,
+  read from its videos tab, which leaves Shorts out. The tab is newest
+  first, so the reading stops at the first older video, and after a few
+  more than `n`."
+  [id from n opts]
+  (let [api #(plugin/post-json (str "https://www.youtube.com/youtubei/v1/" % "?prettyPrint=false")
+                               (assoc %2 :context {:client web-client})
+                               (select-keys opts [:timeout-ms]))]
+    (loop [[v & more] (take (+ n 3) (tab-video-ids (api "browse" {:browseId id :params videos-tab})))
+           found []]
+      (if (or (nil? v) (= n (count found)))
+        found
+        (let [video (player-video (api "player" {:videoId v}))]
+          (cond
+            (nil? video) (recur more found)
+            (empty? (recent-videos [video] from 1 true)) found
+            :else (recur more (conj found video))))))))
+
 ;; --- transcripts ---------------------------------------------------------------------
 
 (def ^:private default-client {:clientName "ANDROID" :clientVersion "20.10.38"})
@@ -191,9 +249,14 @@
   "The videos of `channel` to read, or the exception reading its feed threw."
   [channel from {:keys [n shorts? opts]}]
   (try
-    (let [id (channel-id channel opts)]
-      (recent-videos (videos (plugin/parse-xml (plugin/fetch-text (str "https://www.youtube.com/feeds/videos.xml?channel_id=" id) opts)))
-                     from n shorts?))
+    (let [id (channel-id channel opts)
+          feed (try
+                 (plugin/fetch-text (str "https://www.youtube.com/feeds/videos.xml?channel_id=" id) opts)
+                 (catch clojure.lang.ExceptionInfo e
+                   (when-not (:status (ex-data e)) (throw e))))]
+      (if feed
+        (recent-videos (videos (plugin/parse-xml feed)) from n shorts?)
+        (tab-videos id from n opts)))
     (catch Exception e
       (when (instance? InterruptedException e) (throw e))
       e)))
@@ -218,7 +281,7 @@
    :lookback-days 3
    ;; what a channel says frames the news; it isn't reporting
    :kind :analysis
-   ;; a handle's page, the feeds, and two requests a video
+   ;; a handle's page, the feeds or the videos tabs, and up to three requests a video
    :policy {:timeout-ms 60000}
    :fields [{:key :channels :type :strings :required? true :label "Channels"
              :doc "The channels, each a handle like @veritasium, a channel ID like UC..., or the channel's address."}
