@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- **A restart picks up where the server left off.** What the desk and the
+  podcast worker do is kept in the database as it goes, the run's log
+  included, so after a restart, a crash or a stop, each reader's sidebar
+  says how their last run and podcast went rather than starting idle.
+  - A day or digest is stored with the steps that follow from it (its
+    mentions and trends, the notes, the projections, the retrospective,
+    the podcast), and each is struck off once done, so a restart between
+    the two finishes them, cheaply with the answers kept, rather than
+    leaving the day without its notes.
+  - Podcasts being made or waiting are queued again.
+  - A run or digest cut short before it was stored is not run again
+    unasked: the desk says it was cut short and offers a button to run it
+    again. A scheduled run still catches up at start as before, after
+    what is being finished.
+
+  Signing out has no part in any of it; a reader's runs, podcasts and
+  schedule carry on.
+
 ### Fixed
 
 - **YouTube channels whose feed fails.** YouTube's channel feeds answer

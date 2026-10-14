@@ -225,7 +225,32 @@
       model text,
       provider text,
       created_at text not null,
-      primary key (user_id, kind, period))"))
+      primary key (user_id, kind, period))"
+   ;; the desk's runs, digests and follow-ups and the podcasts, kept so a
+   ;; restart can show how each reader's last one went and pick up the ones
+   ;; it cut short: kind run, digest, followups or podcast; args and status
+   ;; as edn; state queued, running, done, failed, cancelled or interrupted
+   "jobs" "create table if not exists jobs (
+      id integer primary key autoincrement,
+      user_id integer not null,
+      kind text not null,
+      args text not null,
+      origin text not null,
+      state text not null,
+      status text,
+      started_at text not null,
+      finished_at text)"
+   ;; what is left to do for a day or digest stored before its follow-up
+   ;; steps (the notes, the projections, ...) were done, with what each
+   ;; step needs, as an edn vector of [step args] in order; written with
+   ;; the day, so a restart can finish them
+   "followups" "create table if not exists followups (
+      user_id integer not null,
+      kind text not null,
+      ref text not null,
+      steps text not null,
+      created_at text not null,
+      primary key (user_id, kind, ref))"))
 
 (def ^:private shared-schema
   "The readers, their sessions, and what is shared between them."
@@ -315,7 +340,8 @@
    "create index if not exists coverage_story on coverage (user_id, story)"
    "create index if not exists projections_due on projections (user_id, status, due)"
    "create index if not exists projections_ref on projections (user_id, origin, ref)"
-   "create index if not exists sessions_user on sessions (user_id)"])
+   "create index if not exists sessions_user on sessions (user_id)"
+   "create index if not exists jobs_user on jobs (user_id, kind, id)"])
 
 (defn- add-column!
   "An ALTER TABLE for a column an older database may not have, silently
@@ -573,6 +599,98 @@
     (jdbc/execute! conn ["delete from sessions where id = ?" id]))
   nil)
 
+;; --- jobs and follow-ups ----------------------------------------------------------------
+;; What the desk and the podcast worker are doing or did last, per reader, so
+;; that a restart finds it: see newsroom.pipeline/resume!.
+
+(def ^:private jobs-kept
+  "How many of a reader's jobs are kept, the newest."
+  100)
+
+(defn add-job!
+  "Record a job the reader is starting or queueing: {:kind :args :origin
+  :state :status}, kind and origin keywords, args and status data.
+  Returns its id. Only the newest jobs-kept of the reader's are kept."
+  [store {:keys [kind args origin state status]}]
+  (let [uid (user-id store)]
+    (with-db [conn store]
+      (jdbc/atomic conn
+        (jdbc/execute! conn ["insert into jobs (user_id, kind, args, origin, state, status, started_at)
+                              values (?, ?, ?, ?, ?, ?, ?)"
+                             uid (name kind) (pr-str args) (name origin) (name state)
+                             (some-> status pr-str) (now)])
+        (let [id (long (:id (jdbc/fetch-one conn "select last_insert_rowid() as id")))]
+          (jdbc/execute! conn ["delete from jobs where user_id = ? and id not in
+                                  (select id from jobs where user_id = ? order by id desc limit ?)"
+                               uid uid jobs-kept])
+          id)))))
+
+(defn update-job!
+  "Change the job `id`'s :state and :status, either; a :state other than
+  queued or running marks it finished."
+  [store id {:keys [state status]}]
+  (with-db [conn store]
+    (when state
+      (jdbc/execute! conn ["update jobs set state = ?,
+                              finished_at = case when ? in ('queued', 'running') then null else ? end
+                            where id = ?"
+                           (name state) (name state) (now) id]))
+    (when status
+      (jdbc/execute! conn ["update jobs set status = ? where id = ?" (pr-str status) id])))
+  nil)
+
+(defn- row->job [r]
+  (when r
+    {:id (long (:id r)) :kind (keyword (:kind r)) :args (edn/read-string (:args r))
+     :origin (keyword (:origin r)) :state (keyword (:state r))
+     :status (some-> (:status r) edn/read-string)
+     :started-at (:started_at r) :finished-at (:finished_at r)}))
+
+(defn latest-job
+  "The reader's newest job of one of `kinds`, keywords, or nil."
+  [store kinds]
+  (let [kinds (map name kinds)]
+    (with-db [conn store]
+      (row->job (jdbc/fetch-one conn (into [(str "select * from jobs where user_id = ? and kind in ("
+                                                 (str/join ", " (repeat (count kinds) "?"))
+                                                 ") order by id desc limit 1")
+                                            (user-id store)]
+                                           kinds))))))
+
+(defn open-jobs
+  "The reader's jobs still queued or running, oldest first: after a
+  restart, the ones it cut short."
+  [store]
+  (with-db [conn store]
+    (mapv row->job (jdbc/fetch conn ["select * from jobs where user_id = ? and state in ('queued', 'running')
+                                      order by id" (user-id store)]))))
+
+(defn- put-followups!
+  "Record, on `conn` in its transaction, `steps` still to do for `kind`
+  `ref`, replacing any it had; none clears them."
+  [conn uid kind ref steps]
+  (jdbc/execute! conn ["delete from followups where user_id = ? and kind = ? and ref = ?" uid kind ref])
+  (when (seq steps)
+    (jdbc/execute! conn ["insert into followups (user_id, kind, ref, steps, created_at) values (?, ?, ?, ?, ?)"
+                         uid kind ref (pr-str (vec steps)) (now)])))
+
+(defn followups
+  "The reader's days and digests with steps still to do, oldest first:
+  [{:kind \"day\" :ref \"2026-09-30\" :steps [[step args] ...]}]."
+  [store]
+  (with-db [conn store]
+    (mapv (fn [r] {:kind (:kind r) :ref (:ref r) :steps (edn/read-string (:steps r))})
+          (jdbc/fetch conn ["select kind, ref, steps from followups where user_id = ? order by created_at"
+                            (user-id store)]))))
+
+(defn set-followups!
+  "Keep `steps` as what is still to do for `kind` `ref`; none clears it."
+  [store kind ref steps]
+  (with-db [conn store]
+    (jdbc/atomic conn
+      (put-followups! conn (user-id store) kind ref steps)))
+  nil)
+
 ;; --- what readers share --------------------------------------------------------------
 
 (defn shared-fetch
@@ -671,9 +789,14 @@
 
 ;; --- days --------------------------------------------------------------------------
 
+(declare put-followups!)
+
 (defn save-day!
-  "Store a day's briefing and its sources, replacing whatever the day had."
-  [store {:keys [day sources cited markdown model provider tldr]}]
+  "Store a day's briefing and its sources, replacing whatever the day had.
+  `followups`, when given, are the steps still to do for it (see
+  put-followups!), stored in the same transaction, so a day is never kept
+  without a record of what it still needs."
+  [store {:keys [day sources cited markdown model provider tldr followups]}]
   (let [cited (set cited)
         uid (user-id store)]
     (with-db [conn store]
@@ -701,7 +824,8 @@
                                (when (and kind (not= :news kind)) (name kind))
                                (if (contains? cited n) 1 0)]))
         (unindex! conn uid ["day" "source"] day)
-        (index! conn uid (day-docs day markdown sources cited))))
+        (index! conn uid (day-docs day markdown sources cited))
+        (put-followups! conn uid "day" day followups)))
     (stale! store)
     nil))
 
@@ -1132,8 +1256,8 @@
 
 (defn save-digest!
   "Store a digest and the sources it was given, replacing whatever the
-  period had."
-  [store {:keys [kind period sources cited markdown model provider tldr]}]
+  period had, with its `followups` as save-day! keeps a day's."
+  [store {:keys [kind period sources cited markdown model provider tldr followups]}]
   (let [cited (set cited)
         k (name kind)
         uid (user-id store)]
@@ -1149,7 +1273,8 @@
                                 values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
                                uid k period n day title url source (if (contains? cited n) 1 0)]))
         (unindex! conn uid ["digest"] (str k "/" period))
-        (index! conn uid (digest-docs k period markdown))))
+        (index! conn uid (digest-docs k period markdown))
+        (put-followups! conn uid k period followups)))
     (stale! store)
     nil))
 

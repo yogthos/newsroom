@@ -10,6 +10,7 @@
             [newsroom.entities-test]
             [newsroom.feed-test]
             [newsroom.llm-cache-test]
+            [newsroom.jobs-test]
             [newsroom.json-test]
             [newsroom.llm-provider-test]
             [newsroom.llm-stream-test]
@@ -58,6 +59,7 @@
     newsroom.tts-test
     newsroom.pipeline-test
     newsroom.narration-test
+    newsroom.jobs-test
     newsroom.plugin-test
     newsroom.secrets-test
     newsroom.settings-test

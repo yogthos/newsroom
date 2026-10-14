@@ -577,7 +577,17 @@
         _ (reset! ui/config cfg)
         ids (readers st file)
         pruned (reduce + (map #(count (pipeline/prune-days! (user-ctx %))) ids))
-        _ (doseq [uid ids] (ensure-reader! uid))
+        ;; what the last stop cut short is picked up before the schedules
+        ;; start, which wait for it
+        _ (narration/start!)
+        _ (doseq [uid ids]
+            ;; a reader's records that can't be picked up don't keep the
+            ;; server, or the other readers, from starting
+            (try (pipeline/resume! (user-ctx uid))
+                 (catch Throwable e
+                   (binding [*out* *err*]
+                     (println "couldn't pick up what the last stop cut short for reader" uid ":" (ex-message e)))))
+            (ensure-reader! uid))
         ;; every open page re-renders at most once a tick, however many
         ;; writes land in it: sources reporting from several threads and the
         ;; model's progress come in bursts
@@ -604,9 +614,11 @@
 
 (defn stop! []
   (when-let [{:keys [schedule server store users]} @system]
+    ;; what this cuts short stays recorded as cut short, for the next start
+    ;; to pick up (pipeline/resume!)
     (doseq [uid (cons nil (keys users))]
-      (pipeline/cancel-run! uid)
-      (narration/cancel! uid))
+      (pipeline/cancel-run! uid :stopping? true))
+    (narration/stop!)
     (doseq [s (cons schedule (map :schedule (vals users))) :when s] (s))
     (when server (adapter/stop-server server))
     (when store (store/close store))
