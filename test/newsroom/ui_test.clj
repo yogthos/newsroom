@@ -30,7 +30,11 @@
         (is (not (str/includes? (ui/page st "2026-09-30") "data-reader"))))
       (testing "with several, the pane carries the reader's id, which keys their topics in the browser"
         (binding [ui/*reader* {:name "Ann"}]
-          (is (str/includes? (ui/page (store/for-user st 7) "2026-09-30") "data-reader=\"7\"")))))))
+          (let [page (ui/page (store/for-user st 7) "2026-09-30")]
+            (is (str/includes? page "data-reader=\"7\""))
+            (is (str/includes? page "data-topics-key=\"newsroom.topics.v1.reader-7\""))
+            (testing "and signing out forgets them"
+              (is (re-find #"<form action=\"/logout\" [^>]*data-topics-key=\"newsroom.topics.v1.reader-7\"[^>]*onsubmit=\"[^\"]*localStorage.removeItem\(this.dataset.topicsKey\)" page)))))))))
 
 (deftest a-day-page
   (with-store

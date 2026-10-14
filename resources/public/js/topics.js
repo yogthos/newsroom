@@ -3,11 +3,12 @@
 // writes a report on the topics, or talks them over, its answer streamed
 // from /ask. The topics and the conversation are kept in the browser, so
 // they follow the reader from one day's page to the next. With several
-// readers each keeps their own, under the id the pane carries, so a browser
-// that changes hands doesn't show the last reader's topics to the next.
+// readers each keeps their own, under the key the pane carries, and signing
+// out forgets them, so a browser that changes hands doesn't show the last
+// reader's topics to the next.
 const LEGACY_KEY = 'newsroom.topics.v1';
-const reader = document.getElementById('topics').dataset.reader;
-const KEY = reader ? `${LEGACY_KEY}.reader-${reader}` : LEGACY_KEY;
+const {reader, topicsKey} = document.getElementById('topics').dataset;
+const KEY = topicsKey || LEGACY_KEY;
 // topics kept before readers had keys of their own could be anyone's
 if (reader) { try { localStorage.removeItem(LEGACY_KEY); } catch (_) { /* storage blocked */ } }
 const PICKABLE = '#article .prose p, #article .prose li, #article .standfirst, #article ol.facts li p';

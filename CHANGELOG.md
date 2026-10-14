@@ -12,9 +12,9 @@
   passages picked and the conversation with the analyst in the browser
   under one key, so with several readers whoever signed in next on the
   same browser saw the last reader's. They are kept under the reader's id
-  now. Topics kept before then can't be told apart, so with several
-  readers they are dropped; running for one person they stay where they
-  were.
+  now, and signing out forgets them. Topics kept before then can't be told
+  apart, so with several readers they are dropped; running for one person
+  they stay where they were.
 
 ### Changed
 

@@ -264,12 +264,21 @@
        (if prev [:a {:href (href prev)} "← Earlier"] [:span.muted "← Earlier"])
        (if next [:a {:href (href next)} "Later →"] [:span.muted "Later →"])])))
 
+(defn- topics-key
+  "Where the browser keeps the reader `uid`'s topics: under their id with
+  several readers, so a browser that changes hands doesn't show one
+  reader's to the next, and under the key from before readers for one."
+  [uid]
+  (cond-> "newsroom.topics.v1" uid (str ".reader-" uid)))
+
 (defn- reader-line
   "Who is signed in, and a button to sign out, when newsroom has several
-  readers."
-  []
+  readers. Signing out forgets the reader's topics in this browser."
+  [uid]
   (when-let [{:keys [name email]} *reader*]
-    [:form.reader {:method "post" :action "/logout"}
+    [:form.reader {:method "post" :action "/logout"
+                   :data-topics-key (topics-key uid)
+                   :onsubmit "try { localStorage.removeItem(this.dataset.topicsKey) } catch (_) {}"}
      [:span (or (not-empty name) (not-empty email) "Signed in")]
      " · "
      [:button.link {:type "submit"} "Sign out"]]))
@@ -283,7 +292,7 @@
    [:header.masthead
     [:a {:href "/"} [:h1 "The Newsroom"]]
     [:p.tagline "Daily briefing & analysis"]
-    (reader-line)]
+    (reader-line uid)]
    [:p.config-link [:a {:href "/config" :class (when (:config current) "current")} "Config"]
     " · " [:a {:href "/record" :class (when (:record current) "current")} "Track record"]]
    [:form.search-box {:action "/search" :method "get" :role "search"}
@@ -678,15 +687,14 @@
   "The reader's topics, a pane on the right that topics.js fills from what
   the reader picked: the passages, a report on them, and a conversation
   about them. It sits outside the live parts of the page, so a re-render
-  doesn't touch it. The browser keeps them, and with several readers under
-  the reader `uid`, so whoever signs in next on the same browser doesn't
-  see them."
+  doesn't touch it. The browser keeps them, under `topics-key`, until
+  the reader signs out."
   [uid]
   (list
    [:button.topics-toggle {:type "button" :data-topics "toggle" :aria-controls "topics" :aria-expanded "false"}
     "Topics " [:span.count {:data-topics-count ""} "0"]]
    [:aside#topics.topics (cond-> {:hidden true :aria-label "Your topics"}
-                           uid (assoc :data-reader uid))
+                           uid (assoc :data-reader uid :data-topics-key (topics-key uid)))
     [:header
      [:h2 "Your topics"]
      [:button.quiet {:type "button" :data-topics "wide" :title "Widen the pane"} "⤢"]
