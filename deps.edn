@@ -35,15 +35,15 @@
         ;; datastar wire protocol, SSE re-render on ratom change
         jolt-lang/glimmer-datastar
         {:git/url "https://github.com/jolt-lang/glimmer-datastar"
-         :git/tag "v0.1.5"
-         :git/sha "0334f4e7171caf43e6a75248db67373ce563ea7b"}
+         :git/tag "v0.1.6"
+         :git/sha "975c4018d93bafb6f7b7fa399768f657ddfe7f1a"}
 
         ;; the ratoms behind the live page; from v0.1.4 swap! is atomic, which
         ;; the run status needs since sources report from several threads
         jolt-lang/glimmer
         {:git/url "https://github.com/jolt-lang/glimmer"
-         :git/tag "v0.1.5"
-         :git/sha "4e3de2b01add02ed7e5126f541c457c8bd468473"}
+         :git/tag "v0.1.6"
+         :git/sha "d81af8fb2fa4164a2261db3c15fc7c93271dce60"}
 
         ;; missionary for jolt: concurrent, cancellable ingestion
         jlt-commons/ebb
