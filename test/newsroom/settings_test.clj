@@ -79,6 +79,19 @@
     (is (str/includes? (errors "providers.1.type") "needs a :type"))
     (is (= "names nobody, which no provider is" (errors "roles.analyst")))))
 
+(deftest a-role-names-a-provider-as-it-was-called
+  (let [{:keys [errors]}
+        (settings/from-form {"providers.0._alias" "GLM 5.3 Thinking" "providers.0.type" "glm"
+                             "providers.1._alias" "GLM" "providers.1.type" "glm"
+                             "roles.analyst" "GLM 5.3 Thinking" "roles.notes" "GLM"})]
+    (is (nil? (errors "roles.analyst")))
+    (is (nil? (errors "roles.notes"))))
+  (testing "aliases that differ only in case are one provider"
+    (let [{:keys [errors]}
+          (settings/from-form {"providers.0._alias" "Mine" "providers.0.type" "glm"
+                               "providers.1._alias" "mine" "providers.1.type" "glm"})]
+      (is (= "is given twice" (errors "providers.1._alias"))))))
+
 (deftest a-plugin-declares-its-shapes
   (plugin/load-all! "plugins" {})
   (is (= [:subreddit :url :limit :page-timeout-ms] (map :key (:fields (sources/shape :reddit)))))
