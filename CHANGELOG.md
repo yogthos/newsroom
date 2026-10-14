@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- **YouTube channels whose feed fails.** YouTube's channel feeds answer
+  404 or 500 for many channels, which failed them with "couldn't read the
+  channel". Such a channel is now read from its videos tab instead, each
+  video's date taken from the player API. That tab has no Shorts.
+
 ### Changed
 
 - **Live pages render in ticks.** glimmer-datastar v0.1.3 renders every

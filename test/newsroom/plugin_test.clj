@@ -380,6 +380,51 @@
                             (sources/fetch-items {:type :youtube :channels ["@gone"]} {:day "2026-09-30" :config {}}))
           "and fails the source when it's the only one"))))
 
+(defn- yt-lockup [id]
+  {:richItemRenderer {:content {:lockupViewModel {:contentId id :contentType "LOCKUP_CONTENT_TYPE_VIDEO"}}}})
+
+(defn- yt-player [id title published & [upcoming?]]
+  {:videoDetails (cond-> {:videoId id :title title :author "Chan" :shortDescription "What it's about."}
+                   upcoming? (assoc :isUpcoming true))
+   :microformat {:playerMicroformatRenderer {:publishDate published}}})
+
+(deftest a-youtube-channel-whose-feed-fails-is-read-from-its-videos-tab
+  (plugin/load-all! "plugins" {})
+  (let [seen (atom [])
+        players {"soon1" (yt-player "soon1" "Premiering" "2026-10-02T12:00:00-07:00" true)
+                 "new1" (yt-player "new1" "The latest" "2026-09-29T12:00:00-07:00")
+                 "new2" (yt-player "new2" "The one before" "2026-09-28T12:00:00-07:00")
+                 "old1" (yt-player "old1" "Last week's" "2026-09-20T12:00:00-07:00")
+                 "old2" (yt-player "old2" "Older still" "2026-09-10T12:00:00-07:00")}
+        get (fn [url _]
+              (swap! seen conj url)
+              (if (= url "https://yt.e/en")
+                {:status 200 :body timedtext}
+                {:status 404 :body ""}))
+        request (fn [req]
+                  (let [body (json/read-str (:body req) :key-fn keyword)]
+                    (swap! seen conj body)
+                    (cond
+                      (:browseId body)
+                      {:status 200 :body (json/write-str {:contents {:tabs [{:items (map yt-lockup ["soon1" "new1" "new2" "old1" "old2"])}]}})}
+                      (= "WEB" (get-in body [:context :client :clientName]))
+                      {:status 200 :body (json/write-str (players (:videoId body)))}
+                      :else
+                      {:status 200 :body (json/write-str {:captions {:playerCaptionsTracklistRenderer
+                                                                     {:captionTracks [{:languageCode "en" :baseUrl "https://yt.e/en"}]}}})})))]
+    (with-redefs [http/get get http/request request]
+      (let [items (sources/fetch-items {:type :youtube :channels ["UCbbbbbbbbbbbbbbbbbbbbbb"] :videos 3}
+                                       {:day "2026-09-30" :config {}})]
+        (is (= ["The latest" "The one before"] (map :title items))
+            "the videos of the last days, newest first, a premiere still to come left out")
+        (is (= {:url "https://www.youtube.com/watch?v=new1" :source "Chan"
+                :published "2026-09-29T12:00:00-07:00"
+                :summary "What it's about. Today we're looking at \"tariffs\"."}
+               (select-keys (first items) [:url :source :published :summary])))
+        (is (= "UCbbbbbbbbbbbbbbbbbbbbbb" (:browseId (first (filter :browseId @seen)))))
+        (is (not-any? #(= "old2" (:videoId %)) (filter map? @seen))
+            "and stops at the first video older than that")))))
+
 (deftest the-youtube-plugin-picks-captions-and-reads-pages
   (plugin/load-all! "plugins" {})
   (let [pick @(resolve 'youtube.core/pick-track)
