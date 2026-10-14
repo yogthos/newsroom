@@ -1,7 +1,12 @@
 (ns newsroom.ui-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [clojure.core.async :as async]
             [glimmer.ratom :as ratom]
+            [jolt.datastar.cache :as cache]
+            [jolt.datastar.core :as ds]
+            [jolt.datastar.html :as d]
+            [newsroom.narration :as narration]
             [newsroom.core :as core]
             [newsroom.pipeline :as pipeline]
             [newsroom.store :as store]
@@ -34,7 +39,7 @@
             (is (str/includes? page "data-reader=\"7\""))
             (is (str/includes? page "data-topics-key=\"newsroom.topics.v1.reader-7\""))
             (testing "and signing out forgets them"
-              (is (re-find #"<form action=\"/logout\" [^>]*data-topics-key=\"newsroom.topics.v1.reader-7\"[^>]*onsubmit=\"[^\"]*localStorage.removeItem\(this.dataset.topicsKey\)" page)))))))))
+              (is (re-find #"<form [^>]*action=\"/logout\"[^>]*data-topics-key=\"newsroom.topics.v1.reader-7\"[^>]*onsubmit=\"[^\"]*localStorage.removeItem\(this.dataset.topicsKey\)" page)))))))))
 
 (deftest a-day-page
   (with-store
@@ -55,7 +60,7 @@
         (is (re-find #"src=\"/js/diagrams.js\?v=[0-9a-f]+\"" page) "the page can draw diagrams")
         (testing "the reader can collect passages as topics and put them to the analyst"
           (is (re-find #"src=\"/js/topics.js\?v=[0-9a-f]+\"" page))
-          (is (re-find #"<aside [^>]*class=\"topics\" hidden=\"hidden\" id=\"topics\"" page))
+          (is (re-find #"<aside id=\"topics\" class=\"topics\" hidden[ >]" page))
           (is (str/includes? page "data-topics=\"report\""))
           (is (str/includes? page "data-topics=\"toggle\"")))
         (testing "an asset's address changes with its content, so a cached one isn't kept"
@@ -188,7 +193,7 @@
                                                       :source "Wire" :headline "Fed holds"}]}})
       (testing "a storyline's page"
         (let [page (ui/page st {:story "2026-09-29/1"})]
-          (is (str/includes? page "<title>The Fed&apos;s &lt;pause&gt; · The Newsroom</title>")
+          (is (str/includes? page "<title>The Fed&#39;s &lt;pause&gt; · The Newsroom</title>")
               "named by its note, escaped")
           (is (str/includes? page "Held twice."))
           (is (str/includes? page "The Fed held."))
@@ -278,7 +283,8 @@
         before @pipeline/status]
     (try
       (binding [ratom/*current-watcher* (fn [_] (reset! fired true))]
-        (ui/fragment st "2026-09-30" selector))
+        ;; rendered, as a stream does: the parts read their ratoms as they render
+        (d/html (ui/fragment st "2026-09-30" selector)))
       (swap! pipeline/status assoc :probe (Object.))
       @fired
       (finally (reset! pipeline/status before)))))
@@ -380,3 +386,81 @@
       (let [{:keys [status body]} (core/app {:request-method :get :uri "/search" :query-string "q=big&kind=day"})]
         (is (= 200 status))
         (is (str/includes? body "Big day"))))))
+
+(defn- part-ids [html-parts] (set (map first (second html-parts))))
+
+(deftest the-live-parts-have-ids
+  ;; a stream sends only the parts with ids that changed, so a run reporting
+  ;; progress sends the desk, not the whole sidebar
+  (with-store
+    (fn [st]
+      (is (contains? (part-ids (d/html-parts (ui/fragment st "2026-09-30" "#sidebar"))) "desk"))
+      (let [before @(:status (narration/lane nil))]
+        (try
+          (reset! (:status (narration/lane nil)) {:state :writing :day "2026-09-30"})
+          (is (contains? (part-ids (d/html-parts (ui/fragment st "2026-09-30" "#sidebar"))) "narration"))
+          (is (contains? (part-ids (d/html-parts (ui/fragment st "2026-09-30" "#article"))) "podcast")
+              "the podcast's slot in the article, which changes as the podcast is made")
+          (finally (reset! (:status (narration/lane nil)) before)))))))
+
+(defn- cached
+  "Render `f` the way a stream does, with a component cache, a few times
+  over so the components are admitted and then served from it."
+  [c f]
+  (binding [d/*cache* c]
+    (dotimes [_ 2] (d/html (f)))
+    (d/html (f))))
+
+(deftest cached-parts-follow-the-run
+  (with-store
+    (fn [st]
+      (let [c (cache/new-cache)
+            sidebar #(ui/fragment st "2026-09-30" "#sidebar")
+            before @pipeline/status]
+        (try
+          (reset! pipeline/status {:state :gathering :day "2026-09-30" :sources {}})
+          (is (str/includes? (cached c sidebar) "Gathering the news"))
+          (reset! pipeline/status {:state :done :day "2026-09-30" :items 4 :cited 2})
+          (is (str/includes? (cached c sidebar) "Filed"))
+          (is (pos? (:hits (cache/stats c))))
+          (finally (reset! pipeline/status before)))))))
+
+(deftest cached-parts-keep-to-their-reader
+  ;; the cache is shared by every reader's stream: what one reader's
+  ;; settings leave out must not reach another's page through it
+  (with-store
+    (fn [st]
+      (let [c (cache/new-cache)
+            article #(ui/fragment st "2026-09-30" "#article")
+            offer? #(str/includes? % "Record a podcast")]
+        (with-redefs [newsroom.tts/available? (constantly true)]
+          (binding [ui/*config* {:podcast false}]
+            (is (not (offer? (cached c article)))))
+          (binding [ui/*config* {:podcast true}]
+            (is (offer? (cached c article)))))))))
+
+(deftest a-run-streams-only-the-desk
+  (with-store
+    (fn [st]
+      (let [before @pipeline/status
+            sched (ds/scheduler {:tick-ms 5})
+            handler (ds/wrap-datastar
+                     (fn [_] {:status 200 :body (d/html (ui/fragment st "2026-09-30" "#sidebar"))})
+                     {:scheduler sched})
+            ch (:body (handler {:request-method :get :uri "/"
+                                :query-string "datastar-sse=true&datastar-selector=%23sidebar"
+                                :headers {}}))
+            take! #(first (async/alts!! [ch (async/timeout 2000)]))]
+        (try
+          (reset! pipeline/status {:state :gathering :day "2026-09-30" :sources {}})
+          (is (str/includes? (take!) "data: selector #sidebar") "the first frame is the whole sidebar")
+          (reset! pipeline/status {:state :sorting :day "2026-09-30" :items 12 :sources {}})
+          (let [f (take!)]
+            (is (str/includes? f "Sorting 12 reports"))
+            (is (str/includes? f "id=\"desk\""))
+            (is (not (str/includes? f "data: selector")) "patched by id")
+            (is (not (str/includes? f "Daily")) "the history isn't sent again"))
+          (finally
+            (async/close! ch)
+            (ds/stop! sched)
+            (reset! pipeline/status before)))))))

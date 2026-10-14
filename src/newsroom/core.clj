@@ -53,7 +53,7 @@
             [newsroom.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [hiccup2.core :as h]
+            [jolt.datastar.html :as h]
             [jolt.datastar.core :as ds]
             [ring-chez.adapter :as adapter]
             [ring-chez.middleware.multipart :as multipart]
@@ -281,7 +281,8 @@
   [{:keys [jolt.datastar/sse-request jolt.datastar/selector] :as req} current]
   (let [st (:store (ctx req))]
     (if sse-request
-      (html (str (h/html (ui/fragment st current selector))))
+      ;; the string h/html returned, as is: the stream finds its parts by it
+      (html (h/html (ui/fragment st current selector)))
       (html (ui/page st current)))))
 
 (defn- markdown [doc]

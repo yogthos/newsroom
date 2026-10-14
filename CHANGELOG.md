@@ -45,6 +45,13 @@
 
 ### Changed
 
+- **A run sends the desk, not the sidebar.** The live pages are rendered
+  by glimmer-datastar's renderer rather than hiccup2, still from hiccup.
+  The desk, the podcast's line and the podcast's place in the article are
+  parts of their own, so while a run reports progress the stream sends the
+  desk alone where it sent the whole sidebar, every day of the history
+  included, on every tick; and the article's podcast changes
+  without the briefing around it being sent again.
 - **Live pages render in ticks.** glimmer-datastar v0.1.3 renders every
   open page at most once a tick (`:tick-ms`, 200 here), however many
   writes landed in it, where each write used to queue a render of its own.

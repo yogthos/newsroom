@@ -5,7 +5,7 @@
             [clojure.test :refer [deftest is testing]]
             [jolt.fs :as fs]
             [newsroom.config :as config]
-            [hiccup2.core :as h]
+            [jolt.datastar.html :as h]
             [newsroom.config-page :as config-page]
             [newsroom.core :as core]
             [newsroom.news :as news]
@@ -163,11 +163,11 @@
         (is (re-find #"src=\"/js/config.js\?v=[0-9a-f]+\"" page))
         (is (str/includes? page "How many days of briefings to keep") "a setting's description")
         (testing "a plugin's source has its declared fields"
-          (is (str/includes? page "name=\"sources.0.subreddit.1\" type=\"text\" value=\"economy\""))
+          (is (str/includes? page "type=\"text\" name=\"sources.0.subreddit.1\" value=\"economy\""))
           (is (str/includes? page "r/technology+economy"))
           (is (str/includes? page "name=\"sources.__0__.subreddit.__1__\"") "a template for a new subreddit"))
         (testing "a new source picks its type in its own form, every type's fields put away until then"
-          (is (str/includes? page "data-cfg-type-select=\"\" id=\"sources.__0__.type\" name=\"sources.__0__.type\""))
+          (is (str/includes? page "id=\"sources.__0__.type\" name=\"sources.__0__.type\" data-cfg-type-select=\"\""))
           (is (not (str/includes? page "aria-label=\"Type of source\"")) "no picker beside the button")
           (doseq [t ["rss" "scrape" "web-search" "reddit" "slack"]]
             (is (str/includes? page (str "<fieldset class=\"type-fields\" data-cfg-type=\"" t "\" disabled"))))
@@ -457,7 +457,7 @@
   (testing "the page shows them, with the prompts and the role"
     (let [page (str (h/html (config-page/article {:tree (settings/to-form (defaults))})))]
       (is (str/includes? page "<h2>Podcast</h2>"))
-      (is (str/includes? page "name=\"podcast-hosts.1.voice\" type=\"text\" value=\"Martha\""))
+      (is (str/includes? page "type=\"text\" name=\"podcast-hosts.1.voice\" value=\"Martha\""))
       (is (str/includes? page "name=\"podcast-hosts.__0__.backstory\"") "a template for a new host")
       (is (str/includes? page "data-cfg-reset=\"podcast-outline-prompt\""))
       (is (str/includes? page "data-cfg-reset=\"podcast-transcript-prompt\""))
@@ -490,7 +490,7 @@
         role (fn [r] (re-find (re-pattern (str "(?s)<select[^>]*name=\"roles\\." r "\"[^>]*>.*?</select>")) page))]
     (testing "a role is a choice of the providers there are, the ones declared on the page among them"
       (is (re-find #"data-cfg-role" (role "analyst")))
-      (is (str/includes? (role "analyst") "<option selected=\"selected\" value=\"fast\">fast — z-ai/glm-5.3</option>")
+      (is (str/includes? (role "analyst") "<option value=\"fast\" selected>fast — z-ai/glm-5.3</option>")
           "an alias declared on the page, with the model it asks for")
       (is (str/includes? (role "analyst") "value=\"openrouter\""))
       (is (str/includes? (role "analyst") "value=\"zai\"")))
