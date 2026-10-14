@@ -150,7 +150,23 @@
              ": " items " sources, " cited " cited."]
       :failed [:p.bad "The digest for " label " failed: " error]
       :cancelled [:p.muted "The digest for " label " was cancelled."]
+      :interrupted [:p.muted "Writing the digest for " label " was cut short when the server restarted."]
       [:p.muted "Idle."])))
+
+(defn- finishing-panel
+  "What the desk says while it finishes, after a restart, the steps that
+  followed from the days and digests stored before it."
+  [{:keys [state finishing error]}]
+  (let [what (fn [{:keys [kind ref]}]
+               (if (= "day" kind)
+                 [:a {:href (str "/day/" ref)} (sources/long-date ref)]
+                 [:a {:href (digest-href (keyword kind) ref)} (pipeline/period-label (keyword kind) ref)]))
+        named (interpose ", " (map what finishing))]
+    (case state
+      :done (into [:p "Finished, after the restart, the notes and projections for "] named)
+      :failed [:p.bad "Finishing what the restart left undone failed: " error]
+      :cancelled [:p.muted "Finishing what the restart left undone was cancelled."]
+      (into [:p "Finishing, after the restart, the notes and projections for "] (concat named ["…"])))))
 
 (defn- with-spinner
   "The status line `p` led by a spinner, saying the desk is at work."
@@ -159,11 +175,13 @@
 
 (defn- run-panel [{:keys [state day error items cited provider model sources events digest] :as st} today]
   (let [busy? (contains? #{:starting :gathering :sorting :preparing :analysing :researching
-                           :reviewing :revising :checking} state)]
+                           :reviewing :revising :checking :finishing} state)]
     [:section.run
      [:h2 "Desk"]
-     (cond-> (if digest
-               (digest-panel st digest)
+     (cond-> (cond
+               (:finishing st) (finishing-panel st)
+               digest (digest-panel st digest)
+               :else
                (case state
                :starting [:p "Starting the run for " (sources/long-date day) "…"]
                :gathering [:p "Gathering the news for " (sources/long-date day) "…"]
@@ -180,6 +198,8 @@
                       ": " items " sources, " cited " cited."]
                :failed [:p.bad "The run for " (sources/long-date day) " failed: " error]
                :cancelled [:p.muted "The run for " (sources/long-date day) " was cancelled."]
+               :interrupted [:p.muted "The run for " (sources/long-date day)
+                             " was cut short when the server restarted."]
                [:p.muted "Idle."]))
        busy? with-spinner)
      (when (and (#{:analysing :revising} state) (:writing st))
@@ -192,6 +212,14 @@
      (if busy?
        [:button {"data-on:click" "@post('/cancel')"} "Cancel run"]
        (list
+        ;; a run cut short by a restart before it was stored is offered
+        ;; again rather than started again unasked
+        (when (= :interrupted state)
+          (if digest
+            [:button {"data-on:click" (str "@post('/digest?kind=" (name (:kind digest)) "&period=" (:period digest) "')")}
+             "Write the digest again"]
+            [:button {"data-on:click" (str "@post('/run?day=" day "')")}
+             "Run " (sources/long-date day) " again"]))
         [:button {"data-on:click" (str "@post('/run?day=" today "')")}
          "Gather today’s news"]
         (when (= today (:day st))
@@ -215,6 +243,8 @@
                :done [:p "Recorded the podcast of " [:a {:href (str "/day/" day)} (sources/long-date day)] "."]
                :failed [:p.bad "The podcast of " (sources/long-date day) " failed: " error]
                :cancelled [:p.muted "The podcast of " (sources/long-date day) " was cancelled."]
+               :interrupted [:p.muted "The podcast of " (sources/long-date day)
+                             " was cut short when the server restarted."]
                nil)]
     (when line
       [:div.narration

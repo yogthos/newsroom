@@ -103,7 +103,13 @@
 
 (defn- lane-of [ctx] (lane (some-> (:store ctx) store/user-id)))
 
-(deftype ^:private Run [status])
+(defn- by-reader?
+  "Whether the reader cancelled the run in `ctx`'s lane, rather than the
+  server stopping."
+  [ctx]
+  (boolean (:by-reader @(:current (lane-of ctx)))))
+
+(deftype ^:private Run [status job store])
 
 (defn- status-of
   "The status run `run-id` reports to: its reader's, or the local reader's
@@ -126,13 +132,56 @@
 (defn- plus-days [day n]
   (str (.plusDays (java.time.LocalDate/parse day) n)))
 
+(defn- snapshot
+  "A status as it is kept with its job: without the run's token."
+  [st]
+  (dissoc st :run))
+
+(defonce ^{:private true
+           :doc "The runs whose status changed since it was last written to their job."}
+  unsaved (atom #{}))
+
+(defn- save-status!
+  "Write run `r`'s status to its job, while the status is still its."
+  [^Run r]
+  (let [st @(.-status r)]
+    (when (identical? r (:run st))
+      (store/update-job! (.-store r) (.-job r) {:status (snapshot st)}))))
+
+(def ^:private save-every-ms
+  "How often a running job's status is written: a restart loses at most
+  this much of its log."
+  1000)
+
+(defonce ^{:private true
+           :doc "The thread writing the statuses that changed, every save-every-ms,
+  so a run that reports many times a second costs a write a second."}
+  saver
+  (delay
+    (doto (Thread. (fn []
+                     (loop []
+                       (Thread/sleep save-every-ms)
+                       (let [[rs _] (swap-vals! unsaved (constantly #{}))]
+                         (doseq [r rs]
+                           (try (save-status! r)
+                                (catch Throwable e
+                                  (binding [*out* *err*]
+                                    (println "couldn't save a run's status:" (ex-message e)))))))
+                       (recur))))
+      (.setDaemon true)
+      (.start))))
+
 (defn- update-status!
   "Apply f to the status when it belongs to run `run-id`. A run's writes are
   tagged so a cancelled run whose fiber is still winding down cannot write
   over the status of the run that replaced it. Sources report from several
-  threads at once, which relies on swap! being atomic (glimmer v0.1.4)."
+  threads at once, which relies on swap! being atomic (glimmer v0.1.4). A
+  run with a job has its status written to it soon after (see saver)."
   [run-id f & args]
-  (swap! (status-of run-id) (fn [st] (if (identical? run-id (:run st)) (apply f st args) st))))
+  (swap! (status-of run-id) (fn [st] (if (identical? run-id (:run st)) (apply f st args) st)))
+  (when (and (instance? Run run-id) (.-job ^Run run-id))
+    (swap! unsaved conj run-id)
+    @saver))
 
 (def ^:private max-events 60)
 
@@ -1292,6 +1341,56 @@
   (let [{:keys [stored]} (lane-of ctx)]
     (narration/enqueue! (assoc (select-keys ctx [:config :store :chat]) :on-saved #(swap! stored inc)) day)))
 
+;; --- what a stored day or digest still needs ------------------------------------
+;; A day is stored before the steps that follow from it: its mentions and
+;; trends, the notes, the projections, the podcast; a digest before its
+;; projections and retrospective. The steps are stored with it, in the same
+;; transaction, each with what it needs, and struck off as each is done, so
+;; a restart between the two finishes what is left (resume!) rather than
+;; leaving the day without its notes.
+
+(defn- bare
+  "Sources as a step after filing keeps them: without their embeddings,
+  which none of the steps reads."
+  [sources]
+  (mapv #(dissoc % :vector) sources))
+
+(defn- followup-step
+  "Task: one step still to do for the day or digest `ref`."
+  [{:keys [store] :as ctx} ref [step args]]
+  (case step
+    :mentions (m/sp (store/save-mentions! store ref args))
+    :trends (m/sp (store/save-trends! store ref args))
+    :notes (let [{:keys [numbered cited noted max-facts dossier-facts]} args]
+             (update-notes ctx ref numbered cited noted max-facts dossier-facts))
+    :projections (let [{:keys [origin what made-on markdown sources outlets]} args]
+                   (record-projections ctx origin ref what made-on markdown sources outlets))
+    :retrospective (let [{:keys [kind period to markdown]} args]
+                     (retrospective-task ctx kind period to markdown))
+    :podcast (m/sp (narrate! ctx ref))))
+
+(defn- followups-task
+  "Task: `steps`, the steps still to do for `kind` (\"day\", \"week\" or
+  \"month\") `ref`, in order, each struck off once done. A step that fails
+  is logged and struck off too, since it would fail again; one the reader
+  cancels drops the rest with it, and one the server's stopping cuts short
+  is left for the next start."
+  [{:keys [store run-id] :as ctx} kind ref steps]
+  (m/sp
+    (loop [[step & more] steps]
+      (when step
+        (let [r (m/? (m/attempt (followup-step ctx ref step)))]
+          (try (r)
+               (catch Throwable e
+                 (when (interrupted? e)
+                   (when (by-reader? ctx) (store/set-followups! store kind ref nil))
+                   (throw e))
+                 (log! run-id {:text (str "After filing, " (name (first step)) " failed: "
+                                          (or (ex-message e) (str e)))
+                               :level :error})))
+          (store/set-followups! store kind ref more)
+          (recur more))))))
+
 (defn- web-block
   "What the analyst is told of the entities that tie the day's `stories`
   together, and of what changed since the briefing of `previous-day`, from
@@ -1327,7 +1426,7 @@
   earlier run got to the same questions."
   [{:keys [config store] :as ctx} day]
   (let [own? (nil? (:run-id ctx))
-        run-id (or (:run-id ctx) (Run. (:status (lane-of ctx))))
+        run-id (or (:run-id ctx) (Run. (:status (lane-of ctx)) nil nil))
         reused (atom 0)
         ctx (-> (assoc ctx :run-id run-id :day day :emit #(log! run-id %))
                 (with-saved-answers reused))]
@@ -1472,26 +1571,35 @@
             doc (news/briefing answer numbered)
             known (set (map :n numbered))
             cited (filterv known (news/citations answer))]
-        (store/save-day! store {:day day
-                                :sources numbered
-                                :cited cited
-                                :markdown doc
-                                :tldr (news/tldr doc)
-                                :model (or (:model reply) (:model llm-config))
-                                :provider (name (:alias llm-config))})
-        (store/save-mentions! store day (entities/mentions day day-stories cited))
-        ;; in place of a rerun's, even when this run found none
-        (let [by-key (into {} (map (juxt :key identity)) stories)]
-          (store/save-trends! store day (map (fn [t] (update t :stories #(vec (distinct (keep (comp :story by-key) %)))))
-                                             (concat (:forces the-map) (:trends the-map)))))
-        (log! run-id {:text (str "Filed the briefing: " (count cited) " of " (count numbered)
-                                 " sources cited") :level :ok})
-        (when max-facts
-          (m/? (update-notes ctx day numbered cited (keys kept) max-facts
-                             (analysis/dossier-notes (:stories desk) dossiers))))
-        (when (:retrospective config)
-          (m/? (record-projections ctx "day" day (str "the briefing for " (sources/long-date day)) day written
-                                   numbered (retrospective/outlet-projections (:stories desk) dossiers day))))
+        (let [by-key (into {} (map (juxt :key identity)) stories)
+              podcast? (and (:podcast config) (:podcast-auto config)
+                            (tts/available? (:podcast-engine config :kitten-2)))
+              steps (cond-> [[:mentions (entities/mentions day day-stories cited)]
+                             ;; in place of a rerun's, even when this run found none
+                             [:trends (mapv (fn [t] (update t :stories #(vec (distinct (keep (comp :story by-key) %)))))
+                                            (concat (:forces the-map) (:trends the-map)))]]
+                      max-facts (conj [:notes {:numbered (bare numbered) :cited cited :noted (vec (keys kept))
+                                               :max-facts max-facts
+                                               :dossier-facts (analysis/dossier-notes (:stories desk) dossiers)}])
+                      (:retrospective config)
+                      (conj [:projections {:origin "day" :what (str "the briefing for " (sources/long-date day))
+                                           :made-on day :markdown written :sources (bare numbered)
+                                           :outlets (retrospective/outlet-projections (:stories desk) dossiers day)}])
+                      ;; the podcast takes minutes, so it is recorded once the run is over
+                      podcast? (conj [:podcast nil]))]
+          (store/save-day! store {:day day
+                                  :sources numbered
+                                  :cited cited
+                                  :markdown doc
+                                  :tldr (news/tldr doc)
+                                  :model (or (:model reply) (:model llm-config))
+                                  :provider (name (:alias llm-config))
+                                  :followups steps})
+          (log! run-id {:text (str "Filed the briefing: " (count cited) " of " (count numbered)
+                                   " sources cited") :level :ok})
+          (when podcast?
+            (log! run-id {:text "The podcast of the briefing will be written and recorded next"}))
+          (m/? (followups-task ctx "day" day steps)))
         (when-let [gone (seq (prune-days! ctx))]
           (log! run-id {:text (str "Dropped " (count gone) " old "
                                    (if (= 1 (count gone)) "day" "days")
@@ -1499,10 +1607,6 @@
         (store/prune-shared! store shared-days-ms)
         (when (pos? @reused)
           (log! run-id {:text (str "Reused " (counted @reused "answer" "answers") " saved from an earlier run")}))
-        ;; the podcast takes minutes, so it is recorded once the run is over
-        (when (and (:podcast config) (:podcast-auto config) (tts/available? (:podcast-engine config :kitten-2)))
-          (log! run-id {:text "The podcast of the briefing will be written and recorded next"})
-          (narrate! ctx day))
         (swap! (:stored (lane-of ctx)) inc)
         {:day day :digest nil :items (count numbered) :cited (count cited)}))))
 
@@ -1620,7 +1724,7 @@
   `ctx` is as for run-task, plus an optional :digest-template."
   [{:keys [config store] :as ctx} kind period]
   (let [own? (nil? (:run-id ctx))
-        run-id (or (:run-id ctx) (Run. (:status (lane-of ctx))))
+        run-id (or (:run-id ctx) (Run. (:status (lane-of ctx)) nil nil))
         ctx (with-saved-answers (assoc ctx :run-id run-id) (atom 0))
         label (period-label kind period)
         job {:kind kind :period period}]
@@ -1685,22 +1789,26 @@
             doc (news/briefing answer numbered)
             known (set (map :n numbered))
             cited (filterv known (news/citations answer))]
-        (store/save-digest! store {:kind kind
-                                   :period period
-                                   :sources numbered
-                                   :cited cited
-                                   :markdown doc
-                                   :tldr (news/tldr doc)
-                                   :model (or (:model reply) (:model llm-config))
-                                   :provider (name (:alias llm-config))})
-        (log! run-id {:text (str "Filed the digest for " label ": " (count cited) " of "
-                                 (count numbered) " sources cited") :level :ok})
-        (when (:retrospective config)
-          (m/? (record-projections ctx (name kind) period (str "the digest for " label) to answer
-                                   ;; a digest's citations tie a projection to the storyline they're under
-                                   (vec (mapcat (fn [l] (map #(assoc % :story (:story l)) (:cites l))) lines))
-                                   nil))
-          (m/? (retrospective-task ctx kind period to doc)))
+        (let [steps (when (:retrospective config)
+                      [[:projections {:origin (name kind) :what (str "the digest for " label) :made-on to
+                                      :markdown answer
+                                      ;; a digest's citations tie a projection to the storyline they're under
+                                      :sources (bare (mapcat (fn [l] (map #(assoc % :story (:story l)) (:cites l)))
+                                                             lines))
+                                      :outlets nil}]
+                       [:retrospective {:kind kind :period period :to to :markdown doc}]])]
+          (store/save-digest! store {:kind kind
+                                     :period period
+                                     :sources numbered
+                                     :cited cited
+                                     :markdown doc
+                                     :tldr (news/tldr doc)
+                                     :model (or (:model reply) (:model llm-config))
+                                     :provider (name (:alias llm-config))
+                                     :followups steps})
+          (log! run-id {:text (str "Filed the digest for " label ": " (count cited) " of "
+                                   (count numbered) " sources cited") :level :ok})
+          (m/? (followups-task ctx (name kind) period steps)))
         (swap! (:stored (lane-of ctx)) inc)
         {:digest job :items (count numbered) :cited (count cited)}))))
 
@@ -1726,20 +1834,31 @@
 
 (defn- start-job!
   "Start the task `(make-task run-id)` in `ctx`'s reader's lane unless
-  they have a run in flight, with the status starting from `init`.
-  Returns true when started."
-  [ctx init make-task]
+  they have a run in flight, with the status starting from `init`. `job`
+  is {:kind :args :origin}, what is recorded of it (see store/add-job!),
+  with its status as it goes. Returns true when started."
+  [{:keys [store] :as ctx} job init make-task]
   (let [{:keys [current] lane-status :status} (lane-of ctx)
-        token (Run. lane-status)]
-    (when (compare-and-set! current nil {:token token})
-      (reset! lane-status (merge {:run token :state :starting :started (now) :sources {}} init))
-      (let [finish! (fn [m]
+        claim (Object.)]
+    (when (compare-and-set! current nil {:token claim})
+      (let [st (merge {:state :starting :started (now) :sources {}} init)
+            id (store/add-job! store (assoc job :state :running :status st))
+            token (Run. lane-status id store)
+            _ (reset! current {:token token})
+            _ (reset! lane-status (assoc st :run token))
+            finish! (fn [m]
                       (update-status! token merge m {:finished (now)})
+                      (swap! unsaved disj token)
+                      (try (store/update-job! store id {:state (:state m) :status (snapshot @lane-status)})
+                           (catch Throwable e
+                             (binding [*out* *err*] (println "couldn't save a run's end:" (ex-message e)))))
                       (swap! current #(when-not (= token (:token %)) %)))
             cancel ((make-task token)
                     (fn [summary] (finish! (assoc summary :state :done)))
                     (fn [e] (finish! (cond
-                                       (interrupted? e) {:state :cancelled}
+                                       ;; one the server's stopping cut short is picked up or
+                                       ;; offered again when it starts (resume!)
+                                       (interrupted? e) {:state (if (by-reader? ctx) :cancelled :interrupted)}
                                        ;; a period with nothing worth a digest isn't a failure
                                        (::nothing-to-digest (ex-data e)) {:state :done :nothing (ex-message e)}
                                        :else {:state :failed :error (or (ex-message e) (str e))}))))]
@@ -1752,14 +1871,60 @@
   :fresh?, to ask the models afresh. Returns true when started."
   ([ctx day] (start-run! ctx day {}))
   ([ctx day {:keys [reread? fresh?]}]
-   (start-job! ctx {:day day} #(run-task (assoc ctx :run-id % :reread? reread? :fresh? fresh?) day))))
+   (start-job! ctx {:kind :run :args {:day day :reread? reread? :fresh? fresh?} :origin :hand}
+               {:day day} #(run-task (assoc ctx :run-id % :reread? reread? :fresh? fresh?) day))))
 
 (defn start-digest!
   "Start writing the digest of `kind` for `period` unless the reader has a
   run in flight. Returns true when started."
   [ctx kind period]
-  (start-job! ctx {:digest {:kind kind :period period}}
+  (start-job! ctx {:kind :digest :args {:kind kind :period period} :origin :hand}
+              {:digest {:kind kind :period period}}
               #(digest-task (assoc ctx :run-id %) kind period)))
+
+(defn resume!
+  "After a restart, pick up what it cut short for the reader `ctx` is for:
+  their desk and podcast show how their last job went, a job the restart
+  interrupted is marked so, the steps a stored day or digest still needs
+  are finished, and the podcasts being made or waiting are queued again.
+  A run or digest the restart interrupted before it was stored is not run
+  again: the desk offers to (see ui/run-panel). Call it once per reader
+  at start, before their schedule; a reader signing in or out has no part
+  in it."
+  [{:keys [store] :as ctx}]
+  (let [uid (store/user-id store)
+        open (store/open-jobs store)]
+    (doseq [{:keys [id]} open]
+      (store/update-job! store id {:state :interrupted}))
+    (when-let [{:keys [state status]} (store/latest-job store [:run :digest :followups])]
+      (reset! (:status (lane-of ctx)) (cond-> (or status {:state :idle})
+                                        (= :interrupted state) (assoc :state :interrupted))))
+    (when-let [{:keys [state status]} (store/latest-job store [:podcast])]
+      (reset! (:status (narration/lane uid)) (cond-> (or status {:state :idle})
+                                               (= :interrupted state) (assoc :state :interrupted
+                                                                             :pending nil))))
+    (when-let [pending (seq (store/followups store))]
+      (start-job! ctx {:kind :followups :args {:followups (mapv #(select-keys % [:kind :ref]) pending)}
+                       :origin :resume}
+                  {:finishing (mapv #(select-keys % [:kind :ref]) pending)}
+                  (fn [run-id]
+                    (let [ctx (assoc ctx :run-id run-id)]
+                      (m/sp
+                        (update-status! run-id assoc :state :finishing)
+                        (loop [[{:keys [kind ref steps]} & more] pending]
+                          (when kind
+                            (log! run-id {:text (str "Finishing what the restart left undone for "
+                                                     (if (= "day" kind)
+                                                       (str "the briefing for " (sources/long-date ref))
+                                                       (str "the digest for " (period-label (keyword kind) ref))))})
+                            (m/? (followups-task ctx kind ref steps))
+                            (recur more)))
+                        (swap! (:stored (lane-of ctx)) inc)
+                        {})))))
+    ;; oldest first: the newest waiting one takes the place of any before it
+    (doseq [{:keys [kind args]} open :when (= :podcast kind)]
+      (narrate! ctx (:day args)))
+    nil))
 
 (defn- scheduled-task
   "Task: the day's run when `daily?`, then each of `digests`. A failed
@@ -1792,12 +1957,15 @@
 
 (defn cancel-run!
   "Cancel the run the reader `uid`, the local one by default, has in
-  flight, if any."
+  flight, if any, as the reader asked: its job ends cancelled and what it
+  left undone is dropped. With `:stopping? true` the server is stopping
+  instead, and the job is interrupted, for the next start to pick up."
   ([] (cancel-run! nil))
-  ([uid]
-   (when-let [cancel (:cancel @(:current (lane uid)))]
-     (cancel)
-     true)))
+  ([uid & {:keys [stopping?]}]
+   (let [{:keys [current]} (lane uid)]
+     (when-let [cancel (:cancel (swap! current #(cond-> % (and % (not stopping?)) (assoc :by-reader true))))]
+       (cancel)
+       true))))
 
 ;; --- the schedule ------------------------------------------------------------------
 ;; The first run is at :run-at, local time, and the next ones every
@@ -1858,7 +2026,9 @@
         daily? (due? (some->> created (- (now))) interval)
         digests (due-digests store config day)]
     (when (or daily? (seq digests))
-      (start-job! ctx (if daily? {:day day} {:digest (zipmap [:kind :period] (first digests))})
+      (start-job! ctx {:kind (if daily? :run :digest) :args {:day day :daily? daily? :digests digests}
+                       :origin :schedule}
+                  (if daily? {:day day} {:digest (zipmap [:kind :period] (first digests))})
                   #(scheduled-task (assoc ctx :run-id %) day daily? digests)))))
 
 (defn schedule-task
@@ -1869,6 +2039,12 @@
   (let [run-at (:run-at config)
         interval (interval-ms config)]
     (m/sp
+      ;; at start, what a restart cut short may be being finished first
+      ;; (resume!): a run due now waits for it rather than being skipped
+      (loop []
+        (when (some? @(:current (lane-of ctx)))
+          (m/? (m/sleep 1000))
+          (recur)))
       (let [last-wake (- (next-wake (anchor-ms run-at) interval (now)) interval)]
         (when (= (today) (day-of last-wake))
           (run-if-due! ctx interval)))

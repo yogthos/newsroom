@@ -65,6 +65,22 @@
   for each reader."}
   ^:private jobs (atom {}))
 
+(defonce ^{:private true
+           :doc "Whether the server is stopping: a podcast it cuts short is left
+  as it was in its job, running or queued, for the next start to queue
+  again (newsroom.pipeline/resume!)."}
+  stopping (atom false))
+
+(defn- record-job!
+  "Write `state`, and the reader's podcast status when given, to `job`'s
+  record; nothing for a job without one, or once the server is stopping."
+  ([job state] (record-job! job state nil))
+  ([{:keys [id ctx]} state status]
+   (when (and id (not @stopping))
+     (try (store/update-job! (:store ctx) id {:state state :status status})
+          (catch Throwable e
+            (binding [*out* *err*] (println "couldn't save a podcast's state:" (ex-message e))))))))
+
 (defn busy?
   "Whether a podcast is being made or waits to be."
   []
@@ -158,13 +174,16 @@
         cancelled? #(deref cancelled)]
     (swap! status merge {:state :writing :day day :done 0 :total nil :error nil :seconds nil :note nil
                          :device nil})
-    (try
-      (let [seconds (record! ctx status day cancelled?)]
-        (swap! status merge {:state :done :seconds seconds}))
-      (catch Throwable e
-        (swap! status merge (if (or (cancelled?) (::cancelled (ex-data e)))
-                              {:state :cancelled}
-                              {:state :failed :error (or (ex-message e) (str e))}))))))
+    (record-job! job :running)
+    (let [end (try
+                (let [seconds (record! ctx status day cancelled?)]
+                  {:state :done :seconds seconds})
+                (catch Throwable e
+                  (if (or (cancelled?) (::cancelled (ex-data e)))
+                    {:state :cancelled}
+                    {:state :failed :error (or (ex-message e) (str e))})))]
+      (swap! status merge end)
+      (record-job! job (:state end) (dissoc @status :pending)))))
 
 (declare launch!)
 
@@ -193,13 +212,18 @@
   the episode is stored. Returns true."
   [ctx day]
   (let [uid (uid-of ctx)
-        job {:ctx ctx :day day :uid uid :cancelled (atom false)}
+        ;; recorded, so a restart queues it again (newsroom.pipeline/resume!)
+        id (when-let [st (:store ctx)]
+             (store/add-job! st {:kind :podcast :args {:day day} :origin :hand :state :queued}))
+        job {:ctx ctx :day day :uid uid :cancelled (atom false) :id id}
         theirs? #(= uid (:uid %))
-        [_ new] (swap-vals! jobs (fn [{:keys [current queue] :as js}]
-                                   (cond
-                                     (nil? current) {:current job :queue []}
-                                     (some theirs? queue) (assoc js :queue (mapv #(if (theirs? %) job %) queue))
-                                     :else (assoc js :queue (conj (vec queue) job)))))]
+        [old new] (swap-vals! jobs (fn [{:keys [current queue] :as js}]
+                                     (cond
+                                       (nil? current) {:current job :queue []}
+                                       (some theirs? queue) (assoc js :queue (mapv #(if (theirs? %) job %) queue))
+                                       :else (assoc js :queue (conj (vec queue) job)))))]
+    (doseq [replaced (filter theirs? (:queue old))]
+      (record-job! replaced :cancelled))
     (if (identical? job (:current new))
       (launch! job)
       (swap! (status-of job) assoc :pending day))
@@ -215,8 +239,26 @@
          theirs? #(= uid (or (:uid %) store/local-user-id))
          [old _] (swap-vals! jobs update :queue #(vec (remove theirs? %)))]
      (swap! (:status (lane uid)) assoc :pending nil)
+     (doseq [forgotten (filter theirs? (:queue old))]
+       (record-job! forgotten :cancelled))
      (let [current (:current old)
            waiting (some theirs? (:queue old))]
        (when (and current (theirs? current))
          (reset! (:cancelled current) true))
        (boolean (or (and current (theirs? current)) waiting))))))
+
+(defn stop!
+  "Stop the podcast being made, for the server stopping: unlike cancel!,
+  it and the ones waiting stay recorded as they were, so the next start
+  queues them again."
+  []
+  (reset! stopping true)
+  (when-let [current (:current @jobs)]
+    (reset! (:cancelled current) true))
+  nil)
+
+(defn start!
+  "Record podcasts' states again, after a stop! in this process."
+  []
+  (reset! stopping false)
+  nil)
