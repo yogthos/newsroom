@@ -15,6 +15,13 @@
   now, and signing out forgets them. Topics kept before then can't be told
   apart, so with several readers they are dropped; running for one person
   they stay where they were.
+- **A closed page no longer stays on the server.** A live page's stream
+  stayed subscribed to what it showed after its tab closed, whenever its
+  next render came out the same, as a past day's, a storyline's or a
+  digest's does when another day is stored: each kept its request, and was
+  drawn again at every new briefing, for as long as the server ran. Now a
+  stream lets go of everything it watched when its tab closes, and one
+  whose reader has signed out ends (glimmer-datastar v0.1.5).
 
 ### Changed
 
