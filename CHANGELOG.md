@@ -31,6 +31,21 @@
   `HttpTimeoutException`, and a response body is read off the wire as it
   streams.
 
+### Changed
+
+- **Live pages render in ticks.** glimmer-datastar v0.1.3 renders every
+  open page at most once a tick (`:tick-ms`, 200 here), however many
+  writes landed in it, where each write used to queue a render of its own.
+  A run's sources report from several threads at once and the model's
+  progress streams in, so a page keeps up with a run for a fraction of the
+  rendering it took. A source's result and its line in the run's log are
+  now one write, so no frame shows one without the other.
+- **Dependencies updated:** ring-chez-adapter v0.7.14, http-client v0.1.3,
+  time v0.0.11, glimmer v0.1.5, glimmer-datastar v0.1.3, malli 0.20.3 and
+  ring-core 1.15.5. A request that times out is now reported as
+  `HttpTimeoutException`, and a response body is read off the wire as it
+  streams.
+
 ## v0.13.0 — 13 October 2026
 
 ### Added
