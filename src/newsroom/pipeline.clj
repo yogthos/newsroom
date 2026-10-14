@@ -136,11 +136,15 @@
 
 (def ^:private max-events 60)
 
+(defn- add-event
+  "The status `st` with `event` added to its log."
+  [st event]
+  (update st :events (fn [es] (vec (take-last max-events (conj (or es []) (assoc event :at (now))))))))
+
 (defn- log!
   "Add an event, {:text} with an optional :url and :level, to the run's log."
   [run-id event]
-  (update-status! run-id update :events
-                  (fn [es] (vec (take-last max-events (conj (or es []) (assoc event :at (now))))))))
+  (update-status! run-id add-event event))
 
 (defn- interrupted? [e]
   ;; a cancel that lands in a blocking call surfaces as that thread's
@@ -282,15 +286,20 @@
                             (if (interrupted? e)
                               (throw e)
                               {:error (or (ex-message e) (str e))}))))]
-        (update-status! (:run-id ctx) update-in [:sources name] merge
-                        (if (:error result)
-                          {:state :failed :error (:error result)}
-                          {:state :ok :count (count (:items result))}))
-        (log! (:run-id ctx)
-              (cond
-                (= ::timed-out outcome) {:text (str name " timed out") :level :error}
-                (:error result) {:text (str name " failed: " (:error result)) :level :error}
-                :else {:text (str name ": " (count (:items result)) " items") :level :ok}))
+        ;; the source's state and its line in the log in one write, so no
+        ;; frame shows one without the other
+        (update-status! (:run-id ctx)
+                        (fn [st]
+                          (-> st
+                              (update-in [:sources name] merge
+                                         (if (:error result)
+                                           {:state :failed :error (:error result)}
+                                           {:state :ok :count (count (:items result))}))
+                              (add-event (cond
+                                           (= ::timed-out outcome) {:text (str name " timed out") :level :error}
+                                           (:error result) {:text (str name " failed: " (:error result)) :level :error}
+                                           :else {:text (str name ": " (count (:items result)) " items")
+                                                  :level :ok})))))
         (assoc result :source name :lookback-days (sources/lookback-days source config))))))
 
 (defn- round-robin

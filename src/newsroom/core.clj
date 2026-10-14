@@ -578,7 +578,10 @@
         ids (readers st file)
         pruned (reduce + (map #(count (pipeline/prune-days! (user-ctx %))) ids))
         _ (doseq [uid ids] (ensure-reader! uid))
-        handler (ds/wrap-datastar app {:rate-limit-ms 200})
+        ;; every open page re-renders at most once a tick, however many
+        ;; writes land in it: sources reporting from several threads and the
+        ;; model's progress come in bursts
+        handler (ds/wrap-datastar app {:tick-ms 200})
         {:keys [host port] :as opts} (server-opts cfg)
         server (adapter/run-server handler opts)]
     (swap! system assoc :server server)
