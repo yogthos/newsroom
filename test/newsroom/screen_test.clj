@@ -23,11 +23,18 @@
   (is (= "screening: off" (screen/status-line {})))
   (is (re-find #"^screening: " (screen/status-line {:screen-threshold 0.3}))))
 
-;; With the model's files in NEWSROOM_SCREEN_DIR or the config directory's
-;; screen/, and lev's kernels and a BLAS loaded, the model itself is asked.
+(deftest the-model-ships-whole
+  (doseq [[name size] screen/files]
+    (with-open [in (io/input-stream (io/resource (str "screen/" name)))
+                out (java.io.ByteArrayOutputStream.)]
+      (io/copy in out)
+      (is (= size (.size out)) name))))
+
+;; With lev's kernels and a BLAS loaded, the model itself is asked, its
+;; files written out of the resources first.
 (deftest the-model-tells-hard-news-from-soft
-  (if-not (and (screen/available?) (.exists (io/file (screen/home) "model.bin")))
-    (println "skipping the screening model: no kernels, BLAS or model files")
+  (if-not (screen/available?)
+    (println "skipping the screening model: no kernels or BLAS")
     (let [hard (screen/serious {:title "Albania protests turn violent as protesters demand PM Rama's resignation"
                                 :summary "Thousands rallied in Tirana on Sunday, clashing with police outside parliament."})
           soft (screen/serious {:title "The 12 best air fryers of the year, tested"

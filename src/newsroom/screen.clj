@@ -14,11 +14,12 @@
 
   lev needs its kernels (`jolt lev` builds them) and a BLAS, OpenBLAS on
   linux, Accelerate on macOS; without them, as on Windows, `available?` is
-  false and every report goes to the desk. The model's two files come from
-  Hugging Face the first time, at the revision pinned in `downloads`, into
-  the config directory's screen/, or NEWSROOM_SCREEN_DIR."
+  false and every report goes to the desk. The model's two files, 6 MB,
+  ship in the binary under resources/screen, from TheREZOR/TinyDecide at
+  revision aa745b7 (Apache 2.0, resources/screen/LICENSE). lev reads them
+  from a directory, so the first time they're written out to the config
+  directory's screen/; NEWSROOM_SCREEN_DIR names a release to load instead."
   (:require [clojure.java.io :as io]
-            [jolt.http-client :as http]
             [lev.tensors :as tensors]
             [lev.tinydecide :as td]
             [newsroom.config :as config]))
@@ -31,51 +32,49 @@
     :options ["yes, serious news about world affairs or the economy"
               "no, entertainment, lifestyle, sport or shopping"]}])
 
-(def ^:private repo
-  "https://huggingface.co/TheREZOR/TinyDecide/resolve/aa745b73a2db9a43bce731f0e8e5c90a6899fe2c/")
+(def files
+  "The model's files in resources/screen, with their sizes."
+  {"meta.json" 187362
+   "model.bin" 6181984})
 
-(def downloads
-  "What is fetched, by the file it is saved as, with its size."
-  {"meta.json" {:url (str repo "meta.json") :size 187362}
-   "model.bin" {:url (str repo "model.bin") :size 6181984}})
+(defn- own-dir [] (not-empty (System/getenv "NEWSROOM_SCREEN_DIR")))
 
 (defn home
-  "Where the model's files are kept."
+  "Where the model's files are loaded from."
   []
-  (or (not-empty (System/getenv "NEWSROOM_SCREEN_DIR")) (config/path "screen")))
+  (or (own-dir) (config/path "screen")))
 
 (defn available?
   "Whether the model can run here: lev's kernels and a BLAS are loaded."
   []
   (tensors/available?))
 
-(defn- download!
-  "Fetch `name` into the model's directory unless it is there whole,
-  through a .part file."
-  [dir name {:keys [url size]}]
+(defn- write-out!
+  "Write the packaged `name` into `dir` unless it is there whole, through
+  a .part file."
+  [dir name size]
   (let [dest (io/file dir name)
         part (io/file dir (str name ".part"))]
     (when-not (and (.exists dest) (= size (.length dest)))
-      (let [{:keys [status body]} (http/get url {:as :stream :timeout 120000})]
-        (when-not (= 200 status)
-          (throw (ex-info (str "could not download " url ": HTTP " status) {:status status})))
-        (with-open [in body] (io/copy in part))
-        (when-not (= size (.length part))
-          (.delete part)
-          (throw (ex-info (str "the download of the screening model's " name " was cut short") {:name name})))
-        (.renameTo part dest)))))
+      (with-open [in (io/input-stream (io/resource (str "screen/" name)))]
+        (io/copy in part))
+      (when-not (= size (.length part))
+        (.delete part)
+        (throw (ex-info (str "the screening model's " name " was written out short") {:name name})))
+      (.renameTo part dest))))
 
 (defonce ^:private model (atom nil))
 
 (defn- model!
-  "The loaded model, fetching its files the first time."
+  "The loaded model, its files written out the first time."
   []
   (or @model
       (locking model
         (or @model
             (let [dir (io/file (home))]
-              (.mkdirs dir)
-              (doseq [[name spec] downloads] (download! dir name spec))
+              (when-not (own-dir)
+                (.mkdirs dir)
+                (doseq [[name size] files] (write-out! dir name size)))
               (reset! model (td/load-release (.getPath dir))))))))
 
 (defn text
