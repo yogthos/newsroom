@@ -46,8 +46,8 @@
         ;; handling need (jolt-lang/time) and the router (askonomm/ruuter)
         jlt-commons/lev
         {:git/url "https://github.com/jlt-commons/lev"
-         :git/tag "v0.3.3"
-         :git/sha "50cb3647af80ebe529e416d9327d722301716515"}
+         :git/tag "v0.3.4"
+         :git/sha "e68e5caddb4a07ef01d1c53fe33679a6a09ff720"}
 
 ;; schemas: an imported config is checked against them
         metosin/malli
@@ -136,14 +136,17 @@
                   (shell "sh" "native/build_tts.sh"))}
 
          lev
-         {:doc "build lev's kernels in its checkout, the gitlib `jolt path` names, which jolt doesn't build for a dependency: the screening model (newsroom.screen) runs on them, and `jolt build` links their archive. Not on Windows, which has no BLAS for them"
+         {:doc "build lev's kernels in its checkout, the gitlib `jolt path` names, which jolt doesn't build for a dependency: the screening model (newsroom.screen) runs on them, and `jolt build` links their archive. Always afresh, since a checkout restored from a cache may hold kernels built against another system's libc. Not on Windows, which has no BLAS for them"
           :task (let [root (->> (str/split (:out (shell {:out :string} "jolt" "path")) #":")
                                 (map str/trim)
                                 (filter #(str/includes? % "jlt-commons_lev"))
                                 first)]
                   (when-not root
                     (throw (ex-info "lev isn't among the resolved deps (jolt path)" {})))
-                  (shell {:dir (str (fs/parent root))} "jolt" "kernels"))}
+                  (let [dir (fs/parent root)]
+                    (doseq [f ["liblev_kernels.a" "liblev_kernels.so" "liblev_kernels.dylib"]]
+                      (fs/delete-if-exists (fs/path dir "native" f)))
+                    (shell {:dir (str dir)} "jolt" "kernels")))}
 
          tts-test
          {:doc "check the speech engine against test/golden/tts: the decoder stage by stage, then the prompt, the speech model's first logits and a spoken line, written to native/build/golden.mp3. Needs `jolt tts` and the model's converted files, in NEWSROOM_TTS_DIR or ~/.config/newsroom/tts, which the first podcast fetches"
