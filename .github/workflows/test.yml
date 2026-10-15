@@ -106,7 +106,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q libvulkan-dev
           v=1.4.357.1
-          curl -sSfL -o "$RUNNER_TEMP/vulkan.tar.xz" "https://sdk.lunarg.com/sdk/download/$v/linux/vulkansdk-linux-x86_64-$v.tar.xz"
+          curl -sSfL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/vulkan.tar.xz" "https://sdk.lunarg.com/sdk/download/$v/linux/vulkansdk-linux-x86_64-$v.tar.xz"
           mkdir -p "$RUNNER_TEMP/vulkan"
           tar -xJf "$RUNNER_TEMP/vulkan.tar.xz" -C "$RUNNER_TEMP/vulkan"
           echo "VULKAN_SDK=$RUNNER_TEMP/vulkan/$v/x86_64" >> "$GITHUB_ENV"

@@ -138,14 +138,21 @@
                                   (auth/finish-login oauth {"code" (get (query url) "nonce") "state" (get (query url) "state")})))))))))
 
 (deftest a-bearer-token-is-checked-with-the-server-and-kept-a-while
-  (with-server {}
-    (fn [seen]
-      (is (= "reader-1" (:sub (auth/token-claims oauth "at-1"))))
-      (is (= "reader-1" (:sub (auth/token-claims oauth "at-1"))))
-      (is (= 1 (count (filter #(= (:userinfo_endpoint discovery) (:url %)) @seen))) "asked once")
-      (is (nil? (auth/token-claims oauth "forged")))))
+  (testing "taking any token, by userinfo"
+    (with-server {}
+      (fn [seen]
+        (let [oauth (assoc oauth :token-clients :any)]
+          (is (= "reader-1" (:sub (auth/token-claims oauth "at-1"))))
+          (is (= "reader-1" (:sub (auth/token-claims oauth "at-1"))))
+          (is (= 1 (count (filter #(= (:userinfo_endpoint discovery) (:url %)) @seen))) "asked once")
+          (is (nil? (auth/token-claims oauth "forged")))))))
+  (testing "taking newsroom's own tokens, a public client takes none, since it can't introspect"
+    (with-server {}
+      (fn [seen]
+        (is (nil? (auth/token-claims oauth "at-1")))
+        (is (empty? (filter #(= (:userinfo_endpoint discovery) (:url %)) @seen))))))
   (testing "with a client secret, by introspection"
-    (with-server {:introspection {:active true :sub "reader-2" :exp (+ (now-s) 600)}}
+    (with-server {:introspection {:active true :sub "reader-2" :client_id "newsroom" :exp (+ (now-s) 600)}}
       (fn [seen]
         (let [oauth (assoc oauth :client-secret "s3cret")]
           (is (= "reader-2" (:sub (auth/token-claims oauth "opaque"))))
@@ -155,6 +162,25 @@
             (is (= "opaque" (get (codec/form-decode (:body req)) "token")))))))
     (with-server {:introspection {:active false}}
       (fn [_] (is (nil? (auth/token-claims (assoc oauth :client-secret "s3cret") "revoked")))))))
+
+(deftest only-a-token-issued-for-newsroom-is-taken
+  (let [oauth (assoc oauth :client-secret "s3cret")
+        active {:active true :sub "reader-2" :exp (+ (now-s) 600)}
+        claims-of (fn [oauth introspection]
+                    (with-server {:introspection (merge active introspection)}
+                      (fn [_] (auth/token-claims oauth "opaque"))))]
+    (is (= "reader-2" (:sub (claims-of oauth {:client_id "newsroom"}))))
+    (is (= "reader-2" (:sub (claims-of oauth {:client_id "newsroom" :aud "newsroom"}))))
+    (is (nil? (claims-of oauth {:client_id "another-app"})) "another app's token isn't its user's here")
+    (is (nil? (claims-of oauth {})) "nor one that says no client")
+    (is (nil? (claims-of oauth {:client_id "newsroom" :aud "https://mcp.example/"}))
+        "nor one bound to another audience")
+    (testing ":token-clients names the others taken"
+      (let [oauth (assoc oauth :token-clients ["newsroom" "cli"])]
+        (is (= "reader-2" (:sub (claims-of oauth {:client_id "cli"}))))
+        (is (nil? (claims-of oauth {:client_id "another-app"})))))
+    (testing ":any takes them all"
+      (is (= "reader-2" (:sub (claims-of (assoc oauth :token-clients :any) {:client_id "another-app"})))))))
 
 (deftest the-next-page-is-only-ever-this-sites
   (is (= "/day/2026-09-30?x=1" (auth/safe-next "/day/2026-09-30?x=1")))
@@ -174,7 +200,7 @@
 
 (deftest with-several-readers-each-request-names-its-reader
   (let [st (store/open "sqlite::memory:")
-        cfg {:single-user false :oauth oauth}
+        cfg {:single-user false :oauth (assoc oauth :token-clients :any)}
         handler (app st cfg)]
     (try
       (with-server {}
