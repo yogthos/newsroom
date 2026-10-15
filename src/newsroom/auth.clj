@@ -31,9 +31,15 @@
 
   A program can send an access token the server issued instead, as
   Authorization: Bearer <token>. It is checked with the server, by its
-  introspection endpoint when newsroom has a client secret, else by its
-  userinfo endpoint, and what the server says is kept for a few minutes,
-  so that each of a page's live updates doesn't ask again.
+  introspection endpoint, which needs newsroom's client secret, and what
+  the server says is kept for a few minutes, so that each of a page's live
+  updates doesn't ask again. Only a token issued to one of :token-clients,
+  newsroom's own :client-id by default, is taken, and only when it isn't
+  bound to another audience: a server lets any client sign in its users,
+  and a token one of those clients was given mustn't read here as its
+  user. :token-clients :any takes any token the server says is active,
+  and lets a public client, which can't introspect, check one by its
+  userinfo endpoint instead.
 
   :groups keeps the readers to those whose groups claim names one of
   them, and :local-subject names the sub whose sign-in is the local
@@ -300,20 +306,35 @@
   "How long a token the server refused is remembered as refused."
   30000)
 
+(defn token-for-us?
+  "Whether the introspection answer `info` is of a token newsroom takes:
+  issued to one of :token-clients, and with no audience but newsroom."
+  [oauth info]
+  (let [clients (:token-clients oauth)
+        aud (:aud info)
+        auds (if (string? aud) #{aud} (set aud))]
+    (or (= :any clients)
+        (and (contains? (set (or clients [(:client-id oauth)])) (:client_id info))
+             (or (empty? auds) (contains? auds (:client-id oauth)))))))
+
 (defn- check-token
   "What the server says of the holder of access token `token`, or nil
-  when it isn't an active token of a reader's."
+  when it isn't an active token of a reader's, issued for newsroom."
   [oauth token]
   (let [ep (endpoints oauth)]
-    (if (and (client-secret oauth) (:introspection_endpoint ep))
+    (cond
+      (and (client-secret oauth) (:introspection_endpoint ep))
       (let [{:keys [status body]} (form-post oauth (:introspection_endpoint ep)
                                              {"token" token "token_type_hint" "access_token"})]
-        (when (and (= 200 status) (map? body) (true? (:active body)) (string? (:sub body)))
+        (when (and (= 200 status) (map? body) (true? (:active body)) (string? (:sub body))
+                   (token-for-us? oauth body))
           (if (or (:email body) (:name body) (not (:userinfo_endpoint ep)))
             body
             ;; introspection says whose it is; userinfo, given the scope, who they are
             (merge (let [info (userinfo oauth token)] (when (= (:sub info) (:sub body)) info)) body))))
-      (userinfo oauth token))))
+
+      ;; userinfo can't say whom a token was issued to
+      (= :any (:token-clients oauth)) (userinfo oauth token))))
 
 (defn token-claims
   "What the server says of the holder of the access token `token`, kept

@@ -24,6 +24,15 @@
 
 ### Fixed
 
+- **A bearer token another app was given no longer reads as its user.**
+  Newsroom took any access token the sign-in server said was active, so
+  any app a reader had signed in to with that server could send its own
+  token here and act as them. Only a token issued to newsroom's client
+  (or to one of `:oauth :token-clients`), and bound to no other audience,
+  is taken now. Checking that needs introspection, so a public client
+  takes no bearer tokens unless `:token-clients :any` restores the old
+  rule.
+
 - **YouTube channels whose feed fails.** YouTube's channel feeds answer
   404 or 500 for many channels, which failed them with "couldn't read the
   channel". Such a channel is now read from its videos tab instead, each
