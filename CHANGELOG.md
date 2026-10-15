@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.14.0 — 15 October 2026
 
 ### Added
 
@@ -77,8 +77,9 @@
   rendering it took. A source's result and its line in the run's log are
   now one write, so no frame shows one without the other.
 - **Dependencies updated:** ring-chez-adapter v0.7.14, http-client v0.1.3,
-  time v0.0.11, glimmer v0.1.6, glimmer-datastar v0.1.6, malli 0.20.3 and
-  ring-core 1.15.5. A request that times out is now reported as
+  time v0.0.11, glimmer v0.1.6, glimmer-datastar v0.1.7, db v0.4.2,
+  malli 0.20.3 and ring-core 1.15.5; ring-chez-adapter, time and ruuter
+  now come through lev. A request that times out is now reported as
   `HttpTimeoutException`, and a response body is read off the wire as it
   streams.
 
