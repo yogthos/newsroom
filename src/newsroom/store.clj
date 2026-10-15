@@ -1430,21 +1430,57 @@
 
 ;; --- settings ----------------------------------------------------------------------
 
+(defn- read-setting
+  "A stored setting's value, or ::unreadable when it can't be read."
+  [value]
+  (try (edn/read-string value) (catch Exception _ ::unreadable)))
+
 (defn settings
-  "The stored settings, {key value}; empty before any are saved."
+  "The stored settings, {key value}; empty before any are saved. One that
+  can't be read, as an older newsroom could store, is left out, so it takes
+  its default, and said so on stderr, rather than stopping the server. It
+  stays stored, untouched, until that setting is saved again."
   [store]
   (with-db [conn store]
     (into {}
-          (map (fn [r] [(keyword (:key r)) (edn/read-string (:value r))]))
+          (keep (fn [{:keys [key value]}]
+                  (let [v (read-setting value)]
+                    (if (= ::unreadable v)
+                      (binding [*out* *err*]
+                        (println (str "the stored setting " key " can't be read, so it takes its default"
+                                      " until it's saved again"))
+                        nil)
+                      [(keyword key) v]))))
           (jdbc/fetch conn ["select key, value from settings where user_id = ?" (user-id store)]))))
 
+(defn- unreadable
+  "The keys of `settings` whose value doesn't read back as itself once
+  written, which a keyword with a space in it, say, doesn't."
+  [settings]
+  (keep (fn [[k v]]
+          (when-not (= v (read-setting (pr-str v)))
+            k))
+        settings))
+
 (defn save-settings!
-  "Store `settings`, {key value}, in place of every setting there was."
+  "Store `settings`, {key value}, in place of every setting there was,
+  but for one stored that can't be read and `settings` doesn't replace,
+  which is kept as it is (see `settings`). Throws, storing nothing, when
+  one wouldn't read back as it is."
   [store settings]
+  (when-let [bad (seq (unreadable settings))]
+    (throw (ex-info (str "these settings wouldn't read back as they are, so nothing was saved: "
+                         (str/join ", " (map name bad)))
+                    {:keys (vec bad)})))
   (let [uid (user-id store)]
     (with-db [conn store]
       (jdbc/atomic conn
-        (jdbc/execute! conn ["delete from settings where user_id = ?" uid])
+        (let [kept (->> (jdbc/fetch conn ["select key, value from settings where user_id = ?" uid])
+                        (filter #(and (= ::unreadable (read-setting (:value %)))
+                                      (not (contains? settings (keyword (:key %)))))))]
+          (jdbc/execute! conn ["delete from settings where user_id = ?" uid])
+          (doseq [r kept]
+            (jdbc/execute! conn ["insert into settings (user_id, key, value) values (?, ?, ?)" uid (:key r) (:value r)])))
         (doseq [[k v] settings]
           (jdbc/execute! conn ["insert into settings (user_id, key, value) values (?, ?, ?)" uid (name k) (pr-str v)])))))
   nil)

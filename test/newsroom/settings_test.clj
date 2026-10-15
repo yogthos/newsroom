@@ -81,9 +81,9 @@
 
 (deftest a-role-names-a-provider-as-it-was-called
   (let [{:keys [errors]}
-        (settings/from-form {"providers.0._alias" "GLM 5.3 Thinking" "providers.0.type" "glm"
+        (settings/from-form {"providers.0._alias" "GLM-5.3-Thinking" "providers.0.type" "glm"
                              "providers.1._alias" "GLM" "providers.1.type" "glm"
-                             "roles.analyst" "GLM 5.3 Thinking" "roles.notes" "GLM"})]
+                             "roles.analyst" "glm-5.3-thinking" "roles.notes" "GLM"})]
     (is (nil? (errors "roles.analyst")))
     (is (nil? (errors "roles.notes"))))
   (testing "aliases that differ only in case are one provider"
@@ -542,7 +542,15 @@
                                "providers.3")))
   (is (= {"providers.3._alias" "is needed"} (:errors (settings/provider-at {"providers.3.model" "x"} "providers.3"))))
   (is (= {"providers.3.max-tokens" "has to be a whole number"}
-         (:errors (settings/provider-at {"providers.3._alias" "a" "providers.3.max-tokens" "lots"} "providers.3")))))
+         (:errors (settings/provider-at {"providers.3._alias" "a" "providers.3.max-tokens" "lots"} "providers.3"))))
+  (testing "a name has to be one word, since it's kept as a keyword"
+    (is (re-find #"one word" (get (:errors (settings/provider-at {"providers.3._alias" "GLM 5.3 Thinking" "providers.3.type" "glm"}
+                                                                 "providers.3"))
+                                  "providers.3._alias")))
+    (let [{:keys [settings errors]} (settings/from-form {"providers.0._alias" "GLM 5.3 Thinking" "providers.0.type" "glm"
+                                                         "providers.1._alias" "glm-thinking" "providers.1.type" "glm"})]
+      (is (re-find #"one word" (get errors "providers.0._alias")))
+      (is (= [:glm-thinking] (keys (:providers settings)))))))
 
 (deftest a-provider-can-be-tried-before-it-is-saved
   (let [asked (atom nil)

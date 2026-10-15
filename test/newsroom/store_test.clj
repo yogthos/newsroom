@@ -567,3 +567,27 @@
         (store/save-notes! db {"fed" (note-on "2026-09-30" "2026-09-28" "2026-09-29" "2026-09-30")})
         (is (= "As of 2026-09-29" (:title (get (store/notes-before db ["fed"] "2026-09-30") "fed")))))
       (finally (store/close db)))))
+
+(deftest a-setting-that-cannot-be-read-takes-its-default-and-stays-stored
+  ;; a provider alias with spaces, as an older newsroom stored it, reads
+  ;; back as :GLM twice
+  (let [db (fresh)
+        broken "{:deepseek {:type :deepseek}, :GLM 5.3 Thinking {:type :glm}, :GLM {:type :glm}}"]
+    (store/save-settings! db {:run-at "06:00"})
+    (jdbc/execute! (:conn db) ["insert into settings (user_id, key, value) values (?, ?, ?)"
+                               store/local-user-id "providers" broken])
+    (testing "it is left out, rather than stopping the server"
+      (is (= {:run-at "06:00"} (store/settings db))))
+    (testing "a save of the other settings keeps it as it is"
+      (store/save-settings! db {:run-at "07:00"})
+      (is (= broken (:value (first (jdbc/fetch (:conn db) ["select value from settings where key = 'providers'"]))))))
+    (testing "a save of that setting replaces it"
+      (store/save-settings! db {:run-at "07:00" :providers {:glm-thinking {:type :glm}}})
+      (is (= {:run-at "07:00" :providers {:glm-thinking {:type :glm}}} (store/settings db))))))
+
+(deftest a-setting-that-would-not-read-back-is-not-saved
+  (let [db (fresh)]
+    (store/save-settings! db {:run-at "06:00"})
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"providers"
+                          (store/save-settings! db {:run-at "07:00" :providers {(keyword "GLM 5.3 Thinking") {:type :glm}}})))
+    (is (= {:run-at "06:00"} (store/settings db)) "nothing was saved")))
