@@ -13,6 +13,11 @@
   already stored that can't be read takes its default with a line on
   stderr, rather than stopping the server; it stays stored until that
   setting is saved again.
+- **The screening's result reaches the server's log.** A run's own log
+  keeps only its last 60 lines, which a day's later stages push the
+  screening out of, so each run also prints how many reports it screened,
+  how long it took and how many it left out, or why it couldn't, for
+  `journalctl` and the like.
 
 ## v0.14.0 — 15 October 2026
 

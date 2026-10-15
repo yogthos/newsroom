@@ -892,7 +892,9 @@
 (defn- screen-task
   "Task: `items` without the reports the screening model reads as soft
   news, when :screen-threshold is set (see newsroom.screen); all of them
-  when it isn't, the model can't run here, or it fails."
+  when it isn't, the model can't run here, or it fails. What it did is
+  also printed, for the server's log: the run's own keeps only its last
+  lines, which a day's later stages push the screening out of."
   [{:keys [config run-id]} items]
   (m/sp
     (let [threshold (:screen-threshold config)]
@@ -900,16 +902,26 @@
         (or (nil? threshold) (empty? items)) items
         (not (screen/available?))
         (do (log! run-id {:text "The screening model can't run here, with no BLAS for it, so every report goes to the desk"})
+            (println "screening: TinyDecide can't run here, with no BLAS for it, so every report went to the desk")
             items)
         :else
         (or (m/? (softly run-id "Screening the reports"
                          (m/sp
                            (log! run-id {:text (str "Screening " (counted (count items) "report" "reports")
                                                     " for the ones that aren't serious news")})
-                           (let [{:keys [kept dropped]} (m/? (m/via m/blk (screen/screen items threshold)))]
+                           (let [t0 (now)
+                                 {:keys [kept dropped]}
+                                 (try (m/? (m/via m/blk (screen/screen items threshold)))
+                                      (catch Throwable e
+                                        (when-not (interrupted? e)
+                                          (println (str "screening failed, so every report went to the desk: "
+                                                        (or (ex-message e) e))))
+                                        (throw e)))]
                              (log! run-id {:text (str "Left out " (counted (count dropped) "report" "reports")
                                                       " the screening read as entertainment, lifestyle, sport or shopping")
                                            :level :ok})
+                             (println (format "screening: %d reports in %.1fs, leaving out %d under %s"
+                                              (count items) (/ (- (now) t0) 1000.0) (count dropped) threshold))
                              kept))))
             items)))))
 
