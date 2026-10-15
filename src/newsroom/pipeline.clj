@@ -70,6 +70,7 @@
             [newsroom.precedents :as precedents]
             [newsroom.progress :as progress]
             [newsroom.retrospective :as retrospective]
+            [newsroom.screen :as screen]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.trends :as trends]
@@ -888,6 +889,30 @@
                             :level :error})
               nil))))))
 
+(defn- screen-task
+  "Task: `items` without the reports the screening model reads as soft
+  news, when :screen-threshold is set (see newsroom.screen); all of them
+  when it isn't, the model can't run here, or it fails."
+  [{:keys [config run-id]} items]
+  (m/sp
+    (let [threshold (:screen-threshold config)]
+      (cond
+        (or (nil? threshold) (empty? items)) items
+        (not (screen/available?))
+        (do (log! run-id {:text "The screening model can't run here, with no BLAS for it, so every report goes to the desk"})
+            items)
+        :else
+        (or (m/? (softly run-id "Screening the reports"
+                         (m/sp
+                           (log! run-id {:text (str "Screening " (counted (count items) "report" "reports")
+                                                    " for the ones that aren't serious news")})
+                           (let [{:keys [kept dropped]} (m/? (m/via m/blk (screen/screen items threshold)))]
+                             (log! run-id {:text (str "Left out " (counted (count dropped) "report" "reports")
+                                                      " the screening read as entertainment, lifestyle, sport or shopping")
+                                           :level :ok})
+                             kept))))
+            items)))))
+
 (def ^:private article-timeout-ms 20000)
 
 (defn- read-article
@@ -1471,6 +1496,9 @@
                                          " near-duplicate stories across outlets")}))
             lines (recent-storylines store config day)
             linked (trends/link-stories collapsed lines (:story-threshold config))
+            ;; a small model on this machine leaves out the soft news before
+            ;; the desk is paid to sort it
+            linked (m/? (screen-task ctx linked))
             ;; the desk sorts the reports into stories, which are ranked whole
             grouped (m/? (softly run-id "Sorting the reports into stories" (group-task ctx day linked)))
             half-life (:half-life-days config 2)

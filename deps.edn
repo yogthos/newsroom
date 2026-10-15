@@ -2,23 +2,11 @@
 
  :paths ["src" "resources"]
 
- :deps {;; HTTP server: HTTP/1.1 over jolt.socket.native (jolt 0.8.16+)
-        jolt-lang/ring-chez-adapter
-        {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-         :git/tag "v0.7.14"
-         :git/sha "d29d8add671f66e4223567fb60e53a975ecce23e"}
-
-        ;; outbound HTTP: feeds, web search, the LLM
+ :deps {;; outbound HTTP: feeds, web search, the LLM
         jolt-lang/http-client
         {:git/url "https://github.com/jolt-lang/http-client"
          :git/tag "v0.1.3"
          :git/sha "7ea9bbd3b176b4567b4c94d7177d67c5f06109f7"}
-
-        ;; java.time shim; data.json and date handling need it
-        jolt-lang/time
-        {:git/url "https://github.com/jolt-lang/time"
-         :git/tag "v0.0.11"
-         :git/sha "2c58d9c709a25d80608757c3026f4c656a994ef1"}
 
         ;; sqlite through the system libsqlite3
         jolt-lang/db
@@ -51,6 +39,16 @@
          :git/tag "v0.1.4"
          :git/sha "15f6f7c0ee8b54a862e9f981b5867fab23459498"}
 
+        ;; TinyDecide through lev's encoders, to screen the reports before the
+        ;; desk sorts them; its kernels are built by `jolt lev`. lev also
+        ;; brings the HTTP server (jolt-lang/ring-chez-adapter, HTTP/1.1 over
+        ;; jolt.socket.native), the java.time shim data.json and date
+        ;; handling need (jolt-lang/time) and the router (askonomm/ruuter)
+        jlt-commons/lev
+        {:git/url "https://github.com/jlt-commons/lev"
+         :git/tag "v0.3.3"
+         :git/sha "50cb3647af80ebe529e416d9327d722301716515"}
+
 ;; schemas: an imported config is checked against them
         metosin/malli
         {:git/url "https://github.com/metosin/malli"
@@ -69,12 +67,6 @@
 ;; the Ring middleware: params, resources, content types
         ring/ring-core {:mvn/version "1.15.5"}
         ring/ring-codec {:mvn/version "1.3.0"}
-
-        ;; routing
-        askonomm/ruuter
-        {:git/url "https://git.nmm.ee/asko/ruuter.git"
-         :git/tag "v2.1.1"
-         :git/sha "263f868cf19e73ccda7cda6b4d4af1d8fe504749"}
 
         org.clojure/data.json
         {:git/url "https://github.com/clojure/data.json"
@@ -124,7 +116,7 @@
                                 :git/sha "4055b495575e5ddd806b155e25a6678b31153761"}}
                   :main-opts ["-m" "newsroom.test-runner"]}}
 
- :tasks {:requires ([babashka.fs :as fs])
+ :tasks {:requires ([babashka.fs :as fs] [clojure.string :as str])
 
          serve {:doc "run the newsroom server" :main-opts ["-m" "newsroom.core"]}
          test  "jolt -M:test"
@@ -142,6 +134,16 @@
                     (shell "git" "-C" dir "fetch" "--quiet" "--depth" "1" src rev)
                     (shell "git" "-C" dir "checkout" "--quiet" "FETCH_HEAD"))
                   (shell "sh" "native/build_tts.sh"))}
+
+         lev
+         {:doc "build lev's kernels in its checkout, the gitlib `jolt path` names, which jolt doesn't build for a dependency: the screening model (newsroom.screen) runs on them, and `jolt build` links their archive. Not on Windows, which has no BLAS for them"
+          :task (let [root (->> (str/split (:out (shell {:out :string} "jolt" "path")) #":")
+                                (map str/trim)
+                                (filter #(str/includes? % "jlt-commons_lev"))
+                                first)]
+                  (when-not root
+                    (throw (ex-info "lev isn't among the resolved deps (jolt path)" {})))
+                  (shell {:dir (str (fs/parent root))} "jolt" "kernels"))}
 
          tts-test
          {:doc "check the speech engine against test/golden/tts: the decoder stage by stage, then the prompt, the speech model's first logits and a spoken line, written to native/build/golden.mp3. Needs `jolt tts` and the model's converted files, in NEWSROOM_TTS_DIR or ~/.config/newsroom/tts, which the first podcast fetches"

@@ -27,6 +27,7 @@
             [newsroom.retrospective-test]
             [newsroom.settings-test]
             [newsroom.plugin-test]
+            [newsroom.screen-test]
             [newsroom.search-test]
             [newsroom.secrets-test]
             [newsroom.sources-test]
@@ -53,6 +54,7 @@
     newsroom.precedents-test
     newsroom.progress-test
     newsroom.retrospective-test
+    newsroom.screen-test
     newsroom.search-test
     newsroom.store-test
     newsroom.trends-test

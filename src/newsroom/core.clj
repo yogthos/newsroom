@@ -72,6 +72,7 @@
             [newsroom.news :as news]
             [newsroom.pipeline :as pipeline]
             [newsroom.plugin :as plugin]
+            [newsroom.screen :as screen]
             [newsroom.search :as search]
             [newsroom.settings :as settings]
             [newsroom.sources :as sources]
@@ -609,6 +610,7 @@
     (doseq [{:keys [plugin ok]} plugins :when ok]
       (println "loaded plugin" plugin))
     (println (tts/engines-line cfg))
+    (println (screen/status-line cfg))
     (when (pos? pruned)
       (println "dropped" pruned "days past :keep-days"))
     @system))
