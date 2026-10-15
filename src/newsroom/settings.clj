@@ -260,6 +260,8 @@
    {:key :api-key-env :type :string
     :doc "The name the key is under, in the environment or secrets.edn, when not the built-in's usual one."}
    {:key :api-key :type :string :doc "The key itself, or ${VAR} to read it from the environment or secrets.edn."}
+   {:key :user-agent :type :string
+    :doc "What the calls name themselves as (User-Agent), when not newsroom's own; some endpoints refuse one they don't know."}
    {:key :max-tokens :type :int :min 1 :default 32768
     :doc "The reply's budget; a thinking model spends part of it reasoning before it writes."}
    {:key :temperature :type :number :min 0 :default 0.4 :doc "How freely the model writes."}

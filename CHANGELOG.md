@@ -2,8 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- **A provider's User-Agent can be set.** `:user-agent` on a provider, or
+  the User-Agent field on the config page, is what its calls name
+  themselves as, for an endpoint that wants a client of its own named.
+
 ### Fixed
 
+- **Model calls name themselves.** A call sent no `User-Agent`, and some
+  providers' CDNs refuse a request that names nothing: Nous Portal answered
+  every call with a 403 challenge page. Every call, streamed or not, now
+  goes out as `newsroom (+https://github.com/yogthos/newsroom)` unless its
+  provider says otherwise, and the rest of newsroom's requests (feeds,
+  search, pages) name jolt's client, from http-client v0.1.5.
 - **A provider named with a space no longer breaks the settings.** Its
   name is kept as a keyword, and `GLM 5.3 Thinking` read back as `:GLM`,
   `5.3` and `Thinking`, which the jolt v0.14.0 is built with refuses as a
