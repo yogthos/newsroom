@@ -116,7 +116,7 @@
                         "left out, so the desk isn't paid to sort it. 0.3 leaves out about a fifth of the soft "
                         "reports and lost none of the news when it was tried; 0.4 about half, and one report "
                         "of news in forty. A report following a storyline is always kept. It runs on the CPU, "
-                        "about 40 ms a report, fetches 6 MB the first time, and on Linux needs OpenBLAS; on "
+                        "about 40 ms a report, its 6 MB model built into newsroom, and on Linux needs OpenBLAS; on "
                         "Windows it can't run. Blank turns it off.")}
              {:key :group-stories :type :boolean :default true
               :doc (str "Before the briefing, the model sorts the day's reports into stories, the reports on one "

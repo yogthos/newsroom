@@ -9,8 +9,9 @@
   reports it reads as entertainment, lifestyle, sport or shopping rather
   than serious news, so the desk isn't paid to sort them. Off by default;
   0.3 is a careful start. A report continuing a storyline is always kept.
-  It needs lev's kernels, which `jolt lev` builds, and a BLAS (OpenBLAS on
-  Linux); without them, as on Windows, every report goes to the desk.
+  The model is built into the binary, so nothing is downloaded. It needs
+  lev's kernels, which `jolt lev` builds, and a BLAS (OpenBLAS on Linux);
+  without them, as on Windows, every report goes to the desk.
 
 - **A restart picks up where the server left off.** What the desk and the
   podcast worker do is kept in the database as it goes, the run's log
