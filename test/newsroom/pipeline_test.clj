@@ -7,6 +7,7 @@
             [newsroom.embed :as embed]
             [newsroom.pipeline :as pipeline]
             [newsroom.plugin :as plugin]
+            [newsroom.screen :as screen]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.ui :as ui]))
@@ -259,6 +260,35 @@
     (is (= 1 (count (re-seq #"(?m)^\[\d+\] " again))) "only the report left out is asked about")
     (is (str/includes? again "Kospi plunges"))
     (is (kospi-first? prompts))))
+
+(defn- screened-run
+  "Run the busy day with :screen-threshold 0.3, the screening model
+  scoring the crash as news and the routine reports as soft, and
+  `available?` saying whether it can run; the sorting prompts sent."
+  [available?]
+  (with-redefs [screen/available? (constantly available?)
+                screen/serious #(if (str/includes? (:title %) "Kospi") 0.9 0.1)]
+    (let [prompts (atom [])
+          c (-> (ctx [{:type ::busy :name "Economic Times"}]
+                     (fn [_ req]
+                       (let [p (-> req :messages first :content)]
+                         (swap! prompts conj p)
+                         {:content (if (str/includes? p "You sort the reports")
+                                     (sorting-answer p (constantly 5))
+                                     "# Today\n\nMarkets [1].")
+                          :model "fake"})))
+                (update :config merge {:group-stories true :max-items 50 :screen-threshold 0.3}))]
+      (m/? (pipeline/run-task c "2026-09-30"))
+      (sorts @prompts))))
+
+(deftest the-screening-leaves-the-soft-news-out-of-the-sorting
+  (let [[sorting] (screened-run true)]
+    (is (= 1 (count (re-seq #"(?m)^\[\d+\] " sorting))) "only the news is sorted")
+    (is (str/includes? sorting "Kospi plunges"))
+    (is (some #(str/includes? (:text %) "Left out 39 reports the screening read as") (:events @pipeline/status))))
+  (testing "where the model can't run, every report is sorted"
+    (is (= 40 (count (re-seq #"(?m)^\[\d+\] " (first (screened-run false))))))
+    (is (some #(str/includes? (:text %) "can't run here") (:events @pipeline/status)))))
 
 (deftest the-editor-raises-a-story-the-batches-underrated
   (with-redefs [analysis/sorting-batch 15]

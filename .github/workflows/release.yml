@@ -136,6 +136,13 @@ jobs:
           NEWSROOM_TTS_GPU: ${{ runner.os == 'Linux' && 'vulkan' || '' }}
         run: jolt tts
 
+      # lev's kernels, built in its checkout, for the screening model; the
+      # binary links their archive. Windows has no BLAS for them, and goes
+      # without the screening
+      - name: Build lev's kernels
+        if: runner.os != 'Windows'
+        run: jolt lev
+
       - name: Test
         run: jolt -M:test
 

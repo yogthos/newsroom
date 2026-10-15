@@ -83,6 +83,11 @@
  ;; :roles can give the work its own model. nil :dossier-stories turns the
  ;; dossiers, the map and the gap searches off
  :group-stories true
+ ;; before the sorting, TinyDecide, a 6 MB model run on this machine,
+ ;; leaves out the reports it gives less than this chance of being serious
+ ;; news rather than entertainment, lifestyle, sport or shopping (see
+ ;; newsroom.screen). 0.3 is a careful start; nil turns it off
+ :screen-threshold nil
  :dossier-stories 20
  :read-articles 3
  :connect-stories true

@@ -109,6 +109,15 @@
                         "the same, takes the answer it got rather than paying for it again, and Analyse again "
                         "reads the news the day's last run read, kept as long, so only what changed is asked. "
                         "0 asks every time.")}
+             {:key :screen-threshold :type :number :nullable? true :min 0 :max 1 :default nil
+              :doc (str "Before the desk sorts the reports, a small model on this machine, TinyDecide, asks of "
+                        "each whether it's serious news about world affairs or the economy, or entertainment, "
+                        "lifestyle, sport or shopping, and one it gives less than this chance of the first is "
+                        "left out, so the desk isn't paid to sort it. 0.3 leaves out about a fifth of the soft "
+                        "reports and lost none of the news when it was tried; 0.4 about half, and one report "
+                        "of news in forty. A report following a storyline is always kept. It runs on the CPU, "
+                        "about 40 ms a report, fetches 6 MB the first time, and on Linux needs OpenBLAS; on "
+                        "Windows it can't run. Blank turns it off.")}
              {:key :group-stories :type :boolean :default true
               :doc (str "Before the briefing, the model sorts the day's reports into stories, the reports on one "
                         "event from different sides together, and gives each an importance, a status and the people, "
