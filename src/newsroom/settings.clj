@@ -513,6 +513,14 @@
 (defn- provider-alias [raw]
   (some-> (get raw "_alias") str/trim (str/replace #"^:" "") not-empty keyword))
 
+(defn- alias-error
+  "Why `alias` can't name a provider, or nil when it can. It's kept as a
+  keyword, so it has to read back as one: a name with a space in it, like
+  GLM 5.3 Thinking, would come back as several things."
+  [alias]
+  (when-not (re-matches #"[A-Za-z][A-Za-z0-9._-]*" (name alias))
+    "should be one word, of letters, digits, dots, dashes and underscores, like glm-thinking"))
+
 (defn provider-at
   "The provider entry the form `params` holds at `prefix`, providers.3 say,
   read and checked as a save reads it: {:alias :entry :errors}, :errors by
@@ -524,7 +532,9 @@
         entry (read-map (provider-fields) raw prefix errors)]
     {:alias alias
      :entry entry
-     :errors (cond-> @errors (nil? alias) (assoc (field-name prefix "_alias") "is needed"))}))
+     :errors (cond-> @errors
+               (nil? alias) (assoc (field-name prefix "_alias") "is needed")
+               (and alias (alias-error alias)) (assoc (field-name prefix "_alias") (alias-error alias)))}))
 
 (defn- read-providers
   "The providers, by alias; `index` gets the form index of each alias."
@@ -536,6 +546,7 @@
               (cond
                 (and (nil? alias) (empty? entry)) m
                 (nil? alias) (do (swap! errors assoc (field-name n "_alias") "is needed") m)
+                (alias-error alias) (do (swap! errors assoc (field-name n "_alias") (alias-error alias)) m)
                 (some #(= (providers/as-key alias) (providers/as-key %)) (keys m)) (do (swap! errors assoc (field-name n "_alias") "is given twice") m)
                 :else (do (swap! index assoc alias i)
                           (assoc m alias entry)))))

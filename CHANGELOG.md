@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A provider named with a space no longer breaks the settings.** Its
+  name is kept as a keyword, and `GLM 5.3 Thinking` read back as `:GLM`,
+  `5.3` and `Thinking`, which the jolt v0.14.0 is built with refuses as a
+  duplicate key, so the server stopped at startup. A provider's name now
+  has to be one word, like `glm-thinking`, and the config page says so.
+  A setting that wouldn't read back as it is isn't saved at all, and one
+  already stored that can't be read takes its default with a line on
+  stderr, rather than stopping the server; it stays stored until that
+  setting is saved again.
+
 ## v0.14.0 — 15 October 2026
 
 ### Added
