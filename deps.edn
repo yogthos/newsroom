@@ -11,8 +11,8 @@
         ;; sqlite through the system libsqlite3
         jolt-lang/db
         {:git/url "https://github.com/jolt-lang/db"
-         :git/tag "v0.4.1"
-         :git/sha "067f95e23ea8e1117052762e97d63436d2c6c259"}
+         :git/tag "v0.4.2"
+         :git/sha "1a25bcbc1489a39223b98949b175dceab18b2638"}
 
         ;; clojure.xml over libxml2, for RSS and Atom
         jolt-lang/xml
@@ -23,8 +23,8 @@
         ;; datastar wire protocol, SSE re-render on ratom change
         jolt-lang/glimmer-datastar
         {:git/url "https://github.com/jolt-lang/glimmer-datastar"
-         :git/tag "v0.1.6"
-         :git/sha "975c4018d93bafb6f7b7fa399768f657ddfe7f1a"}
+         :git/tag "v0.1.7"
+         :git/sha "2c8024eb6c05282ea9a062942b28af1cd3c9bd09"}
 
         ;; the ratoms behind the live page; from v0.1.4 swap! is atomic, which
         ;; the run status needs since sources report from several threads
