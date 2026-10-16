@@ -464,3 +464,22 @@
             (async/close! ch)
             (ds/stop! sched)
             (reset! pipeline/status before)))))))
+
+(defn- desk-of
+  "The desk's HTML on `page`."
+  [page]
+  (let [i (str/index-of page "id=\"desk\"")]
+    (subs page i (str/index-of page "</section>" i))))
+
+(deftest a-reader-who-cant-run-the-newsroom-sees-no-run-buttons
+  (with-store
+    (fn [st]
+      (let [today (pipeline/today)]
+        (is (str/includes? (desk-of (ui/page st today)) "<button") "a reader who may run it gets its buttons")
+        (binding [ui/*may-run?* false]
+          (let [page (ui/page st today)]
+            (is (str/includes? page "id=\"desk\"") "the desk still shows the runs")
+            (is (not (str/includes? (desk-of page) "<button")))
+            (is (not (str/includes? page "/run?day=")))
+            (is (not (str/includes? page "Use the button in the sidebar")))))
+        (is (str/includes? (desk-of (ui/page st today)) "<button") "and still does after")))))

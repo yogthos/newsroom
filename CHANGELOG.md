@@ -16,6 +16,11 @@
   goes out as `newsroom (+https://github.com/yogthos/newsroom)` unless its
   provider says otherwise, and the rest of newsroom's requests (feeds,
   search, pages) name jolt's client, from http-client v0.1.5.
+- **A reader who can't run a newsroom isn't offered to.** `newsroom.ui/*may-run?*`,
+  true unless an app built on newsroom binds it false for a reader who only
+  reads, hides the desk's Gather, Cancel and Run-again buttons and the
+  empty day's pointer to them; the desk still shows the runs. Those buttons
+  used to show for such a reader and do nothing, the server refusing them.
 - **A provider named with a space no longer breaks the settings.** Its
   name is kept as a keyword, and `GLM 5.3 Thinking` read back as `:GLM`,
   `5.3` and `Thinking`, which the jolt v0.14.0 is built with refuses as a
