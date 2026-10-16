@@ -9,7 +9,7 @@
 
   The pages are hiccup, rendered by jolt.datastar.html. The parts that change
   while the rest stays put, the desk, the podcast's line and the podcast's
-  place in the article, are components with ids, [desk uid today], so a
+  place in the article, are components with ids, [desk uid today may-run?], so a
   stream sends only them. A component's HTML is cached and shared by every
   reader's stream, keyed by its arguments, so it takes what it shows as
   arguments and reads nothing else but ratoms: not the store, *config* or
@@ -45,6 +45,12 @@
   "The reader a page is drawn for, {:name :email}, when newsroom has
   several, for the sidebar to say who is signed in; nil with one."
   nil)
+
+(def ^:dynamic *may-run?*
+  "Whether the reader a page is drawn for may run the newsroom it shows:
+  start, cancel and repeat its runs. One who only reads it, as an app
+  built on newsroom can let a reader do, sees its runs but no buttons."
+  true)
 
 (defn- current-config [] (or *config* @config))
 
@@ -181,7 +187,7 @@
   [[tag & body]]
   (into [tag [:span.spinner {:aria-hidden "true"}]] body))
 
-(defn- run-panel [{:keys [state day error items cited provider model sources events digest] :as st} today]
+(defn- run-panel [{:keys [state day error items cited provider model sources events digest] :as st} today may-run?]
   (let [busy? (contains? #{:starting :gathering :sorting :preparing :analysing :researching
                            :reviewing :revising :checking :finishing} state)]
     [:section#desk.run
@@ -217,8 +223,11 @@
         (for [[name s] (sort-by key sources)]
           [:li [:span name] (source-state s)])])
      (wire events)
-     (if busy?
+     (cond
+       (not may-run?) nil
+       busy?
        [:button {"data-on:click" "@post('/cancel')"} "Cancel run"]
+       :else
        (list
         ;; a run cut short by a restart before it was stored is offered
         ;; again rather than started again unasked
@@ -261,9 +270,10 @@
 
 (defn- desk
   "The run desk for the reader `uid`, a part of the sidebar: it changes
-  several times a second during a run, and is all a stream sends then."
-  [uid today]
-  (run-panel @(:status (pipeline/lane uid)) today))
+  several times a second during a run, and is all a stream sends then.
+  With `may-run?` false it shows the runs without the buttons."
+  [uid today may-run?]
+  (run-panel @(:status (pipeline/lane uid)) today may-run?))
 
 (defn- narration-line
   "The podcast's line under the desk, for the reader `uid`."
@@ -352,7 +362,7 @@
     [:input {:type "date" :value (:day current)
              "data-on:change" "evt.target.value && (window.location = '/day/' + evt.target.value)"}]]
    (stepper archive digests current)
-   [desk uid (pipeline/today)]
+   [desk uid (pipeline/today) *may-run?*]
    [narration-line uid]
    (feed-health health)
    (story-list stories current)
@@ -540,7 +550,10 @@
      [:p.dateline (sources/long-date day)]
      [:h1 "No briefing for this day"]
      (if (= day (pipeline/today))
-       [:p "Today’s news hasn’t been gathered yet. Use the button in the sidebar to gather and analyse it now."]
+       [:p "Today’s news hasn’t been gathered yet."
+        (if *may-run?*
+          " Use the button in the sidebar to gather and analyse it now."
+          " It is gathered and analysed on the newsroom’s schedule.")]
        [:p "Nothing was gathered on this day."])]))
 
 (defn- digest-article [st kind period]
