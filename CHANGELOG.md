@@ -2,8 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- **A provider's User-Agent can be set.** `:user-agent` on a provider, or
+  the User-Agent field on the config page, is what its calls name
+  themselves as, for an endpoint that wants a client of its own named.
+
 ### Fixed
 
+- **Model calls name themselves.** A call sent no `User-Agent`, and some
+  providers' CDNs refuse a request that names nothing: Nous Portal answered
+  every call with a 403 challenge page. Every call, streamed or not, now
+  goes out as `newsroom (+https://github.com/yogthos/newsroom)` unless its
+  provider says otherwise, and the rest of newsroom's requests (feeds,
+  search, pages) name jolt's client, from http-client v0.1.5.
 - **A reader who can't run a newsroom isn't offered to.** `newsroom.ui/*may-run?*`,
   true unless an app built on newsroom binds it false for a reader who only
   reads, hides the desk's Gather, Cancel and Run-again buttons and the

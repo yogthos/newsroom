@@ -54,7 +54,8 @@
 
 (defn- streaming-handler [requests]
   (fn [req]
-    (swap! requests conj (json/read-str (slurp (:body req)) :key-fn keyword))
+    (swap! requests conj (assoc (json/read-str (slurp (:body req)) :key-fn keyword)
+                                ::user-agent (get-in req [:headers "user-agent"])))
     (let [ch (async/chan 64)]
       (future
         (doseq [c chunks]
@@ -100,6 +101,7 @@
           (is (= "Hello" (:content reply)))
           (is (= "thinking" (:reasoning reply)))
           (is (true? (:stream (first @requests))))
+          (is (= client/user-agent (::user-agent (first @requests))) "a streamed call names itself too")
           (is (= 4 (count @seen))))))))
 
 (deftest a-cancelled-call-stops-and-is-not-retried

@@ -81,6 +81,24 @@
         (is (str/includes? (ex-message e) "Insufficient credits"))
         (is (= 1 (count @sent)) "out of credit isn't tried again")))))
 
+(deftest a-call-names-itself
+  (let [sent (atom [])]
+    (with-redefs [config/secret-for (keys-only {"OPENROUTER_API_KEY" "sk-or"})
+                  http/post (fn [url opts]
+                              (swap! sent conj opts)
+                              {:status 200 :body (json/write-str {:choices [{:message {:content "ok"} :finish_reason "stop"}]})})]
+      (let [call (fn [cfg] (client/chat (providers/resolve-provider cfg :openrouter)
+                                        {:messages [{:role "user" :content "hi"}]})
+                   (get-in (last @sent) [:headers "User-Agent"]))]
+        (is (= client/user-agent (call {})) "as newsroom, when its provider doesn't say")
+        (is (= "acme/1.0" (call {:providers {:openrouter {:user-agent " acme/1.0 "}}})) "or as its provider says")
+        (is (= "acme/2.0" (call {:providers {:openrouter {:user-agent "acme/2.0" :headers {"user-agent" "x"}}}}))
+            ":user-agent wins over a header of any case")
+        (is (= "hdr/1" (call {:providers {:openrouter {:headers {"user-agent" "hdr/1"}}}}))
+            "and a User-Agent header is kept")
+        (is (= 1 (count (filter #(= "user-agent" (str/lower-case %)) (keys (:headers (last @sent)))))))))
+    (is (some #{:user-agent} (map :key (settings/provider-fields))) "the config page has the field")))
+
 (deftest a-plugin-adds-a-provider-the-way-the-built-ins-are
   (try
     (plugin/defprovider :acme {:label "Acme" :base-url "https://llm.acme.test/v1" :key-env "ACME_KEY"
