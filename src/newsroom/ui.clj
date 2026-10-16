@@ -30,7 +30,8 @@
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.trends :as trends]
-            [newsroom.tts :as tts]))
+            [newsroom.tts :as tts]
+            [newsroom.world :as world]))
 
 (defonce ^{:doc "The settings the pages are drawn with, which core keeps to the ones
   it runs with: what a page offers, like recording a podcast, follows them."}
@@ -343,7 +344,9 @@
     [:p.tagline "Daily briefing & analysis"]
     (reader-line uid)]
    [:p.config-link [:a {:href "/config" :class (when (:config current) "current")} "Config"]
-    " · " [:a {:href "/record" :class (when (:record current) "current")} "Track record"]]
+    " · " [:a {:href "/record" :class (when (:record current) "current")} "Track record"]
+    (when (:world-model (current-config))
+      (list " · " [:a {:href "/world" :class (when (:world current) "current")} "World outlook"]))]
    [:form.search-box {:action "/search" :method "get" :role "search"}
     [:input {:type "search" :name "q" :value (get-in current [:search :q])
              :placeholder "Search the briefings" :aria-label "Search the briefings"}]]
@@ -451,6 +454,112 @@
         (when (seq judged)
           (list [:h2 "Judged"]
                 [:ol.judged (map projection-item (take judged-shown judged))]))))]))
+
+;; --- the world model ----------------------------------------------------------------
+
+(defn world-href [node] (str "/world?node=" (java.net.URLEncoder/encode (str node) "UTF-8")))
+
+(defn- pct [p] (when p (str (Math/round (* 100.0 (double p))) "%")))
+
+(defn- against [x base]
+  (when (and x base (pos? base)) (format "%.1f×" (/ (double x) base))))
+
+(defn- outlook-table [rows linked?]
+  [:table.standings.outlook
+   [:thead [:tr [:th "Place"] [:th "Channel"]
+            [:th {:title "The model's chance of at least 1.5× the quarter before, calibrated by its record"}
+             "Chance"]
+            [:th {:title "The chance the base rate of such places gives"} "Base rate"]
+            [:th {:title "The quarter's expected level against the quarter before"} "Expected"]
+            [:th {:title "Eight times in ten it falls in this range"} "80% range"]]]
+   [:tbody
+    (for [{:keys [node channel p-cal p-escalate p-clim expected low high recent] :as r} rows
+          :let [base (or (:last r) recent)]]
+      [:tr
+       [:td (if linked? [:a {:href (world-href node)} (world/label node)] (world/label node))]
+       [:td (world/channel-name channel)] [:td (pct (or p-cal p-escalate))] [:td (pct p-clim)]
+       [:td (against expected base)] [:td (against low base) "–" (against high base)]])]])
+
+(def ^:private world-risks-shown
+  "How many of each group's likeliest escalations the world outlook lists."
+  10)
+
+(defn- latest-outlook [st]
+  (when-let [{:keys [made]} (store/latest-world-forecast st "9999-12-31")]
+    [made (store/world-forecast st made)]))
+
+(def ^:private kind-names
+  {:dyad "Between countries" :pair "Between a country's actors" :actor "A country's actors"
+   :province "Provinces" :country "Countries" :subregion "Subregions" :region "Regions"})
+
+(defn- world-record [st]
+  (let [record (world/record st)
+        rows (for [[[kind channel] r] record
+                   :when (and (kind-names kind) (some #{channel} world/escalation-channels))]
+               [kind channel r])]
+    (when (seq rows)
+      (list [:h2 "How its outlooks have held"]
+            [:p.muted "On the eve of each quarter its outlook is kept, and once the quarter is over, scored "
+             "against what happened, beside the base rate of escalation for such places and each place's own "
+             "history. The outcomes recalibrate its probabilities. A Brier score is lower the better; skill is "
+             "how much lower the model's is than the base rate's. Its likeliest escalations are also judged as "
+             "projections on the " [:a {:href "/record"} "track record"] ", like an outlet's."]
+            [:table.standings
+             [:thead [:tr [:th "Places"] [:th "Channel"] [:th "Forecasts"] [:th "Escalated"]
+                      [:th "Brier"] [:th "Base rate's"] [:th "History's"] [:th "Skill"]]]
+             [:tbody (for [[kind channel {:keys [n positives brier-cal brier-clim brier-hist] :as r}] rows]
+                       [:tr [:td (kind-names kind)] [:td (world/channel-name channel)] [:td n] [:td positives]
+                        [:td (some->> brier-cal (format "%.3f"))] [:td (some->> brier-clim (format "%.3f"))]
+                        [:td (some->> brier-hist (format "%.3f"))] [:td (pct (world/skill r))]])]]))))
+
+(defn- world-article [st node]
+  (let [[made rows] (latest-outlook st)
+        mine (when node (filterv #(= node (:node %)) rows))]
+    [:article.briefing.world-outlook
+     [:p.dateline (if node [:a {:href "/world"} "World outlook"] "World outlook")]
+     [:h1 (if node (world/label node) "What the world model expects")]
+     [:p.standfirst "A statistical model of the world's events, learned from decades of coded events and from "
+      "the events coded from each day's reports since, gives its view of the next " world/horizon " weeks: how "
+      "likely the violence, coercion, protest and verbal conflict between countries, within them, in each "
+      "country and in each region is to rise well above the quarter before. It counts who did what to whom and "
+      "how places drive each other; it knows nothing of the reasons."]
+     (cond
+       (nil? made)
+       [:p.muted "There is no outlook yet. The model gives one once it has learned a whole week of coded "
+        "events, after a briefing is filed with the world model on."]
+
+       node
+       (list
+        (if (empty? mine)
+          [:p.muted "The outlook of " (sources/long-date made) " has nothing on " (world/label node)
+           ", which is quiet or not in the model."]
+          (list [:p.muted "As of " (sources/long-date made) "."]
+                (outlook-table (sort-by #(- (or (:p-cal %) 0.0)) mine) false)))
+        (let [channels (or (seq (distinct (map :channel (sort-by #(- (or (:p-cal %) 0.0)) mine))))
+                           world/escalation-channels)
+              drivers (for [c channels
+                            :let [ds (filter #(<= 0.02 (:share %)) (world/drivers st node c 6))]
+                            :when (seq ds)]
+                        [c ds])]
+          (when (seq drivers)
+            (list [:h2 "What drives it"]
+                  [:p.muted "The strongest influences the model has learned on each channel, by the share of "
+                   "its usual activity each accounts for, at the fast and the slow time scale."]
+                  (for [[c ds] drivers]
+                    (list [:h3 (str/capitalize (world/channel-name c))]
+                          [:ul.drivers (for [{:keys [source] :as d} ds]
+                                         [:li (if (= source node)
+                                                (world/driver-line d)
+                                                [:a {:href (world-href source)} (world/driver-line d)])])]))))))
+
+       :else
+       (list
+        [:p.muted "As of " (sources/long-date made) ". Pick a place to see what drives it."]
+        (for [{:keys [title kinds]} world/groups
+              :let [top (world/risks rows kinds world-risks-shown)]
+              :when (seq top)]
+          (list [:h2 title] (outlook-table top true)))
+        (world-record st)))]))
 
 ;; --- the day -----------------------------------------------------------------------
 
@@ -718,7 +827,9 @@
   "The content of one live part of a page, by the selector its stream
   patches: \"#sidebar\" or \"#article\". `current` is the page's {:day},
   {:kind :period} for a digest's, {:story} for a storyline's, {:stories
-  true} for the list of them, {:record true} for the track record, or
+  true} for the list of them, {:record true} for the track record,
+  {:world true} for the world model's outlook, {:world node} for one
+  place's, or
   {:search {:q :kind :sort :page}} for a search's results.
 
   The two stream apart because each re-renders only when a ratom it read
@@ -738,6 +849,7 @@
       (:story current) (story-article st (:story current))
       (:stories current) (stories-article st)
       (:record current) (record-article st)
+      (:world current) (world-article st (when (string? (:world current)) (:world current)))
       (:search current) (search-article st (:search current))
       :else (digest-article st (:kind current) (:period current)))))
 
@@ -786,6 +898,7 @@
                                      "Storyline")
                 (:stories current) "Storylines"
                 (:record current) "Track record"
+                (:world current) (if (string? (:world current)) (world/label (:world current)) "World outlook")
                 (:search current) (if (str/blank? (get-in current [:search :q]))
                                     "Search"
                                     (str "“" (get-in current [:search :q]) "” · Search"))

@@ -48,7 +48,8 @@
   of an article read in full and the embedding of an item are shared the
   same way. With one reader there is no one to share with, and every run
   reads afresh unless config.edn says otherwise."
-  (:require [clojure.java.io :as io]
+  (:require [bnm.extract :as extract]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
             [ebb.core :as m]
@@ -74,7 +75,8 @@
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.trends :as trends]
-            [newsroom.tts :as tts]))
+            [newsroom.tts :as tts]
+            [newsroom.world :as world]))
 
 (defonce ^{:doc "The current or last run, for the page to show."}
   status (ratom/atom {:state :idle}))
@@ -1378,6 +1380,73 @@
   (let [{:keys [stored]} (lane-of ctx)]
     (narration/enqueue! (assoc (select-keys ctx [:config :store :chat]) :on-saved #(swap! stored inc)) day)))
 
+;; --- the world model's outlook --------------------------------------------------------
+
+(def ^:private world-projections
+  "The most of the world model's likeliest escalations recorded as its
+  projections, of those it gives at least even odds."
+  5)
+
+(defn- outlook-task
+  "Task: the world model's outlook for the next quarter, made on `day` and
+  kept, once the model has learned a week since its last; on a quarter's
+  eve it is registered with the model, to be scored once the quarter is
+  over (see newsroom.world). The latest outlook's likeliest escalations
+  are recorded as the model's projections for the reader, once, when the
+  retrospective is on."
+  [{:keys [config store run-id]} day]
+  (m/sp
+    (let [bin (m/? (m/via m/blk (world/learned-bin store)))
+          last-made (store/latest-world-forecast store day)]
+      (cond
+        (nil? bin)
+        (log! run-id {:text "The world model hasn't learned a whole week yet, so it has no outlook to give"})
+
+        (and (:bin last-made) (>= (:bin last-made) bin))
+        (log! run-id {:text (str "The world model has learned no week since its outlook of "
+                                 (sources/long-date (:made last-made)) ", which stands")})
+
+        :else
+        (let [sims (:world-sims config 200)
+              _ (log! run-id {:text (str "Simulating the world model's outlook for the next " world/horizon
+                                         " weeks, " sims " times")})
+              rows (m/? (m/via m/blk (world/outlook! store sims)))]
+          (when (seq rows)
+            (store/save-world-forecast! store day rows)
+            (log! run-id {:text "The world model's outlook is kept" :level :ok}))))
+      (when-let [{:keys [made]} (and (:retrospective config) (store/latest-world-forecast store day))]
+        (when-not (store/has-projections? store "world" made)
+          (let [ps (world/projections (store/world-forecast store made) made world-projections trends/plus-days)]
+            (store/save-projections! store "world" made ps)
+            (when (seq ps)
+              (log! run-id {:text (str "Recorded the world model's " (counted (count ps) "likeliest escalation"
+                                                                            "likeliest escalations")
+                                       " as its projections")
+                            :level :ok}))))))))
+
+(def ^:private outlook-places
+  "The most places in the day's stories the analyst is told the drivers of."
+  6)
+
+(defn- outlook-block
+  "What the analyst writing for `day` is told of the world model's latest
+  outlook and its record, and of what drives the places among `mentions`,
+  the day's {:story :name :kind}; nil when the model is off or has no
+  outlook."
+  [{:keys [config store]} day mentions]
+  (when (:world-model config)
+    (when-let [{:keys [made]} (store/latest-world-forecast store day)]
+      (let [rows (store/world-forecast store made)
+            by-node (group-by :node rows)
+            places (for [node (world/story-places mentions)
+                         :let [channel (or (:channel (first (world/risks (get by-node node) (constantly true) 1)))
+                                           :violence)
+                               ds (filter #(<= 0.05 (:share %)) (world/drivers store node channel 3))]
+                         :when (seq ds)]
+                     [[node channel] ds])]
+        (world/outlook-block made rows (world/record store) (take outlook-places places)
+                             sources/long-date)))))
+
 ;; --- what a stored day or digest still needs ------------------------------------
 ;; A day is stored before the steps that follow from it: its mentions and
 ;; trends, the notes, the projections, the podcast; a digest before its
@@ -1392,6 +1461,67 @@
   [sources]
   (mapv #(dissoc % :vector) sources))
 
+;; --- the world model ---------------------------------------------------------------
+;; Once a day is filed its sources are coded into events, which the world
+;; model learns from (see newsroom.world).
+
+(defn- coder-llm
+  "The model that codes the events: the :coder role's when the config
+  gives it one, else the desk's."
+  [config]
+  (if (get-in config [:roles :coder]) (providers/role-llm config :coder) (desk-llm config)))
+
+(def ^:private coding-wave
+  "How many coding calls go at once."
+  6)
+
+(defn- code-events
+  "Task: the events in `day`'s `sources` that no run has coded yet coded,
+  stored with their articles, and learned from by the world model, which
+  is loaded from :world-seed first when there is none. An article coded
+  already, by any reader's run, isn't coded again. A call that fails costs
+  only its batch, whose articles a later run may code."
+  [{:keys [config store run-id] :as ctx} day sources]
+  (m/sp
+    (let [report #(log! run-id {:text %})
+          _ (m/? (softly run-id "Loading the world model's snapshot"
+                         (m/via m/blk (world/seed! store (:world-seed config) report))))
+          llm-config (coder-llm config)
+          done (store/coded-urls store (keep :url sources))
+          fresh (remove #(contains? done (:url %)) sources)
+          texts (into {} (keep (fn [{:keys [url]}]
+                                 (when-let [t (store/shared-article store url (* article-days 24 60 minute-ms))]
+                                   [url t])))
+                      fresh)
+          batches (vec (partition-all world/batch (world/articles fresh texts day)))]
+      (if (empty? batches)
+        (log! run-id {:text "Every report of the day was coded for the world model already"})
+        (let [_ (log! run-id {:text (str "Asking " (name (:alias llm-config)) " (" (:model llm-config)
+                                         ") to code " (counted (reduce + (map count batches)) "report" "reports")
+                                         " for the world model, in " (counted (count batches) "call" "calls")
+                                         (when (seq done) (str "; " (count done) " were coded already")))})
+              answers (loop [waves (partition-all coding-wave batches) out []]
+                        (if-let [wave (first waves)]
+                          (recur (rest waves)
+                                 (into out (m/? (apply m/join vector
+                                                       (map #(softly run-id "A call coding events"
+                                                                     (ask ctx llm-config (extract/prompt %)))
+                                                            wave)))))
+                          out))
+              answered (keep (fn [[b a]] (when a b)) (map vector batches answers))
+              ;; another reader's run may have coded some of them meanwhile
+              taken (store/coded-urls store (map :url (apply concat answered)))
+              urls (vec (remove taken (map :url (apply concat answered))))
+              events (vec (for [[b a] (map vector batches answers) :when a
+                                e (world/coded a b day) :when (not (contains? taken (:url e)))]
+                            e))]
+          (store/save-world-events! store day (world/coder llm-config) urls events)
+          (when (seq events)
+            (m/? (m/via m/blk (world/learn! store events))))
+          (log! run-id {:text (str "Coded " (counted (count events) "event" "events") " for the world model from "
+                                   (counted (count answered) "call" "calls") " of " (count batches))
+                        :level (if (seq answered) :ok :error)}))))))
+
 (defn- followup-step
   "Task: one step still to do for the day or digest `ref`."
   [{:keys [store] :as ctx} ref [step args]]
@@ -1404,6 +1534,8 @@
                    (record-projections ctx origin ref what made-on markdown sources outlets))
     :retrospective (let [{:keys [kind period to markdown]} args]
                      (retrospective-task ctx kind period to markdown))
+    :world (code-events ctx ref (:sources args))
+    :outlook (outlook-task ctx ref)
     :podcast (m/sp (narrate! ctx ref))))
 
 (defn- followups-task
@@ -1553,6 +1685,9 @@
             stories (analysis/stories ranked)
             day-stories (entities/day-stories day whole-day ranked)
             web (web-block store config day day-stories (:day earlier))
+            outlook (outlook-block ctx day (entities/mentions day day-stories #{}))
+            _ (when outlook
+                (log! run-id {:text "Giving the model the world model's outlook"}))
             desk (when (seq stories)
                    (m/? (softly run-id "The desk's work" (desk-task ctx day stories kept ranked))))
             {:keys [dossiers found] the-map :map} desk
@@ -1599,7 +1734,7 @@
                                                 seq
                                                 (str/join "\n\n"))
                                        {:analysis analysed :graph? (some? graph) :record (:block record)
-                                        :web web})
+                                        :web web :outlook outlook})
             _ (update-status! run-id assoc :state :analysing :items (count numbered)
                               :provider (name (:alias llm-config)) :model (:model llm-config))
             {:keys [answer reply]} (m/? (critique-task ctx day numbered analysed llm-config prompt
@@ -1625,8 +1760,14 @@
                       (conj [:projections {:origin "day" :what (str "the briefing for " (sources/long-date day))
                                            :made-on day :markdown written :sources (bare numbered)
                                            :outlets (retrospective/outlet-projections (:stories desk) dossiers day)}])
+                      ;; the events are coded for the world model once the day is filed
+                      (:world-model config)
+                      (conj [:world {:sources (mapv #(select-keys % [:n :title :url :summary :published :precedent :kind])
+                                                    numbered)}])
                       ;; the podcast takes minutes, so it is recorded once the run is over
-                      podcast? (conj [:podcast nil]))]
+                      podcast? (conj [:podcast nil])
+                      ;; and the outlook too, which it doesn't wait for
+                      (:world-model config) (conj [:outlook nil]))]
           (store/save-day! store {:day day
                                   :sources numbered
                                   :cited cited
@@ -1821,7 +1962,8 @@
                     (trends/trends-block threads sources/long-date)
                     built-on
                     (:block record)
-                    (period-web store kind from to))
+                    (period-web store kind from to)
+                    (outlook-block ctx to nil))
             llm-config (providers/role-llm config :analyst)
             _ (update-status! run-id assoc :state :analysing :items (count lines)
                               :provider (name (:alias llm-config)) :model (:model llm-config))

@@ -404,11 +404,11 @@
   {{stories}}, {{previous}}, about the last digest, {{briefings}}, the
   briefings the period's digest is built on, {{trends}}, the trends the
   desk followed through the period, {{web}}, its entities against the
-  period before, and {{record}}, how earlier projections turned out,
-  filled in. A template with no place for the
-  stories gets them after it, so the model always sees what it may cite,
-  and one with no place for `previous`, `briefings`, `trends` or `record`
-  gets them just before them."
+  period before, {{record}}, how earlier projections turned out, and
+  {{outlook}}, the world model's, filled in. A template with no place for
+  the stories gets them after it, so the model always sees what it may
+  cite, and one with no place for `previous`, `briefings`, `trends`,
+  `record` or `outlook` gets them just before them."
   ([template period days stories previous] (render-digest-prompt template period days stories previous nil nil))
   ([template period days stories previous trends] (render-digest-prompt template period days stories previous trends nil))
   ([template period days stories previous trends briefings]
@@ -416,16 +416,19 @@
   ([template period days stories previous trends briefings record]
    (render-digest-prompt template period days stories previous trends briefings record nil))
   ([template period days stories previous trends briefings record web]
+   (render-digest-prompt template period days stories previous trends briefings record web nil))
+  ([template period days stories previous trends briefings record web outlook]
    (template/fill (news/place-vars template (cond-> []
                                               previous (conj "previous")
                                               briefings (conj "briefings")
                                               trends (conj "trends")
                                               web (conj "web")
                                               record (conj "record")
+                                              outlook (conj "outlook")
                                               true (conj "stories"))
                                    "stories")
                   {:period period :days days :stories stories :previous previous :trends trends
-                   :briefings briefings :record record :web web})))
+                   :briefings briefings :record record :web web :outlook outlook})))
 
 ;; --- the desk's trends -------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-{:jolt/min-version "0.8.16"
+{:jolt/min-version "0.8.17"
 
  :paths ["src" "resources"]
 
@@ -70,7 +70,17 @@
 
         org.clojure/data.json
         {:git/url "https://github.com/clojure/data.json"
-         :git/sha "94463ffb54482427fd9b31f264b06bff6dcfd557"}}
+         :git/sha "94463ffb54482427fd9b31f264b06bff6dcfd557"}
+
+        ;; the world model: the day's events coded from the articles, learned
+        ;; as a hierarchy of self-exciting processes, and its outlook. It
+        ;; reads its resources/bnm/countries.edn, which a built binary embeds
+        ;; from jolt v0.8.17 (jolt-lang/jolt#1232).
+        ;; TODO pin to the v0.1.0 tag once bnm cuts it; until then the
+        ;; live-scoring commit (yogthos/bayesian-news-model#1)
+        yogthos/bayesian-news-model
+        {:git/url "https://github.com/yogthos/bayesian-news-model"
+         :git/sha "5d8e14b1e851918393f9d46bff3890d7057c844c"}}
 
  :jolt/build {:embed ["resources"]}
 

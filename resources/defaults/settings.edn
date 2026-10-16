@@ -119,6 +119,25 @@
  ;; turns it off
  :retrospective true
 
+ ;; once a briefing is filed, its reports are coded into events, who did
+ ;; what to whom and where, and the world model (bayesian-news-model)
+ ;; learns from them how cooperation, protest, coercion and violence
+ ;; between countries, within them, in each and in each region drive each
+ ;; other. Every reader's runs feed the one model, and a report is coded
+ ;; once. A :coder role in :roles can give the job its own model, else the
+ ;; desk's does it; a model call for every ten reports. It starts from
+ ;; :world-seed, bnm's pretrained snapshot as a URL or a path, loaded into
+ ;; the database the first time; nil starts it empty. Once a week it has
+ ;; learned, its outlook for the next quarter is simulated :world-sims
+ ;; times, which the briefings and digests are told and /world shows. Each
+ ;; quarter's outlook is scored once the quarter is over, which
+ ;; recalibrates it, and its likeliest escalations are recorded as its
+ ;; projections, for the retrospective to judge like an outlet's
+ :world-model false
+ ;; TODO: bnm's release asset, once it is published
+ :world-seed nil
+ :world-sims 200
+
  ;; the model writes a podcast of a briefing, two hosts talking it through
  ;; in :podcast-segments segments, and the speech engine records it, for
  ;; the day's page to play. :podcast-auto records it as soon as each
@@ -232,7 +251,9 @@
  ;; story notes unless a :notes role is given, and does the desk's work
  ;; unless a :desk role is given, checks the briefing unless a :critic
  ;; role is given, keeps the track record unless a :retrospective role
- ;; is given, and writes the podcast unless a :podcast role is given;
+ ;; is given, and writes the podcast unless a :podcast role is given; the
+ ;; desk's model codes the events for the world model unless a :coder
+ ;; role is given;
  ;; with no :roles, the first
  ;; built-in whose key is in the environment serves, else a local endpoint
  :roles {:analyst :deepseek}}

@@ -34,7 +34,8 @@
             [newsroom.store-test]
             [newsroom.trends-test]
             [newsroom.tts-test]
-            [newsroom.ui-test]))
+            [newsroom.ui-test]
+            [newsroom.world-test]))
 
 (def namespaces
   '[newsroom.news-spec
@@ -67,7 +68,8 @@
     newsroom.settings-test
     newsroom.sources-test
     newsroom.ui-test
-    newsroom.readers-test])
+    newsroom.readers-test
+    newsroom.world-test])
 
 (defn -main [& _]
   (let [{:keys [fail error]} (apply t/run-tests namespaces)]

@@ -464,3 +464,35 @@
             (async/close! ch)
             (ds/stop! sched)
             (reset! pipeline/status before)))))))
+
+(deftest the-world-outlook-lists-the-likeliest-escalations-at-every-level
+  (let [st (store/open "sqlite::memory:")
+        row {:node "SDN" :channel :violence :kind :country :level :country :bin 1 :horizon 13 :recent 10.0
+             :last 10.0 :expected 15.0 :low 8.0 :high 24.0 :p-escalate 0.6 :p-cal 0.55 :p-clim 0.1}]
+    (try
+      (is (str/includes? (ui/page st {:world true}) "There is no outlook yet"))
+      (store/save-world-forecast! st "2026-10-15" [row
+                                                   (assoc row :node "FRA" :channel :protest :p-cal 0.2)
+                                                   (assoc row :node "RUS|UKR" :kind :dyad :level :leaf)
+                                                   (assoc row :node "UKR:OPP" :kind :actor :level :local)
+                                                   (assoc row :node "s/eastern-africa" :kind :subregion
+                                                          :level :subregion)])
+      (let [page (ui/page st {:world true})]
+        (is (str/includes? page "World outlook · The Newsroom"))
+        (is (str/includes? page "<a href=\"/world?node=SDN\">Sudan</a>"))
+        (is (str/includes? page "<a href=\"/world?node=RUS%7CUKR\">Russia – Ukraine</a>"))
+        (doseq [h ["Between countries" "Within countries" "Countries" "Regions"]]
+          (is (str/includes? page (str "<h2>" h "</h2>"))))
+        (is (str/includes? page "55%"))
+        (is (str/includes? page "0.8×–2.4×"))
+        (is (< (str/index-of page "Sudan") (str/index-of page "France")) "the likeliest first"))
+      (let [page (ui/page st {:world "SDN"})]
+        (is (str/includes? page "Sudan · The Newsroom"))
+        (is (str/includes? page "55%")))
+      (is (str/includes? (ui/page st {:world "RUS|UKR"}) "Russia – Ukraine · The Newsroom"))
+      (is (str/includes? (ui/page st {:world "NOR"}) "has nothing on Norway"))
+      (testing "the sidebar links to it while the world model is on"
+        (is (not (str/includes? (ui/page st {:world true}) "href=\"/world\"")))
+        (binding [ui/*config* {:world-model true}]
+          (is (str/includes? (ui/page st {:world true}) "href=\"/world\""))))
+      (finally (store/close st)))))
