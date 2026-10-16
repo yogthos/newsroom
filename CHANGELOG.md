@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- **The world model.** With `:world-model` on, once a briefing is filed
+  its reports are coded into events, who did what to whom and where, and
+  [bayesian-news-model](https://github.com/yogthos/bayesian-news-model)
+  learns from them how cooperation, protest, coercion and violence between
+  countries, within them, in each and in each region drive each other. It
+  starts from a snapshot trained on decades of event data (`:world-seed`).
+  One model serves every reader, kept in the database. A report is coded
+  once, whichever run reads it first, and a `:coder` role can give the
+  coding a model of its own. Off by default.
+- **Its outlook in the briefings.** Once a week the model has learned, it
+  simulates the next quarter (`:world-sims` times). The briefings and
+  digests are told its likeliest escalations at every level, how its
+  outlooks have held and what drives the places in the day's stories
+  (`{{outlook}}`). `/world` shows them, with a page for each place.
+- **Its outlook scored.** Each quarter's outlook is scored once the quarter
+  is over, against the base rates, which recalibrates the model. Its
+  likeliest escalations are recorded as its projections, judged by the
+  retrospective like an outlet's.
+
 ### Fixed
 
 - **A provider named with a space no longer breaks the settings.** Its

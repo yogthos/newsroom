@@ -160,6 +160,7 @@ main { padding: 48px clamp(20px, 6vw, 80px) 80px; }
 .standings th:first-child, .standings td:first-child { text-align: left; }
 .standings th { font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
 .standings tr.own td { font-weight: 700; color: var(--accent); }
+.drivers { font: 14px/1.5 var(--sans); padding-left: 1.2rem; }
 .track-record h3 { text-transform: capitalize; }
 .lessons { list-style: none; padding: 0; }
 .lessons li { border-top: 1px solid var(--rule); padding: .5rem 0; }

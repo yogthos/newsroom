@@ -1,5 +1,7 @@
 (ns newsroom.store-test
-  (:require [clojure.java.io :as io]
+  (:require [bnm.core :as bnm]
+            [bnm.store :as bnm-store]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [jdbc.core :as jdbc]
@@ -591,3 +593,76 @@
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"providers"
                           (store/save-settings! db {:run-at "07:00" :providers {(keyword "GLM 5.3 Thinking") {:type :glm}}})))
     (is (= {:run-at "06:00"} (store/settings db)) "nothing was saved")))
+
+(def ^:private coded
+  [{:date "20261012" :a1 "ISR" :s1 "MIL" :a2 "LBN" :type :assault :mode :did :n 1 :url "https://e.com/2"
+    :quote "struck"}
+   {:date "20261013" :a1 "UKR" :adm "UKR.12" :type :protest :mode :did :n 1 :url "https://e.com/2"}
+   {:date "20261014" :a1 "RUS" :a2 "UKR" :type :consult :mode :intend :n 1 :url "https://e.com/5"
+    :quote "will meet"}])
+
+(deftest the-world-model-is-kept-behind-bnms-store
+  (let [db (fresh)
+        ms (store/world-model-store db)]
+    (try
+      (is (store/world-model-empty? db))
+      (is (nil? (bnm/load ms)) "none before one is saved")
+      (let [m (-> (bnm/create)
+                  (bnm/add-events "newsroom" (map #(assoc % :date "20260921") coded))
+                  (bnm/add-events "newsroom" coded))
+            m (bnm/save! ms m)
+            back (bnm/load ms)]
+        (is (not (store/world-model-empty? db)))
+        (is (= (:bin m) (:bin back)))
+        (is (= (:pending m) (:pending back)) "the events of the week still open")
+        (is (= (count (:nodes m)) (count (:nodes back))))
+        (is (= (count (:nodes m)) (count (bnm-store/node-ids ms))))
+        (is (seq (bnm/drivers ms "world" :violence)) "one node read without the model")
+        (testing "a save between closed weeks writes only the buffered events"
+          (let [m (bnm/save! ms (bnm/add-events m "newsroom" [(assoc (first coded) :date "20261015")]))]
+            (is (= (:pending m) (:pending (bnm/load ms)))))))
+      (finally (store/close db)))))
+
+(deftest an-article-is-coded-once-for-every-reader
+  (let [db (fresh)]
+    (try
+      (is (empty? (store/coded-urls db ["https://e.com/2"])))
+      (store/save-world-events! db "2026-10-14" "m/plover-2" ["https://e.com/2" "https://e.com/5" "https://e.com/9"]
+                                coded)
+      (is (= #{"https://e.com/2" "https://e.com/5" "https://e.com/9"}
+             (store/coded-urls (store/for-user db (store/ensure-user! db {:issuer "i" :subject "t"}))
+                               ["https://e.com/2" "https://e.com/5" "https://e.com/9" "https://e.com/1"]))
+          "coded for every reader, one with no events too")
+      (let [es (store/world-events db "2026-10-14" "2026-10-14")]
+        (is (= [["https://e.com/2" 0] ["https://e.com/2" 1] ["https://e.com/5" 0]] (map (juxt :url :seq) es)))
+        (is (= {:url "https://e.com/2" :seq 0 :day "2026-10-14" :date "20261012" :a1 "ISR" :s1 "MIL" :a2 "LBN"
+                :type :assault :mode :did :quote "struck" :coder "m/plover-2"}
+               (first es)))
+        (is (= "UKR.12" (:adm (second es)))))
+      (store/save-world-events! db "2026-10-14" "m/plover-2" ["https://e.com/2"] (take 1 coded))
+      (is (= 2 (count (store/world-events db "2026-10-01" "2026-10-31"))) "an article saved again is replaced")
+      (finally (store/close db)))))
+
+(deftest the-world-models-outlooks-are-kept
+  (let [db (fresh)
+        row {:node "SDN" :channel :violence :kind :country :level :country :bin 100 :horizon 13 :stratum :active
+             :recent 10 :last 12.0 :expected 14.5 :low 8.0 :high 22.0 :p-escalate 0.42 :p-cal 0.38 :p-clim 0.1
+             :p-hist 0.2}
+        outlook [row (assoc row :node "world" :channel :protest :kind :world :level :world)]]
+    (try
+      (is (nil? (store/latest-world-forecast db "2026-10-15")))
+      (store/save-world-forecast! db "2026-10-15" outlook)
+      (store/save-world-forecast! db "2026-10-15" outlook)
+      (store/save-world-forecast! db "2026-10-22" [(assoc row :bin 101)])
+      (is (= [(assoc row :made "2026-10-15" :recent 10.0)]
+             (filterv #(= "SDN" (:node %)) (store/world-forecast db "2026-10-15")))
+          "saved again, in place of the day's")
+      (is (= 2 (count (store/world-forecast db "2026-10-15"))))
+      (is (= {:made "2026-10-15" :bin 100} (store/latest-world-forecast db "2026-10-20")) "made by the day")
+      (is (= {:made "2026-10-22" :bin 101} (store/latest-world-forecast db "2026-10-22")))
+      (is (not (store/has-projections? db "world" "2026-10-15")))
+      (store/save-projections! db "world" "2026-10-15" [{:made-on "2026-10-15" :claim "c" :subject "conflict"
+                                                        :due "2027-01-14" :source "World model"
+                                                        :outlet "World model"}])
+      (is (store/has-projections? db "world" "2026-10-15"))
+      (finally (store/close db)))))

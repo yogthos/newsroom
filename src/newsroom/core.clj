@@ -14,6 +14,11 @@
     GET  /story/DAY/N       a storyline's notes and coverage
     GET  /record            how the projections held, and the sources'
                             standings within each subject
+    GET  /world             the world model's outlook: the likeliest
+                            escalations between countries, within them,
+                            of each and of the regions, and how its
+                            outlooks have held; ?node= one place's, and
+                            what drives it
     GET  /search?q=...      search the briefings, digests, sources and
                             storylines; &kind= narrows to one kind,
                             &sort=newest puts the latest first, &page=
@@ -477,6 +482,13 @@
    {:path "/month/:period" :method :get :response (digest-page :month)}
    {:path "/stories" :method :get :response #(live % {:stories true})}
    {:path "/record" :method :get :response #(live % {:record true})}
+   {:path "/world" :method :get
+    :response (fn [{:keys [params] :as req}]
+                (let [node (get params "node")]
+                  (cond
+                    (nil? node) (live req {:world true})
+                    (re-matches #"[A-Za-z0-9:|./*-]{1,40}" node) (live req {:world node})
+                    :else (not-found))))}
    {:path "/story/:day/:n" :method :get :response story-page}
    {:path "/search" :method :get :response #(live % {:search (search-query %)})}
    {:path "/run" :method :post :response start-run}

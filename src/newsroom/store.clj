@@ -27,6 +27,11 @@
   briefing it was written from, so a rerun of the day drops it, and it is
   pruned with its day.
 
+  The world model (bnm) is kept too, one for every reader, in shared
+  tables: its parts and its nodes, behind bnm's ModelStore, the events
+  coded from each article, once, which it can be learned from again, and
+  every outlook it gave. None of it is pruned.
+
   The settings, everything about newsroom that can change while it runs,
   are kept here too, a row a key with the value as EDN; see
   newsroom.settings.
@@ -45,7 +50,8 @@
 
   One connection, serialized by a lock: sqlite writes one at a time anyway,
   and the server's handlers and the pipeline share it."
-  (:require [clojure.edn :as edn]
+  (:require [bnm.store :as bnm-store]
+            [clojure.edn :as edn]
             [clojure.string :as str]
             [db.jdbc]
             [jdbc.core :as jdbc]
@@ -290,7 +296,64 @@
    "create table if not exists shared_replies (
       hash text primary key,
       reply text not null,
-      saved_at integer not null)"])
+      saved_at integer not null)"
+   ;; the world model (bnm), one for every reader, behind bnm's ModelStore:
+   ;; its parts as EDN (:header, :volumes, :pending, :track) and a row a
+   ;; node, its learned arrays as packed doubles
+   "create table if not exists world_parts (
+      name text primary key,
+      value text not null,
+      saved_at integer not null)"
+   "create table if not exists world_nodes (
+      id text primary key,
+      level integer not null,
+      links text not null,
+      data blob not null)"
+   ;; each article coded into events, once, whichever reader's run read it,
+   ;; with the coder that read it (its model and bnm.extract/prompt-version)
+   ;; and the day it was coded for; seq is an event's place among its
+   ;; article's. Kept so the model can be learned again without asking the
+   ;; LLM again
+   "create table if not exists world_coded (
+      url text primary key,
+      day text not null,
+      coder text not null,
+      coded_at integer not null)"
+   "create table if not exists world_events (
+      url text not null,
+      seq integer not null,
+      day text not null,
+      date text not null,
+      a1 text not null,
+      s1 text,
+      a2 text,
+      s2 text,
+      adm text,
+      type text not null,
+      mode text not null,
+      quote text,
+      primary key (url, seq))"
+   ;; every outlook the model gave, the day it was made, for a horizon in
+   ;; weeks after the week it had learned last, bin
+   "create table if not exists world_forecasts (
+      made text not null,
+      horizon integer not null,
+      node text not null,
+      channel text not null,
+      kind text,
+      level text,
+      bin integer,
+      stratum text,
+      recent real,
+      last real,
+      expected real,
+      low real,
+      high real,
+      p_escalate real,
+      p_cal real,
+      p_clim real,
+      p_hist real,
+      primary key (made, horizon, node, channel))"])
 
 (def ^:private search-schema
   ;; ref is what a document is replaced and deleted by: the day for a
@@ -341,7 +404,8 @@
    "create index if not exists projections_due on projections (user_id, status, due)"
    "create index if not exists projections_ref on projections (user_id, origin, ref)"
    "create index if not exists sessions_user on sessions (user_id)"
-   "create index if not exists jobs_user on jobs (user_id, kind, id)"])
+   "create index if not exists jobs_user on jobs (user_id, kind, id)"
+   "create index if not exists world_events_day on world_events (day)"])
 
 (defn- add-column!
   "An ALTER TABLE for a column an older database may not have, silently
@@ -508,6 +572,10 @@
     (add-column! conn "story_notes" "status" "text")
     (add-column! conn "day_trends" "level" "text")
     (adopt-legacy! conn)
+    ;; the world model's tables were each reader's before the model was shared
+    (when (some #{"user_id"} (columns conn "world_events"))
+      (doseq [t ["world_model" "world_nodes" "world_events" "world_forecasts"]]
+        (jdbc/execute! conn (str "drop table if exists " t))))
     (doseq [stmt (concat (vals tables) shared-schema)] (jdbc/execute! conn stmt))
     (jdbc/execute! conn ["insert or ignore into users (id, issuer, subject, name, created_at) values (?, '', 'local', ?, ?)"
                          local-user-id "You" (now)])
@@ -1427,6 +1495,153 @@
                                    order by created_at desc, rowid desc limit 1"
                                   (user-id store)])
             row->retrospective)))
+
+;; --- the world model ---------------------------------------------------------------
+;; One model for every reader: they watch the same world, so their events
+;; are samples of it, and one model costs one copy in memory and on disk.
+
+(defn world-model-store
+  "bnm's ModelStore over the world model's tables, each call under the
+  store's lock, each write one transaction."
+  [store]
+  (reify bnm-store/ModelStore
+    (read-part [_ part]
+      (with-db [conn store]
+        (some-> (jdbc/fetch-one conn ["select value from world_parts where name = ?" (name part)])
+                :value bnm-store/<-text)))
+    (read-nodes [_ ids]
+      (with-db [conn store]
+        (let [row (fn [r] {:id (:id r) :level (long (:level r)) :links (:links r) :data (:data r)})]
+          (if ids
+            (into [] (comp (partition-all 500)
+                           (mapcat (fn [chunk]
+                                     (jdbc/fetch conn (into [(str "select * from world_nodes where id in ("
+                                                                  (str/join ", " (repeat (count chunk) "?")) ")")]
+                                                            chunk))))
+                           (map row))
+                  ids)
+            (mapv row (jdbc/fetch conn "select * from world_nodes"))))))
+    (node-ids [_]
+      (with-db [conn store]
+        (mapv :id (jdbc/fetch conn "select id from world_nodes"))))
+    (write! [_ parts rows deleted]
+      (with-db [conn store]
+        (jdbc/atomic conn
+          (doseq [[part v] parts]
+            (jdbc/execute! conn ["insert or replace into world_parts (name, value, saved_at) values (?, ?, ?)"
+                                 (name part) (bnm-store/->text v) (now-ms)]))
+          (doseq [{:keys [id level links data]} rows]
+            (jdbc/execute! conn ["insert or replace into world_nodes (id, level, links, data) values (?, ?, ?, ?)"
+                                 id level links data]))
+          (doseq [id deleted]
+            (jdbc/execute! conn ["delete from world_nodes where id = ?" id]))))
+      nil)))
+
+(defn world-model-empty?
+  "Whether no world model is stored yet."
+  [store]
+  (with-db [conn store]
+    (nil? (jdbc/fetch-one conn "select name from world_parts where name = 'header'"))))
+
+(defn coded-urls
+  "Which of `urls` have been coded into events already."
+  [store urls]
+  (with-db [conn store]
+    (into #{}
+          (comp (partition-all 500)
+                (mapcat (fn [chunk]
+                          (jdbc/fetch conn (into [(str "select url from world_coded where url in ("
+                                                       (str/join ", " (repeat (count chunk) "?")) ")")]
+                                                 chunk))))
+                (map :url))
+          (distinct urls))))
+
+(defn save-world-events!
+  "Store the events coded from the articles at `urls`, read for `day` by
+  `coder`, marking each article coded, the ones with no events too: bnm's
+  normalized events, each with the :url of the article it was read from."
+  [store day coder urls events]
+  (with-db [conn store]
+    (jdbc/atomic conn
+      (doseq [url urls]
+        (jdbc/execute! conn ["insert or replace into world_coded (url, day, coder, coded_at) values (?, ?, ?, ?)"
+                             url day coder (now-ms)])
+        (jdbc/execute! conn ["delete from world_events where url = ?" url]))
+      (doseq [[url es] (group-by :url events)
+              [i {:keys [date a1 s1 a2 s2 adm type mode quote]}] (map-indexed vector es)]
+        (jdbc/execute! conn ["insert into world_events (url, seq, day, date, a1, s1, a2, s2, adm, type, mode, quote)
+                              values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                             url i day date a1 s1 a2 s2 adm (name type) (name mode) quote]))))
+  nil)
+
+(defn world-events
+  "The events coded for the days from `from` to `to`, both inclusive, in
+  order: {:url :seq :day :date :a1 :s1 :a2 :s2 :adm :type :mode :quote
+  :coder}, each as bnm takes it."
+  [store from to]
+  (with-db [conn store]
+    (mapv (fn [r] (into {:url (:url r) :seq (long (:seq r)) :day (:day r) :date (:date r) :a1 (:a1 r)
+                         :type (keyword (:type r)) :mode (keyword (:mode r)) :coder (:coder r)}
+                        (keep (fn [k] (when-let [v (get r k)] [k v])))
+                        [:s1 :a2 :s2 :adm :quote]))
+          (jdbc/fetch conn ["select e.*, c.coder from world_events e join world_coded c on c.url = e.url
+                             where e.day >= ? and e.day <= ? order by e.day, e.url, e.seq"
+                            from to]))))
+
+(defn save-world-forecast!
+  "Store the outlook the world model gave on `made`, bnm.core/outlook's
+  rows, in place of what it gave then for the same horizon."
+  [store made outlook]
+  (with-db [conn store]
+    (jdbc/atomic conn
+      (doseq [h (distinct (map :horizon outlook))]
+        (jdbc/execute! conn ["delete from world_forecasts where made = ? and horizon = ?" made h]))
+      (doseq [{:keys [node channel kind level bin horizon stratum recent last expected low high
+                      p-escalate p-cal p-clim p-hist]} outlook]
+        (jdbc/execute! conn ["insert or replace into world_forecasts (made, horizon, node, channel, kind, level, bin,
+                                                                      stratum, recent, last, expected, low, high,
+                                                                      p_escalate, p_cal, p_clim, p_hist)
+                              values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                             made horizon node (name channel) (some-> kind name) (some-> level name) bin
+                             (some-> stratum name) (some-> recent double) (some-> last double)
+                             (some-> expected double) (some-> low double) (some-> high double)
+                             (some-> p-escalate double) (some-> p-cal double) (some-> p-clim double)
+                             (some-> p-hist double)]))))
+  nil)
+
+(defn- row->forecast [r]
+  (into {:made (:made r) :horizon (long (:horizon r)) :node (:node r) :channel (keyword (:channel r))}
+        (keep (fn [[k col f]] (when-some [v (get r col)] [k (f v)])))
+        [[:kind :kind keyword] [:level :level keyword] [:bin :bin long] [:stratum :stratum keyword]
+         [:recent :recent double] [:last :last double] [:expected :expected double] [:low :low double]
+         [:high :high double] [:p-escalate :p_escalate double] [:p-cal :p_cal double]
+         [:p-clim :p_clim double] [:p-hist :p_hist double]]))
+
+(defn world-forecast
+  "The outlook the world model gave on `made`, by node and channel: {:made
+  :horizon :node :channel :kind :level :bin :stratum :recent :last
+  :expected :low :high :p-escalate :p-cal :p-clim :p-hist}."
+  [store made]
+  (with-db [conn store]
+    (mapv row->forecast
+          (jdbc/fetch conn ["select * from world_forecasts where made = ? order by node, channel" made]))))
+
+(defn latest-world-forecast
+  "The day and the bin of the world model's latest outlook made by `day`,
+  {:made :bin}, or nil."
+  [store day]
+  (with-db [conn store]
+    (when-let [r (jdbc/fetch-one conn ["select made, max(bin) as bin from world_forecasts
+                                        where made <= ? group by made order by made desc limit 1"
+                                       day])]
+      {:made (:made r) :bin (some-> (:bin r) long)})))
+
+(defn has-projections?
+  "Whether the reader has projections read from `origin` `ref`."
+  [store origin ref]
+  (with-db [conn store]
+    (some? (jdbc/fetch-one conn ["select id from projections where user_id = ? and origin = ? and ref = ? limit 1"
+                                 (user-id store) origin ref]))))
 
 ;; --- settings ----------------------------------------------------------------------
 

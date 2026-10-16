@@ -1,5 +1,6 @@
 (ns newsroom.pipeline-test
-  (:require [clojure.java.io :as io]
+  (:require [bnm.core :as bnm]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [ebb.core :as m]
@@ -10,7 +11,8 @@
             [newsroom.screen :as screen]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
-            [newsroom.ui :as ui]))
+            [newsroom.ui :as ui]
+            [newsroom.world :as world]))
 
 (defn- item [n day]
   {:title (str "Story " n) :url (str "https://e.com/" n) :source "Fixture"
@@ -1189,6 +1191,103 @@
     (m/? (pipeline/run-task c "2026-09-30"))
     (is (some? (store/day (:store c) "2026-09-30")))
     (is (some #(= "Recording the projections failed: rate limited" (:text %)) (:events @pipeline/status)))))
+
+(def ^:private coded-answer
+  (str "{\"events\": [{\"article\": 1, \"date\": \"2026-09-30\", \"actor\": \"ISR\", \"target\": \"LBN\","
+       " \"where\": \"LBN\", \"type\": \"assault\", \"mode\": \"did\", \"quote\": \"struck\"},"
+       " {\"article\": 2, \"actor\": \"UKR\", \"type\": \"protest\", \"mode\": \"did\"}]}"))
+
+(defn- coding-run [answer]
+  (let [prompts (atom [])
+        c (-> (ctx [{:type ::fixture :name "A" :ns [1 2 3]}]
+                   (fn [_ req]
+                     (let [p (-> req :messages first :content)]
+                       (swap! prompts conj p)
+                       (if (str/starts-with? p "You code news")
+                         (answer)
+                         {:content "# Today\n\nStrikes [1]." :model "fake"}))))
+              (assoc-in [:config :world-model] true)
+              (assoc-in [:config :providers] {:local {:model "coder-model"}}))]
+    {:c c :prompts prompts :codings #(filter (fn [p] (str/starts-with? p "You code news")) @prompts)}))
+
+(deftest a-run-codes-the-days-events-for-the-world-model
+  (let [{:keys [c codings]} (coding-run (fn [] {:content coded-answer :model "fake"}))
+        st (:store c)]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (= 1 (count (codings))) "the day's three reports in one call")
+    (is (str/includes? (first (codings)) "[3] Story 3"))
+    (is (= [["https://e.com/1" "20260930" "ISR" "LBN" :assault "coder-model/plover-2"]
+            ["https://e.com/2" "20260930" "UKR" nil :protest "coder-model/plover-2"]]
+           (map (juxt :url :date :a1 :a2 :type :coder) (store/world-events st "2026-09-30" "2026-09-30")))
+        "kept with the article and the coder that read it")
+    (is (= #{"https://e.com/1" "https://e.com/2" "https://e.com/3"}
+           (store/coded-urls st ["https://e.com/1" "https://e.com/2" "https://e.com/3"]))
+        "every article read, the one with no events too")
+    (is (seq (:pending (bnm/load (store/world-model-store st)))) "the model holds them until their week is over")
+    (is (some #(= "Coded 2 events for the world model from 1 call of 1" (:text %)) (:events @pipeline/status)))
+    (m/? (pipeline/run-task (assoc c :fresh? true) "2026-09-30"))
+    (is (= 1 (count (codings))) "an article coded already isn't coded again")
+    (is (some #(= "Every report of the day was coded for the world model already" (:text %))
+              (:events @pipeline/status)))
+    (is (= 2 (count (store/world-events st "2026-09-30" "2026-09-30"))))
+    (testing "another reader's run codes only what no run has"
+      (let [theirs (store/for-user st (store/ensure-user! st {:issuer "i" :subject "t"}))]
+        (m/? (pipeline/run-task (-> c (assoc :store theirs)
+                                    (assoc-in [:config :sources] [{:type ::fixture :name "A" :ns [1 2 3 4]}]))
+                                "2026-09-30"))
+        (is (= 2 (count (codings))))
+        (is (str/includes? (last (codings)) "[4] Story 4"))
+        (is (not (str/includes? (last (codings)) "Story 1")))))))
+
+(deftest a-failed-coding-leaves-the-briefing-filed
+  (let [{:keys [c]} (coding-run (fn [] (throw (ex-info "rate limited" {}))))
+        st (:store c)]
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (some? (store/day st "2026-09-30")))
+    (is (empty? (store/world-events st "2026-09-30" "2026-09-30")))
+    (is (store/world-model-empty? st) "nothing learned, nothing saved")
+    (is (empty? (store/coded-urls st ["https://e.com/1"])) "its articles are left for a later run to code")
+    (is (some #(= "A call coding events failed: rate limited" (:text %)) (:events @pipeline/status)))))
+
+(deftest the-world-model-is-off-unless-the-config-turns-it-on
+  (let [{:keys [c codings]} (coding-run (fn [] {:content coded-answer :model "fake"}))]
+    (m/? (pipeline/run-task (update c :config dissoc :world-model) "2026-09-30"))
+    (is (empty? (codings)))))
+
+(deftest a-run-keeps-the-world-models-outlook-and-the-next-day-hears-it
+  (let [{:keys [c prompts]} (coding-run (fn [] {:content coded-answer :model "fake"}))
+        c (assoc-in c [:config :world-sims] 10)
+        st (:store c)
+        start (java.time.LocalDate/parse "2026-07-01")]
+    ;; a quarter of fighting already learned
+    (doseq [d (range 85)
+            :let [date (str/replace (str (.plusDays start d)) "-" "")]]
+      (world/learn! st (concat (repeat 4 {:date date :a1 "SDN" :type :assault :mode :did})
+                               (repeat 2 {:date date :a1 "FRA" :type :protest :mode :did}))))
+    (m/? (pipeline/run-task c "2026-09-30"))
+    (is (= "2026-09-30" (:made (store/latest-world-forecast st "2026-09-30"))) "kept once the day is filed")
+    (is (seq (store/world-forecast st "2026-09-30")))
+    (is (some #(= "The world model's outlook is kept" (:text %)) (:events @pipeline/status)))
+    (m/? (pipeline/run-task (assoc c :fresh? true) "2026-09-30"))
+    (is (some #(str/starts-with? (:text %) "The world model has learned no week since its outlook")
+              (:events @pipeline/status))
+        "run again, it stands")
+    (reset! prompts [])
+    (m/? (pipeline/run-task (assoc-in c [:config :sources] [{:type ::fixture :name "B" :ns [4 5]}]) "2026-10-01"))
+    (let [briefing (first (filter #(str/starts-with? % "Brief ") @prompts))]
+      (is (str/includes? briefing "## The world model's outlook"))
+      (is (str/includes? briefing "- Sudan: violence, P(") "its likeliest escalations")
+      (is (< (str/index-of briefing "## The world model's outlook") (str/index-of briefing "Story 4"))
+          "before the sources, which the template has no place for it before"))))
+
+(deftest the-briefing-hears-no-outlook-with-the-world-model-off
+  (let [{:keys [c prompts]} (coding-run (fn [] {:content coded-answer :model "fake"}))
+        st (:store c)]
+    (store/save-world-forecast! st "2026-09-29" [{:node "SDN" :channel :violence :level :country :bin 1 :horizon 13
+                                                 :recent 1.0 :expected 2.0 :low 1.0 :high 3.0 :p-escalate 0.6
+                                                 :p-cal 0.6}])
+    (m/? (pipeline/run-task (update c :config dissoc :world-model) "2026-09-30"))
+    (is (not-any? #(str/includes? % "## The world model's outlook") @prompts))))
 
 (deftest a-digest-checks-the-projections-that-fell-due
   (let [prompts (atom [])

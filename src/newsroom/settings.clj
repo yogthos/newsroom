@@ -164,6 +164,26 @@
                         "and why, and lessons are kept from them. The briefings and digests are told the lessons, "
                         "and every outlet is ranked within each subject by how its calls went, shown on the track "
                         "record page. A model call a briefing, and a few a digest.")}]}
+   {:title "World model"
+    :fields [{:key :world-model :type :boolean :default false
+              :doc (str "Once a briefing is filed, the model codes its reports into events, who did what to "
+                        "whom and where, and a statistical model of the world's events learns from them how "
+                        "cooperation, protest, coercion and violence between countries, within them, in each and "
+                        "in each region drive each other. Every reader's runs feed the one model, and a report "
+                        "is coded once, whichever run reads it first. A model call for every ten reports. Once "
+                        "a week it has learned, its outlook for the next quarter is simulated, which the "
+                        "briefings weigh against the reporting and the World outlook page shows. Each quarter's "
+                        "outlook is scored once the quarter is over, which recalibrates it, and its likeliest "
+                        "escalations are recorded as its projections, for the track record to judge like an "
+                        "outlet's.")}
+             {:key :world-seed :type :string :nullable? true :default nil
+              :doc (str "Where the model starts from: bayesian-news-model's pretrained snapshot, a model trained "
+                        "on decades of GDELT, ICEWS and POLECAT, as a URL, fetched once, or a path. It's loaded "
+                        "into the database the first time the model learns, when there is no model yet. Blank "
+                        "starts it empty, to learn from the news alone.")}
+             {:key :world-sims :type :int :min 10 :max 2000 :default 200
+              :doc (str "How many times the outlook is simulated. 200 takes a few minutes over the whole world, "
+                        "on its own once the briefing is filed; 50 is enough for a rough ranking.")}]}
    {:title "Podcast"
     :fields [{:key :podcast :type :boolean :default true
               :doc (str "The model writes a podcast of a briefing, the two hosts below talking it through, "
@@ -283,6 +303,9 @@
    {:key :retrospective :type :keyword
     :doc (str "Records the projections, checks how they turned out and keeps the lessons; the analyst "
               "when blank.")}
+   {:key :coder :type :keyword
+    :doc (str "Codes the day's reports into events for the world model, routine extraction a cheaper model "
+              "does well; the desk when blank.")}
    {:key :podcast :type :keyword :doc "Writes the podcast's script; the analyst when blank."}
    {:key :default :type :keyword :doc "Any role that names no provider of its own."}])
 
