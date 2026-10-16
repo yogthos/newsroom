@@ -76,11 +76,11 @@
         ;; as a hierarchy of self-exciting processes, and its outlook. It
         ;; reads its resources/bnm/countries.edn, which a built binary embeds
         ;; from jolt v0.8.17 (jolt-lang/jolt#1232).
-        ;; TODO pin to the v0.1.0 tag once bnm cuts it; until then the
-        ;; live-scoring commit (yogthos/bayesian-news-model#1)
+        ;; TODO pin to the v0.1.0 tag once bnm cuts it; until then main, with
+        ;; live scoring (yogthos/bayesian-news-model#1)
         yogthos/bayesian-news-model
         {:git/url "https://github.com/yogthos/bayesian-news-model"
-         :git/sha "5d8e14b1e851918393f9d46bff3890d7057c844c"}}
+         :git/sha "615b23a3c294bf56c099d25770c6861a166f1764"}}
 
  :jolt/build {:embed ["resources"]}
 
