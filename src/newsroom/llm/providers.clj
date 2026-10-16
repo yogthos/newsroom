@@ -14,7 +14,8 @@
   :type picks the adapter and the built-in preset that fills whatever the
   entry leaves out; it defaults to the alias when the alias names a built-in.
   :api-key-env names the variable holding the key; :api-key is a literal or
-  exactly \"${VAR}\", and so is a :headers value. Anything else on an entry is
+  exactly \"${VAR}\", and so is a :headers value. :user-agent is what its
+  calls name themselves as, newsroom's own when it's left out. Anything else on an entry is
   an llm knob (:model, :max-tokens, :temperature, :timeout-ms, :thinking?,
   :reasoning-effort, :features).
 
@@ -120,7 +121,7 @@
             key-env (or (:api-key-env entry) (:key-env preset))
             llm (-> (merge default-llm
                            (dissoc preset :key-env)
-                           (dissoc (or entry {}) :type :api-key-env :headers))
+                           (dissoc (or entry {}) :type :api-key-env :headers :user-agent))
                     (assoc :type type :alias alias))
             allowed #(shared-key-error config where % llm)
             env-key (when (and key-env (not (:api-key entry)) (env config key-env))
@@ -130,7 +131,10 @@
           (and key-env (not (:api-key entry))) (assoc :api-key env-key)
           (:api-key entry) (update :api-key #(expand-var config where % allowed))
           (:headers entry) (update :headers merge
-                                   (into {} (for [[k v] (:headers entry)] [k (expand-var config where v allowed)]))))))))
+                                   (into {} (for [[k v] (:headers entry)] [k (expand-var config where v allowed)])))
+          (not (str/blank? (:user-agent entry)))
+          (update :headers #(assoc (into {} (remove (fn [[k _]] (= "user-agent" (str/lower-case (str k))))) %)
+                                   "User-Agent" (str/trim (:user-agent entry)))))))))
 
 (defn role-llm
   "The llm config serving `role`: the alias :roles assigns it, else the

@@ -13,6 +13,19 @@
             [newsroom.llm.provider :as provider]
             [newsroom.llm.stream :as stream]))
 
+;; What a call names itself as when its provider doesn't say. Some providers'
+;; CDNs refuse a request that names nothing (Nous Portal answers with a 403
+;; challenge page), and the streamed calls are written by newsroom.llm.stream,
+;; not the http client, so the client's own default doesn't reach them.
+(def user-agent "newsroom (+https://github.com/yogthos/newsroom)")
+
+(defn- with-user-agent
+  "`headers` with newsroom's User-Agent unless they name one, in any case."
+  [headers]
+  (if (some #(= "user-agent" (str/lower-case (str %))) (keys headers))
+    headers
+    (assoc headers "User-Agent" user-agent)))
+
 (def max-backoff-ms 60000)
 (def max-attempts 4)
 
@@ -63,9 +76,9 @@
                                   (contains? (:features llm) :stream)))
           body (cond-> (adapter/chat-body adapter llm request)
                  streamed? (assoc :stream true :stream_options {:include_usage true}))
-          opts {:headers (merge (adapter/auth-headers adapter llm)
-                                (:headers llm)
-                                {"Content-Type" "application/json"})
+          opts {:headers (with-user-agent (merge (adapter/auth-headers adapter llm)
+                                                 (:headers llm)
+                                                 {"Content-Type" "application/json"}))
                 :body (json/write-str body)
                 :socket-timeout (:timeout-ms llm)
                 :conn-timeout (:conn-timeout-ms llm)}
