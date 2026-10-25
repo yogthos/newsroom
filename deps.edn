@@ -112,8 +112,8 @@
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {jlt-commons/writ
                                {:git/url "https://github.com/jlt-commons/writ"
-                                :git/tag "v0.1.10"
-                                :git/sha "4055b495575e5ddd806b155e25a6678b31153761"}}
+                                :git/tag "v0.1.11"
+                                :git/sha "1ba6b574905b10a0c71a8018d1d0da5c18408601"}}
                   :main-opts ["-m" "newsroom.test-runner"]}}
 
  :tasks {:requires ([babashka.fs :as fs] [clojure.string :as str])
