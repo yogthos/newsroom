@@ -493,7 +493,8 @@
       (when (str/blank? answer)
         (throw (ex-info (if (= "length" (:finish-reason reply))
                           (str "the model used its whole token budget ("
-                               (:max-tokens llm-config) ") before writing " what ";"
+                               (:max-tokens llm-config) ") for " (name (:alias llm-config))
+                               " before writing " what ";"
                                " raise :max-tokens for the provider in config.edn")
                           (str "the model returned an empty answer for " what " (finish reason: "
                                (:finish-reason reply) ")"))
