@@ -347,8 +347,8 @@
 
 (deftest a-model-that-runs-out-of-tokens-says-so
   (let [c (ctx [{:type ::fixture :name "A" :ns [1]}]
-               (fn [_ _] {:content "" :reasoning "lots" :finish-reason "length"}))]
-    (is (thrown-with-msg? Exception #"whole token budget .* raise :max-tokens"
+                (fn [_ _] {:content "" :reasoning "lots" :finish-reason "length"}))]
+    (is (thrown-with-msg? Exception #"whole token budget \(32768\) for local before writing .* raise :max-tokens"
                           (m/? (pipeline/run-task c "2026-09-30"))))))
 
 (deftest a-run-drops-the-days-past-the-limit
