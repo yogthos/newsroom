@@ -1,7 +1,8 @@
 ;; The sha-256 of every version of each default prompt that has shipped, by
 ;; setting. A stored prompt that is one of them was never edited, so a start
 ;; brings it up to the current default. Add the new hash when a default changes.
-{:prompt #{"011f1bf67553cd778dbf759a45094dfd6ab51c261b39c97424e78079f66c94e0"
+{:prompt #{"e2ab868517b99a38554f91d33bb5fd2fc4a7ec31a58eafbbb0f3941e4342a501"
+            "011f1bf67553cd778dbf759a45094dfd6ab51c261b39c97424e78079f66c94e0"
            "13257dfa30a62d824a5e00271f72d71c9a1b455ea956b67e4351853c88c9115c"
            "362895a4bf5e6b7bc5258b2eaf7575bdc12fa892fedbdd2f2f12532effa91869"
            "415b699698ef60fac74d21f79192b92bc945ee8c084245ba062af17e8d56ec5d"

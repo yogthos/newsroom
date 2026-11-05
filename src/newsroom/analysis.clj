@@ -1120,8 +1120,8 @@
   with its :key and :gap, and `records` each outlet's record on a subject,
   {[outlet subject] record}, shown with what it expects. nil when there
   are no dossiers."
-  ([stories dossiers the-map found graph?] (analysis-block stories dossiers the-map found graph? {}))
-  ([stories dossiers {:keys [forces trends links risks outlook]} found graph? records]
+  ([stories dossiers the-map found] (analysis-block stories dossiers the-map found {}))
+  ([stories dossiers {:keys [forces trends links risks outlook]} found records]
    (when (seq dossiers)
      (let [by-key (into {} (map (juxt :key identity)) stories)
            story-name (fn [k] (let [s (by-key k) d (get dossiers k)]
@@ -1138,7 +1138,6 @@
             "build the analysis on the map's chains, checking each link against the facts. The implied trends "
             "are where the chains lead before the news reports it, so reason them through and say how sure "
             "they are. Where an outlet expects something, weigh it by the outlet's record on that subject."
-            (when graph? " The graph of the map is drawn for you, so don't draw one.")
             "\n\n"
             (when (seq forces)
               (str "### Structural forces\n\n"

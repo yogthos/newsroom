@@ -11,7 +11,9 @@ const {reader, topicsKey} = document.getElementById('topics').dataset;
 const KEY = topicsKey || LEGACY_KEY;
 // topics kept before readers had keys of their own could be anyone's
 if (reader) { try { localStorage.removeItem(LEGACY_KEY); } catch (_) { /* storage blocked */ } }
-const PICKABLE = '#article .prose p, #article .prose li, #article .standfirst, #article ol.facts li p';
+const PICKABLE = '#article .prose p, #article .prose li, #article .standfirst, #article ol.facts li p, '
+  + '#article .walkthrough .cited p, #article .walkthrough .cited li, #article .walkthrough .step-card .hook, '
+  + '#article .walkthrough .step-card .why, #article .walkthrough .step-card .facts li';
 
 const load = () => {
   try {

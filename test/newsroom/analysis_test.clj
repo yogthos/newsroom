@@ -338,7 +338,7 @@
   (is (= "Just text\n\n```mermaid\ng```" (analysis/with-graph "Just text" "g"))))
 
 (deftest the-analyst-is-told-the-desks-work
-  (let [block (analysis/analysis-block stories dossiers the-map [{:n 5 :key "G1" :gap "The vote"}] true)]
+  (let [block (analysis/analysis-block stories dossiers the-map [{:n 5 :key "G1" :gap "The vote"}])]
     (is (str/includes? block "### Structural forces\n\n- **Energy security over cost** (strengthening): F."))
     (is (str/includes? block "- **Energy (squeeze)** (strengthening), in Oil sanctions [3] [3]: S."))
     (is (str/includes? block "- **Inflation expectations** (implied, not yet in the reports): I."))
@@ -348,16 +348,15 @@
     (is (str/includes? block "### Risks the desk sees\n\n- Oil spikes (possible, weeks). Exposed: oil +, airlines -. Signpost: Brent over 100."))
     (is (str/includes? block "### The desk's outlook\n\nPrices stay high. Would confirm it: Brent holds. Would overturn it: A deal."))
     (is (str/includes? block "### Fed holds: Fed holds\nSources [1, 2]\n\nHeld.\n\nFacts:\n- Held at 4%. [1]"))
-    (is (str/includes? block "Disputed:\n- Next: Markets: Cut [2]"))
-    (is (str/includes? block "so don't draw one")))
-  (is (nil? (analysis/analysis-block stories {} nil [] false))))
+    (is (str/includes? block "Disputed:\n- Next: Markets: Cut [2]")))
+  (is (nil? (analysis/analysis-block stories {} nil []))))
 
 (deftest the-analyst-sees-each-outlets-record-on-what-it-expects
   (let [ds (assoc-in dossiers ["G1" :expectations]
                      [{:claim "The Fed cuts in December." :by "Wire's economists" :subject "economy"
                        :cites [2] :source "Wire" :outlet "wire.org"}
                       {:claim "Inflation returns." :subject "economy" :cites [1] :source "New" :outlet "new.org"}])
-        block (analysis/analysis-block stories ds nil [] false
+        block (analysis/analysis-block stories ds nil []
                                        {["wire.org" "economy"] {:judged 5 :held 1 :partly 1 :failed 3 :closeness 0.3}
                                         ["wire.org" "technology"] {:judged 9 :held 9 :partly 0 :failed 0 :closeness 1.0}})]
     (is (str/includes? block (str "Expected:\n- Wire (Wire's economists): The Fed cuts in December. [2]"

@@ -298,6 +298,14 @@
        sort
        vec))
 
+(defn- failure
+  "What went wrong in `e`: what threw it, since loading wraps it in a syntax
+  error that names only the file, and that file when there is more to say."
+  [e]
+  (let [root (last (take-while some? (iterate ex-cause e)))
+        why (or (ex-message root) (str root))]
+    (if (identical? root e) why (str why " (" (ex-message e) ")"))))
+
 (defn- load-one [root f]
   (let [name (str/replace (.getName f) #"\.cljc?$" "")]
     (try
@@ -310,9 +318,10 @@
           (do (load-file (.getPath f))
               {:plugin name :ok true})))
       (catch Throwable e
-        (binding [*out* *err*]
-          (println "plugin" name "failed to load:" (ex-message e)))
-        {:plugin name :ok false :error (or (ex-message e) (str e))}))))
+        (let [why (failure e)]
+          (binding [*out* *err*]
+            (println "plugin" name "failed to load:" why))
+          {:plugin name :ok false :error why})))))
 
 (defonce ^:private last-load (atom {:root nil :plugins []}))
 

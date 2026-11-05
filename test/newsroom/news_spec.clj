@@ -32,7 +32,7 @@
 
 ;; what a source adapter hands over: an RSS entry, a search hit
 (refine Item [i {:title String, :url String, :source String, :summary String,
-                 :published (Opt String)}]
+                 :published (Opt String), :also (Opt (List {:url (Opt String), :source (Opt String), :origin (Opt String)}))}]
   true)
 
 ;; what an outlet is known by: an item, or one of the copies collapsed into
@@ -60,7 +60,7 @@
 (ann cite           [(List Item) -> (List Source)])
 (ann render-prompt  [Template String (List Source) (Opt String) -> String])
 (ann render-desk-prompt [Template String (List Source) (Opt String)
-                         (Opt {:analysis (Opt String), :graph? Bool}) -> String])
+                         (Opt {:analysis (Opt String), :graph (Opt String)}) -> String])
 (ann has-var?       [String String -> Bool])
 (ann place-vars     [String (List String) String -> String])
 (ann citations      [String -> (Vec Nat)])

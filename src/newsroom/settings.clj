@@ -139,7 +139,7 @@
              {:key :connect-stories :type :boolean :default true
               :doc (str "From the dossiers, the model maps the trends running through the day, following each "
                         "from the days before, and the links of cause and effect between the stories. The "
-                        "briefing builds on the map and its graph is drawn from the links, and the trends "
+                        "briefing builds on the map and its steps draw their pieces of it, and the trends "
                         "guide the precedent research and the digests. One model call.")}
              {:key :gap-searches :type :int :nullable? true :min 1 :default 6
               :doc (str "The dossiers note what the reports leave out, with a search that could find it. This "
