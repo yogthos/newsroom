@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.15.0 — 5 November 2026
 
 ### Added
 
@@ -11,6 +11,9 @@
   analysis; and a footer of what held, the base case's odds with what would
   confirm or overturn it, and the calendar. Days written before the steps keep
   their one diagram in their analysis.
+- **A provider's User-Agent can be set.** `:user-agent` on a provider, or
+  the User-Agent field on the config page, is what its calls name
+  themselves as, for an endpoint that wants a client of its own named.
 
 ### Changed
 
@@ -19,12 +22,12 @@
   and where it leads. A prompt you've edited is left as it is, and draws the
   old page until it asks for steps; reset it on the config page to take this.
 
-- **A provider's User-Agent can be set.** `:user-agent` on a provider, or
-  the User-Agent field on the config page, is what its calls name
-  themselves as, for an endpoint that wants a client of its own named.
-
 ### Fixed
 
+- **A citation whose address has spaces is still a link.** A feed can give
+  one, and it showed on the page as raw markdown, in days already stored too.
+- **The desk says when a briefing is filed.** It went on saying the briefing
+  was being revised for the minutes spent on the notes and projections after.
 - **A broken plugin says what broke.** The config page and the log gave only
   the syntax error wrapped around it, naming the file and not the cause.
 - **A page's scripts can't go stale at a plain address.** A file asked for
