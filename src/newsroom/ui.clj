@@ -30,7 +30,8 @@
             [newsroom.sources :as sources]
             [newsroom.store :as store]
             [newsroom.trends :as trends]
-            [newsroom.tts :as tts]))
+            [newsroom.tts :as tts]
+            [newsroom.walkthrough :as walkthrough]))
 
 (defonce ^{:doc "The settings the pages are drawn with, which core keeps to the ones
   it runs with: what a page offers, like recording a podcast, follows them."}
@@ -208,6 +209,8 @@
                            (when model [:span.muted " (" model ")"]) "…"]
                :revising [:p "Revising the briefing with the critic's problems fixed with " provider
                           (when model [:span.muted " (" model ")"]) "…"]
+               :finishing [:p "Filed " [:a {:href (str "/day/" day)} (sources/long-date day)]
+                           ", updating the notes and projections…"]
                :done [:p "Filed " [:a {:href (str "/day/" day)} (sources/long-date day)]
                       ": " items " sources, " cited " cited."]
                :failed [:p.bad "The run for " (sources/long-date day) " failed: " error]
@@ -540,7 +543,7 @@
     [:article.briefing
      [:p.dateline (sources/long-date day)]
      (podcast-player st day)
-     [:div.prose (h/raw (md/html markdown))]
+     (walkthrough/walkthrough markdown sources)
      [:footer.meta
       "Written by " provider (when model (str " / " model))
       (when created-at (str " at " (subs created-at 0 (min 16 (count created-at)))))
@@ -809,9 +812,17 @@
            [:head
             [:meta {:charset "utf-8"}]
             [:meta {:name "viewport" :content "width=device-width,initial-scale=1"}]
+            ;; a module's own imports can't carry a version, so they are mapped
+            ;; to it here, ahead of every module, or a browser keeps the last
+            [:script {:type "importmap"}
+             (walkthrough/script-json {:imports (into {} (map (juxt identity asset))
+                                                      ["/js/story-graph.js" "/js/two.module.js"])})]
             [:title (str title " · The Newsroom")]
             [:script {:type "module" :src (asset "/js/datastar.js")}]
-            [:link {:rel "stylesheet" :href (asset "/css/style.css")}]]
+            [:link {:rel "stylesheet" :href (asset "/css/style.css")}]
+            (when (:day current)
+              (list [:link {:rel "modulepreload" :href (asset "/js/two.module.js")}]
+                    [:link {:rel "modulepreload" :href (asset "/js/story-graph.js")}]))]
            [:body
             [:div.layout
              [:aside#sidebar.sidebar (ds/init-opts {:selector "#sidebar"})
@@ -824,4 +835,5 @@
             (if (:config current)
               [:script {:type "module" :src (asset "/js/config.js")}]
               (list [:script {:type "module" :src (asset "/js/diagrams.js")}]
+                    [:script {:type "module" :src (asset "/js/walkthrough.js")}]
                     [:script {:type "module" :src (asset "/js/topics.js")}]))]]))))

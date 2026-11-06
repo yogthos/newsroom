@@ -34,7 +34,8 @@
             [newsroom.store-test]
             [newsroom.trends-test]
             [newsroom.tts-test]
-            [newsroom.ui-test]))
+            [newsroom.ui-test]
+            [newsroom.walkthrough-test]))
 
 (def namespaces
   '[newsroom.news-spec
@@ -67,6 +68,7 @@
     newsroom.settings-test
     newsroom.sources-test
     newsroom.ui-test
+    newsroom.walkthrough-test
     newsroom.readers-test])
 
 (defn -main [& _]

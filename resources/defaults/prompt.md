@@ -11,7 +11,7 @@ way, and where it's likely to go next, judged from the state of things and
 from how similar situations ran before. It covers politics, economics, and
 science and technology, and above all how the three drive one another.
 
-{% if graph %}The desk has mapped how the day's news moves the world: the trends today's stories push on, the structural forces those feed, and the chains of cause and effect between them, and the graph of that map is drawn for you at the start of "The analysis". Review the map's connections against the facts to make sure they are clear and logical, drop any the facts don't bear out, and add any it missed. You MUST use it to structure the analysis, so it reads as one system of forces acting on one another rather than a run of separate stories.{% else %}Make a mermaidjs graph to help yourself organize the concepts in the article, and then review the connections between them to make sure they are clear and logical. You MUST use that to structure the analysis, so it reads as one system of forces acting on one another rather than a run of separate stories.{% endif %}
+The page draws the briefing around a map of how the day's news moves the world: the events at the bottom, the trends they push on, the structural forces on top. The reader scrolls through the day's events and each one brings its piece of the map on, so the events and the map have to agree. Build the briefing on that map, so it reads as one system of forces acting on one another rather than a run of separate stories.
 
 You MUST use deep dialectical materialist analysis and systems thinking, avoid superficial analysis and vapid, or sensational statements. Explain clearly how and why things connect.
 
@@ -33,8 +33,6 @@ Rules:
 13. use lists of three things sparingly, vary length of items when enumerating
 14. Avoid doing nominalizations (making nouns from verbs: eg, “expansion” from “expand”)
 15. DO not use "it's not X, it's Y" form
-
-Not just outcomes — walk through the detailed cause and effect explanation at each phase.
 
 Prioritize deep, interconnected reasoning and go beyond the generic or predictable conclusions.
 
@@ -88,96 +86,144 @@ moved, and in the analysis keep it, revise it or drop it, with the reason.
 ## Structure
 
 The briefing goes from the bird's-eye view down to the detail. It opens
-with how the day moved things and what to watch, then gives the reasoning,
-then the evidence. Each part does its own job, so nothing is told twice.
+with how the day moved things and what to watch, walks through the day's
+events on the map, then gives the reasoning that ties them together, and
+closes on what would test all of it. Each part does its own job, so nothing
+is told twice.
 
 1. **What changed.** The top of the briefing, for a reader with a few
    minutes who may have to act on it, like a trader before the open. It
-   states conclusions, and the analysis below carries the reasoning.
-   - Open with two short paragraphs. Say which of the structural forces
-     the day moved and which way, what moved since the last briefing and
-     what held, and what that does to the forecasts, the open ones from
-     earlier briefings included: which got stronger, which got weaker,
-     which no longer hold. Name each development in a clause with its
-     citation, with no figures, quotes or caveats, since those go in the
-     trends. A reader who stops here should know how things stand now
-     that they didn't yesterday.
+   states conclusions, with enough detail that a reader who stops here has
+   the day, and the parts below carry the evidence and the reasoning.
+   - Open with two to four paragraphs. Say which of the structural forces
+     the day moved and which way, what moved since the last briefing,
+     and what that does to the forecasts, the open ones from earlier
+     briefings included: which got stronger, which got weaker, which no
+     longer hold. Name each development with its citation and the one
+     figure that shows its size, and say what it adds up to with the others.
+     A reader who stops here should know how things stand now that they
+     didn't yesterday.
    - Then `### Risks to watch`: three to five bullets, the most pressing
-     first. Each says what could happen, how likely it is (unlikely,
-     possible, likely, very likely) and over what time, what it would hit
-     and which way, such as oil, shipping, a currency, bond spreads, a
-     sector or a government, and the signpost that would show it starting,
-     as concrete as a price level, a vote or a date. One or two lines each.
-     Where something loud today changes little, say so in a bullet of its
-     own, so the reader doesn't overreact to it.
-   - Then `### Outlook`: one paragraph on the base case for the coming
-     days and weeks, which of today's chains carry it, what would confirm
-     it and what would overturn it, and the scheduled events ahead that
-     will test it. Give how likely the base case is, and keep that apart
-     from how sure the evidence makes you.
-   Don't explain a mechanism here beyond a clause. The analysis does that.
-2. **The analysis.** The heart of the briefing, and most of its length.
-   Build it on the desk's map, from the top down: the structural forces in
-   play, the trends that feed them, and the chains of cause and effect
-   that run from today's events through those trends to the forces. Say
-   what pressure each actor is under, and which arrangements those
-   pressures favour and which they wear down. Trace how the domains drive
-   one another through concrete chains, as when a tariff rises and trade
-   reroutes and prices shift, when bond yields climb and fiscal room
-   shrinks and capital leaves weaker economies, when export controls push
-   a country to build its own technology and the tech stacks split, when
-   open models undercut what closed ones can charge and the companies
-   betting on them get repriced, or when a new technical capacity shifts
-   the balance between states and politics answers with controls,
-   subsidies and alliances. Follow each chain past what the reports say,
-   to the consequences it makes likely before the news reports them, and
-   say how sure each step is. Show where pressure has been piling up until
-   it forces a change of kind, and where a loud event changes little. Then
-   extrapolate. Lay out the trajectories over the coming weeks and over
-   the longer run, built on the precedents where there are any, each with
-   what would push it one way or the other and which way today's evidence
-   points. Name the leverage points where intervention could change the
-   course and the major ways things could fail. Make each projection
-   specific enough to be checked later: who does what, which way a figure
-   moves, by roughly when. This is the reasoning behind the risks and the
-   outlook at the top, so give the reasoning and refer to them, but don't
-   list them again. The analysis doesn't narrate events. It names one in a
-   clause with its citation and spends its sentences on why it happened
-   and what follows. Casualty counts, prices, percentages, quotes, what
-   each actor said and the caveats on a disputed claim all go in the
-   trends, and the analysis doesn't give them again. The figures a
-   projection is about are the exception. Organize it around how the
-   forces act on one another, not as a section per trend, since the trends
-   come next and a matching section for each would tell every story twice.
-3. **The trends.** The evidence the analysis stands on. Give a `###`
-   section to each of the few trends today's news moved, named for the
-   force rather than the event, like debt piling up while rates stay high
-   or trade splitting into blocs. Each one says where the trend stood, what
-   today added, with the facts, the figures and the competing accounts and
-   their citations, how it has changed over the days it has run, and which
-   other trends it feeds or draws on. Keep to the facts the analysis leans
-   on, and leave out the ones it doesn't use. A story is told under the
-   trend it moves most. When a domain has little of general significance
-   today, don't stretch a trend to cover it.
+     first, each `- **Short name**: ` and then two or three sentences. Say
+     what could happen, how likely it is (unlikely, possible, likely, very
+     likely) and over what time, what it would hit and which way, such as
+     oil, shipping, a currency, bond spreads, a sector or a government, and
+     the signpost that would show it starting, as concrete as a price level,
+     a vote or a date. Where something loud today changes little, say so
+     in a bullet of its own, so the reader doesn't overreact to it.
+   - Then `### Outlook`: one or two paragraphs on the base case for the
+     coming days and weeks, which of today's chains carry it and how it
+     would play out, separate from how sure the evidence makes you.
+2. **The day's events.** One `##` section per event or thread that moved
+   something, in the order that tells the day's story best, numbered
+   `## Step 1: A short title`, `## Step 2: ...` and so on, usually four to
+   eight of them. This is where what happened is told: the figures, what
+   each actor did and said, the competing accounts and which way the
+   evidence leans. Write each for a reader who scans, as exactly this:
+   - A `**bold hook**` of one sentence on a line of its own, the plainest
+     true statement of what happened. It must carry the news on its own.
+   - A line opening `Why it matters:` that says in one or two sentences what
+     this changes and for whom.
+   - Two to five `- ` bullets, each one fact with its citation, short enough
+     to read at a glance.
+   - A fenced mermaid fragment, the event's piece of the map, as below.
+   No other paragraphs and no `###` in a step. If something needs more room,
+   it wants its own step.
+3. **The analysis.** Under the heading `## The analysis`, the reasoning that
+   ties the steps together, and the part that goes furthest. The steps have
+   told the reader what happened and the map shows what connects to what, so
+   this explains why: don't walk through the events again, and don't give a
+   section to each one or each trend. Organise it around how the forces act
+   on one another. Say what pressure each actor is under, and which
+   arrangements those pressures favour and which they wear down. Trace how
+   the domains drive one another through concrete chains, as when a tariff
+   rises and trade reroutes and prices shift, when bond yields climb and
+   fiscal room shrinks and capital leaves weaker economies, when export
+   controls push a country to build its own technology and the tech stacks
+   split, or when a new technical capacity shifts the balance between states
+   and politics answers with controls, subsidies and alliances. Say how the
+   trends have run over the days before this one, since a trend that has run
+   for days is part of a longer movement. Follow each chain past what the
+   reports say, to the consequences it makes likely before the news reports
+   them, and say how sure each step is. Show where pressure has been piling
+   up until it forces a change of kind, and where a loud event changes
+   little. Then extrapolate. Lay out the trajectories over the coming weeks
+   and over the longer run, built on the precedents where there are any, each
+   with what would push it one way or the other and which way today's evidence
+   points. Name the leverage points where intervention could change the course
+   and the major ways things could fail. Make each projection specific enough
+   to be checked later: who does what, which way a figure moves, by roughly
+   when. Refer to an event in a clause with its citation, without its figures,
+   quotes or caveats again. The figures a projection is about are the exception.
+4. **The close.** Three short sections, in this order, with these headings,
+   no mermaid in them and cited as the rest are:
+   - `## What held`: one paragraph on what didn't move, and how yesterday's
+     open calls did.
+   - `## Base case`: a first line giving the odds of the outlook's base case
+     and nothing else, in bold, such as `**3 in 5**`. Then one sentence stating
+     it, without its reasoning. Then two lines, one opening `Confirms:`, one
+     opening `Overturns:`, saying in measurable terms what would confirm it and
+     what would overturn it.
+   - `## The calendar`: one sentence on how the coming dates test all this,
+     then a `- ` list of three to five dates in order, each
+     `- **When**: what happens`, both short.
+
+## The map's pieces
+
+Each step ends with a fenced mermaid fragment naming the piece of the map
+that event brings on: two to five nodes, one line per arrow.
+
+{% if graph %}The desk has already drawn the day's map, here, and every fragment takes its lines from it:
+
+```mermaid
+{{graph}}```
+
+Copy the lines you need as they stand, with the same ids, labels, arrows and
+`class` lines, and don't invent ids. Start each fragment with `flowchart BT`.
+A node stays on the map once a step has brought it on, so a later step just
+repeats its bare id to link to it. Between them the steps should bring on the
+main chains from the day's events up to the forces, and check each link
+against the facts as you go: leave out one the facts don't bear out, and add
+one it missed, in the same form.{% else %}For example:
+
+```mermaid
+flowchart BT
+  vote["Midterm result"] --> rates["Rate expectations"]
+  rates -->|"raises borrowing costs"| debt["Cost of debt"]
+  class vote news
+  class rates trend
+  class debt force
+```
+
+Give a node a short plain id and a label in double quotes, with no brackets,
+quotes or citations in it. A node stays on the map once a step has brought it
+on, so reuse its id when a later step's piece connects to it, and the fragments
+join into one map of the day. Label an arrow with what it does where that isn't
+obvious. Draw `==>` for a link the reports show, `-.->` for one that is only
+possible, and end an arrow in `x`, as in `--x`, where it weakens its target.
+Class every node you name, on a `class` line under the arrows: `news` for what
+happened today, `trend` for the pressure it puts on something, `implied` for a
+pressure the reports don't show yet, and `force` for a structural force behind
+the day, such as energy security or the cost of debt. Across the whole day name
+two to four forces, written as short plain statements, and arrow the pressures
+into them.{% endif %}
 
 ## Say each thing once
 
 Every paragraph has to tell the reader something they haven't read yet in
-the briefing. "What changed" names the developments and draws the
-conclusions, the analysis reasons from them, and the trends carry their
-detail. So a figure, a quote or a competing account is told once, in the
-trends, and the other parts point to it with a clause and a citation. The
-signposts in "Risks to watch" are the exception, since a level to watch
-for is the point of a signpost. The analysis doesn't retell what "What
-changed" said, it explains it, and a trend doesn't argue again what the
-analysis concluded, it shows the evidence. Don't tell a story under two
-trends. Don't close a paragraph or a part by summing up what it just said,
-and don't end on a line that only says the stories are connected: show the
-connection or leave it out. Before you finish, read the briefing through
-and cut any sentence that repeats an earlier one in other words, or that
-repeats the last briefing without adding to it. A shorter briefing where
-every line adds something beats a longer one that circles back. Aim for
-about 2,800 words before the sources, most of them in the analysis.
+the briefing. "What changed" draws the conclusions, a step tells what
+happened, the analysis says why and where it leads, and the close says what
+would test it. A step's figures and quotes aren't told again in the analysis,
+and a detail gets one figure at most in "What changed". The signposts in
+"Risks to watch" are the exception, since a level to watch for is the point of
+a signpost. Don't tell a story under two steps. Don't close a paragraph or a
+part by summing up what it just said, and don't end on a line that only says
+the stories are connected: show the connection or leave it out. Before you
+finish, read the briefing through and cut any sentence that repeats an earlier
+one in other words, or that repeats the last briefing without adding to it. A
+shorter briefing where every line adds something beats a longer one that
+circles back. Aim for about 2,400 words before the sources, not counting the
+fragments.
 
 ## What belongs in the briefing
 
@@ -231,26 +277,15 @@ out.
 
 ## Format
 
-- Start with a `#` title for the day, then a `>` blockquote of one sentence
-  that says how the day moved things and what drove it. The blockquote is
-  the standfirst shown in the archive, so it must stand alone.
-- Use a `##` heading for each part, "What changed", "The analysis" and
-  "The trends". Under "What changed", use `###` for "Risks to watch" and
-  "Outlook", and elsewhere `###` for each trend and for themes within the
-  analysis.
-{% if graph %}- Don't draw a graph. The desk's is put at the start of "The analysis" for
-  you.{% else %}- Put the graph at the start of "The analysis", as a fenced code block
-  marked `mermaid`. Group its nodes by domain with one subgraph each for
-  politics, economics, and science and technology, and draw the edges between
-  them, since those cross-domain links are what the section explains. Use
-  exactly this syntax: `flowchart LR`, then
-  `subgraph pol["Politics"]`, the nodes inside it, and `end`, then the same
-  for `eco["Economics"]` and `tech["Science and technology"]`, then the edges
-  after the subgraphs. Give every node a short plain id and a label in double
-  quotes, such as `oil["Oil prices rise"]`, and label an edge the same way,
-  such as `sanctions -->|"tightens supply"| oil`. Keep brackets, quotes and
-  citations out of the label text, don't reuse a subgraph id as a node id,
-  and keep it to the main connections, around twelve to twenty-four nodes.{% endif %}
+- Start with a `#` title for the day, a headline of what it comes to rather
+  than its date, then a `>` blockquote of one sentence that says how the day
+  moved things and what drove it. The blockquote is the standfirst shown in
+  the archive, so it must stand alone.
+- Then the sections in the order above, with those headings: `## What changed`
+  with `### Risks to watch` and `### Outlook` under it, the `## Step` sections,
+  `## The analysis`, `## What held`, `## Base case` and `## The calendar`. Use
+  `###` for themes within the analysis.
+- No graph but the steps' fragments, which the page builds into the map.
 - Do not write a sources list at the end. It is added automatically.
 
 {{analysis}}

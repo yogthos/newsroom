@@ -262,17 +262,27 @@
   They are read through io/resource, which reaches the copies baked into a
   built binary, where Ring's resource middleware can't. The page asks for
   each with a version from its content (see newsroom.ui/asset), so one can
-  be cached for long and a changed one is still fetched anew."
+  be cached for good and a changed one is still fetched anew."
   {"/js/datastar.js" "application/javascript"
    "/js/diagrams.js" "application/javascript"
    "/js/config.js"   "application/javascript"
    "/js/topics.js"   "application/javascript"
+   "/js/walkthrough.js" "application/javascript"
+   "/js/story-graph.js" "application/javascript"
+   "/js/two.module.js" "application/javascript"
    "/css/style.css"  "text/css; charset=utf-8"})
 
-(defn- asset [{:keys [uri]}]
+(defn- asset
+  "A file the page asks for. Only an address with its version in it can be
+  cached for good, since the next file has another; a plain one is
+  revalidated."
+  [{:keys [uri query-string]}]
   (if-let [type (assets uri)]
     {:status 200
-     :headers {"Content-Type" type "Cache-Control" "max-age=31536000, immutable"}
+     :headers {"Content-Type" type
+               "Cache-Control" (if (re-find #"(?:^|&)v=" (str query-string))
+                                 "max-age=31536000, immutable"
+                                 "no-cache")}
      :body (slurp (io/resource (str "public" uri)))}
     (not-found)))
 

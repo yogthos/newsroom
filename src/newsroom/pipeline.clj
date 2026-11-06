@@ -1577,8 +1577,7 @@
             record (track-record ctx day (set (keep news/origin (remove :precedent numbered)))
                                 (set (keep :story numbered)))
             analysed (when desk
-                       (analysis/analysis-block (:stories desk) dossiers the-map found (some? graph)
-                                                (:records record)))
+                       (analysis/analysis-block (:stories desk) dossiers the-map found (:records record)))
             llm-config (providers/role-llm config :analyst)
             established (some-> (:markdown earlier) (news/body previous-chars 2))
             _ (when established
@@ -1599,7 +1598,7 @@
                                                 (remove nil?)
                                                 seq
                                                 (str/join "\n\n"))
-                                       {:analysis analysed :graph? (some? graph) :record (:block record)
+                                       {:analysis analysed :graph graph :record (:block record)
                                         :web web})
             _ (update-status! run-id assoc :state :analysing :items (count numbered)
                               :provider (name (:alias llm-config)) :model (:model llm-config))
@@ -1636,6 +1635,8 @@
                                   :model (or (:model reply) (:model llm-config))
                                   :provider (name (:alias llm-config))
                                   :followups steps})
+          ;; what follows takes minutes, and the briefing is no longer being written
+          (update-status! run-id assoc :state :finishing)
           (log! run-id {:text (str "Filed the briefing: " (count cited) " of " (count numbered)
                                    " sources cited") :level :ok})
           (when podcast?

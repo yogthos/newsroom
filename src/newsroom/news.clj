@@ -399,8 +399,9 @@
   entities that tie the day's stories together and what changed since the
   last briefing, each placed just before the sources when the template has
   no place for it, and
-  {{graph}}, true when the graph is drawn for the analyst."
-  [template day sources previous {:keys [analysis graph? record web]}]
+  {{graph}}, the desk's drawing of its map, for the steps to take their
+  pieces of, when there is one."
+  [template day sources previous {:keys [analysis graph record web]}]
   (template/fill (place-vars template (cond-> []
                                         previous (conj "previous")
                                         record (conj "record")
@@ -409,7 +410,7 @@
                                         true (conj "sources"))
                              "sources")
                  {:date day :sources (source-block sources) :previous previous
-                  :analysis analysis :graph (boolean graph?) :record record :web web}))
+                  :analysis analysis :graph graph :record record :web web}))
 
 (defn render-prompt
   "The briefing's prompt: the Selmer `template` with {{date}}, {{sources}}
@@ -447,7 +448,8 @@
                    (let [ns (when-not fence (numbers-in group))]
                      (if (some #(contains? urls %) ns)
                        (str/join ", " (map (fn [n] (if (contains? urls n)
-                                                     (str "[[" n "]](" (get urls n) ")")
+                                                     ;; a feed can give an address with spaces, which ends a link
+                                                     (str "[[" n "]](" (str/replace (str (get urls n)) " " "%20") ")")
                                                      (str "[" n "]")))
                                            ns))
                        whole))))))

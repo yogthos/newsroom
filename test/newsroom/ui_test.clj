@@ -46,7 +46,7 @@
     (fn [st]
       (let [page (ui/page st "2026-09-30")]
         (is (str/includes? page "<h1>Big day</h1>"))
-        (is (str/includes? page "<a href=\"https://e.com/1\">[1]</a>"))
+        (is (re-find #"href=\"https://e.com/1\">1</a>" page) "a citation, by its number")
         (testing "a gathered title is escaped"
           (is (str/includes? page "&lt;script&gt;alert(1)&lt;/script&gt;"))
           (is (not (str/includes? page "<script>alert(1)"))))
@@ -58,6 +58,9 @@
           (is (str/includes? page "What it teaches: </strong>It took a decade to settle.")))
         (is (str/includes? page "deepseek / deepseek-v4-flash"))
         (is (re-find #"src=\"/js/diagrams.js\?v=[0-9a-f]+\"" page) "the page can draw diagrams")
+        (testing "and the day's map, whose modules the page maps to their versions ahead of the first of them"
+          (is (re-find #"src=\"/js/walkthrough.js\?v=[0-9a-f]+\"" page))
+          (is (re-find #"(?s)type=\"importmap\".*\"/js/two.module.js\":\"/js/two.module.js\?v=[0-9a-f]+\".*src=\"/js/datastar.js" page)))
         (testing "the reader can collect passages as topics and put them to the analyst"
           (is (re-find #"src=\"/js/topics.js\?v=[0-9a-f]+\"" page))
           (is (re-find #"<aside id=\"topics\" class=\"topics\" hidden[ >]" page))
@@ -65,7 +68,11 @@
           (is (str/includes? page "data-topics=\"toggle\"")))
         (testing "an asset's address changes with its content, so a cached one isn't kept"
           (is (re-find #"href=\"/css/style.css\?v=[0-9a-f]+\"" page))
-          (is (= 200 (:status (core/app {:uri "/css/style.css" :query-string "v=abc" :request-method :get})))))))))
+          (is (= 200 (:status (core/app {:uri "/css/style.css" :query-string "v=abc" :request-method :get}))))
+          (let [cache (fn [q] (get-in (core/app {:uri "/js/two.module.js" :query-string q :request-method :get})
+                                      [:headers "Cache-Control"]))]
+            (is (re-find #"immutable" (cache "v=abc")))
+            (is (= "no-cache" (cache nil)) "one with no version in its address is asked for again")))))))
 
 (deftest the-archive-shows-each-days-standfirst-and-the-desk-shows-feed-health
   (let [st (store/open "sqlite::memory:")]
@@ -288,6 +295,18 @@
       (swap! pipeline/status assoc :probe (Object.))
       @fired
       (finally (reset! pipeline/status before)))))
+
+(deftest a-filed-briefing-isnt-still-being-written
+  (with-store
+    (fn [st]
+      (let [status (:status (pipeline/lane nil))
+            before @status]
+        (try
+          (reset! status {:state :finishing :day "2026-09-30" :writing {:tail "old"}})
+          (let [page (ui/page st "2026-09-30")]
+            (is (str/includes? page "updating the notes and projections"))
+            (is (not (str/includes? page "old</blockquote>"))))
+          (finally (reset! status before)))))))
 
 (deftest a-run-re-renders-the-sidebar-but-not-the-article
   (with-store

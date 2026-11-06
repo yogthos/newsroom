@@ -1,6 +1,9 @@
 :root {
   --paper: #f5f7f9; --ink: #121820; --muted: #58636f; --rule: #d6dce3;
   --accent: #0a6c74; --accent-ink: #ffffff; --panel: #e8ecf0; --ok: #2e7a4f; --bad: #b42318;
+  --surface: #e8ecf0; --raised: #ffffff; --rule-strong: #8e99a8;
+  --feature: #0a4f55; --feature-ink: #ffffff; --node-news: #dfe5ea; --node-pressure: #ffffff;
+  --radius: 2px; --page: 1180px; --gutter: clamp(20px, 4vw, 48px);
   --serif: Charter, 'Bitstream Charter', 'Iowan Old Style', Georgia, serif;
   --sans: 'Helvetica Neue', 'Inter', -apple-system, 'Segoe UI', system-ui, sans-serif;
   color-scheme: light;
@@ -8,6 +11,8 @@
 @media (prefers-color-scheme: dark) {
   :root { --paper: #0d1117; --ink: #e4e8ee; --muted: #8b95a3; --rule: #252d38;
           --accent: #37c2c0; --accent-ink: #06201f; --panel: #141a22; --ok: #6fcf97; --bad: #ff7b72;
+          --surface: #141a22; --raised: #141a22; --rule-strong: #5a6878;
+          --feature: #0f4a4f; --feature-ink: #ffffff; --node-news: #232d3a; --node-pressure: #141a22;
           color-scheme: dark; }
 }
 * { box-sizing: border-box; }
@@ -141,9 +146,9 @@ main { padding: 48px clamp(20px, 6vw, 80px) 80px; }
 .story-index h3 { margin: 0; }
 .story-index p { margin: .2rem 0; }
 .standfirst { font-size: 1.15em; color: var(--muted); }
-.facts { list-style: none; padding: 0; border-left: 2px solid var(--rule); }
-.facts li { position: relative; padding: 0 0 .8rem 1rem; }
-.facts li::before { content: ""; position: absolute; left: -6px; top: .45em; width: 10px; height: 10px;
+.storyline .facts { list-style: none; padding: 0; border-left: 2px solid var(--rule); }
+.storyline .facts li { position: relative; padding: 0 0 .8rem 1rem; }
+.storyline .facts li::before { content: ""; position: absolute; left: -6px; top: .45em; width: 10px; height: 10px;
                     border-radius: 50%; background: var(--accent); }
 .facts .day, .coverage .day { font: 600 12px var(--sans); color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
 .facts p { margin: .1rem 0 0; }
@@ -261,7 +266,7 @@ fieldset.plugin legend { font-weight: 700; padding: 0 6px; }
              border-radius: 50%; font: 700 16px/1 var(--sans); border: 1px solid var(--accent);
              background: var(--paper); color: var(--accent); opacity: .85; }
 .topic-add:hover, .topic-add.on { background: var(--accent); color: var(--accent-ink); opacity: 1; filter: none; }
-.prose .picked, .facts .picked { box-shadow: -14px 0 0 -11px var(--accent); }
+.prose .picked, .facts .picked, .walkthrough .picked { box-shadow: -14px 0 0 -11px var(--accent); }
 .topics-toggle { position: fixed; right: 0; top: 40%; z-index: 40; width: auto; margin: 0; padding: 10px 8px;
                  writing-mode: vertical-rl; border-radius: 6px 0 0 6px; font: 600 12px var(--sans);
                  letter-spacing: .08em; text-transform: uppercase; }
@@ -322,3 +327,196 @@ fieldset.plugin legend { font-weight: 700; padding: 0 6px; }
 table.providers { border-collapse: collapse; margin: 0.5rem 0 1rem; font-size: 0.9em; width: 100%; }
 table.providers th, table.providers td { text-align: left; padding: 0.25rem 0.75rem 0.25rem 0; border-bottom: 1px solid var(--rule, #ddd); }
 table.providers th { font-weight: 600; }
+
+/* the day page: a scrollytelling where the map is on a stage held for the
+   height of a screen while the step cards travel over it. Measured against
+   its own width, as the graph is, since the sidebar takes part of the screen */
+.walkthrough { container: walk / inline-size; position: relative; font-family: var(--sans); }
+.walkthrough .prose-row .cited, .walkthrough .walk-analysis .prose { font-family: var(--serif); }
+.walkthrough .walk-analysis { padding-block: 16px 48px; }
+.walkthrough .walk-analysis .prose { max-width: 44rem; margin-inline: auto; }
+.walkthrough .walk-analysis .prose h2:first-child { margin-top: 0; }
+/* steps that name no pieces of a map just follow one another */
+.walkthrough .no-stage .walk-steps { margin-top: 0; padding-bottom: 32px; pointer-events: auto; }
+.walkthrough .no-stage .walk-step { min-height: 0; display: block; padding-bottom: 20px; }
+.walkthrough .no-stage .step-card { max-width: 44rem; margin-inline: auto; opacity: 1; }
+.topics-open main:has(.walkthrough) { padding-right: calc(420px + 24px); }
+.topics-open:has(.topics.wide) main:has(.walkthrough) { padding-right: calc(760px + 24px); }
+@media (max-width: 1100px) { .topics-open main:has(.walkthrough) { padding-right: 0; } }
+.briefing:has(.walkthrough) { max-width: none; }
+main:has(.walkthrough) { padding: 0 0 64px; }
+.briefing:has(.walkthrough) > :not(.walkthrough) { max-width: var(--page); margin-inline: auto; padding-inline: var(--gutter); }
+.briefing:has(.walkthrough) > .dateline { margin-top: 32px; }
+
+.walkthrough .walk-hero, .walkthrough .walk-intro, .walkthrough .walk-band { max-width: var(--page); margin-inline: auto; padding-inline: var(--gutter); }
+.walkthrough .kicker { margin: 0; font: 600 12px/1.3 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.walkthrough h2.kicker { color: var(--ink); }
+
+/* citations in running text: the number on its own, small and tinted */
+.cited p { margin: 0 0 .8em; }
+.cited p:last-child { margin-bottom: 0; }
+.cited a, .walkthrough .hook a, .walkthrough .why a, .walkthrough .step-card .facts a { display: inline-block; margin: 0 1px; padding: 0 4px; border-radius: var(--radius); font-size: .7em; font-weight: 700; line-height: 1.5; vertical-align: .55em; text-decoration: none; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.cited a:hover, .walkthrough .hook a:hover, .walkthrough .why a:hover, .walkthrough .step-card .facts a:hover { background: var(--accent); color: var(--accent-ink); }
+
+/* numbered columns under a rule: the forces, the risks, the dates */
+.walkthrough .cols { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); border-top: 2px solid var(--ink); border-bottom: 1px solid var(--rule-strong); }
+.walkthrough .cols > li { padding: 18px 22px 24px; border-left: 1px solid var(--rule-strong); min-width: 0; }
+.walkthrough .cols > li:first-child { border-left: 0; padding-left: 0; }
+.walkthrough .cols .num { display: block; margin-bottom: 10px; font-size: 13px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.walkthrough .cols h3 { margin: 0 0 8px; font-size: 19px; font-weight: 800; line-height: 1.16; letter-spacing: -.015em; }
+.walkthrough .cols p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--muted); }
+
+/* the cover: the headline leads, the standfirst says it, the columns detail it */
+.walkthrough .walk-hero { padding-block: 36px 40px; }
+.walkthrough .walk-hero h1 { font-weight: 800; font-size: clamp(30px, 3.4vw, 44px); line-height: 1.05; letter-spacing: -.028em; margin: 0 0 14px; max-width: 26ch; text-wrap: balance; }
+.walkthrough .walk-standfirst { max-width: 62ch; font-size: clamp(18px, 1.7vw, 21px); line-height: 1.42; font-weight: 500; }
+.walkthrough .walk-standfirst p { margin: 0; }
+.walkthrough .walk-lede { max-width: 62ch; margin-top: 14px; font-size: 16px; line-height: 1.55; color: var(--muted); }
+.walkthrough .in-play { margin-top: 36px; }
+.walkthrough .in-play .kicker { margin-bottom: 12px; }
+
+/* the map section: a rule off the cover, then the stage */
+.walkthrough .walk-map { border-top: 1px solid var(--rule-strong); padding-top: 32px; }
+.walkthrough .walk-intro { margin-bottom: 24px; display: flex; flex-wrap: wrap; gap: 12px 48px; align-items: start; }
+.walkthrough .walk-intro .kicker { flex: 1 1 180px; }
+.walkthrough .walk-intro-body { flex: 3 1 480px; }
+.walkthrough .walk-intro-body h2 { font-weight: 800; font-size: clamp(24px, 2.4vw, 30px); line-height: 1.1; letter-spacing: -.02em; margin: 0 0 8px; }
+.walkthrough .walk-intro-body p { margin: 0; font-size: 16px; line-height: 1.5; color: var(--muted); }
+
+.walkthrough .walk-stage-wrap { position: relative; }
+/* the stage holds still for the height of one card, then the next slides on */
+.walkthrough .walk-stage { position: sticky; top: 0; height: 100vh; z-index: 1; background: var(--paper); }
+.walkthrough .walk-canvas { position: absolute; inset: 0; overflow: hidden; }
+.walkthrough .walk-canvas canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
+.walkthrough .walk-legend { position: absolute; right: 24px; bottom: 20px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 16px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.walkthrough .walk-legend .item { display: inline-flex; align-items: center; gap: 6px; }
+.walkthrough .walk-legend .sw { width: 12px; height: 12px; border: 1.5px solid var(--ink); display: inline-block; }
+.walkthrough .walk-legend .sw.news { background: var(--node-news); border-color: var(--node-news); }
+.walkthrough .walk-legend .sw.trend { background: var(--node-pressure); border-width: 2px; }
+.walkthrough .walk-legend .sw.implied { background: var(--paper); border-style: dashed; }
+.walkthrough .walk-legend .sw.force { background: var(--ink); }
+.walkthrough .walk-legend .sw.shown { background: var(--accent); border-color: var(--accent); }
+.walkthrough .walk-legend b { font-size: 13px; font-weight: 600; color: var(--ink); }
+
+/* a narrow page's stand-in for the stage: a card's own pieces, across its head */
+.walkthrough .step-chain { display: none; }
+.walkthrough .on-cards { display: none; }
+.walkthrough .chain-col { position: relative; flex: none; display: grid; gap: 6px; }
+.walkthrough .chain-col + .chain-col::before { content: "\2192"; position: absolute; left: -17px; top: 50%; transform: translateY(-50%); font-size: 13px; color: var(--muted); }
+.walkthrough .chain-node { display: block; max-width: 150px; padding: 5px 8px; font-size: 12px; line-height: 1.25; border: 1.5px solid var(--rule-strong); color: var(--muted); }
+.walkthrough .chain-node.fresh { color: var(--ink); font-weight: 600; }
+.walkthrough .chain-node.news.fresh { background: var(--node-news); border-color: var(--node-news); }
+.walkthrough .chain-node.trend.fresh { background: var(--node-pressure); border-color: var(--ink); }
+.walkthrough .chain-node.implied { border-style: dashed; }
+.walkthrough .chain-node.implied.fresh { border-color: var(--ink); font-style: italic; }
+.walkthrough .chain-node.force.fresh { background: var(--ink); border-color: var(--ink); color: var(--paper); font-weight: 800; }
+
+/* the cards travel over the stage: it is pinned behind them, so the
+   container is pulled up a screen and stops catching pointers */
+.walkthrough .walk-steps { position: relative; z-index: 2; margin-top: -100vh; padding-bottom: 50vh; pointer-events: none; }
+.walkthrough .walk-step { min-height: 100vh; display: flex; align-items: center; padding: 0 var(--gutter); }
+.walkthrough .step-card { pointer-events: auto; width: 100%; max-width: 400px; background: var(--raised); border-top: 2px solid var(--ink); box-shadow: 0 2px 0 0 var(--rule); padding: 20px 22px 22px; opacity: .32; transition: opacity .4s ease-out; }
+.walkthrough .step-card.is-on, .walkthrough .step-card:hover { opacity: 1; }
+.walkthrough .card-kicker { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.walkthrough .card-kicker .tag { color: var(--accent); }
+.walkthrough .card-kicker .num { color: var(--muted); font-variant-numeric: tabular-nums; }
+.walkthrough .step-card h3 { font-weight: 800; font-size: 21px; line-height: 1.12; letter-spacing: -.018em; margin: 0 0 10px; }
+.walkthrough .step-card .hook { margin: 0 0 12px; font-size: 15px; line-height: 1.42; font-weight: 600; }
+.walkthrough .step-card .why { margin: 0 0 12px; font-size: 14px; line-height: 1.55; color: var(--muted); }
+.walkthrough .step-card .facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.walkthrough .step-card .facts li { position: relative; padding-left: 14px; font-size: 14px; line-height: 1.48; }
+.walkthrough .step-card .facts li::before { content: ""; position: absolute; left: 0; top: .62em; width: 6px; height: 2px; background: var(--accent); }
+.walkthrough .step-card .fold, .walkthrough .step-card .card-sources { margin-top: 12px; border-top: 1px solid var(--rule); padding-top: 10px; }
+.walkthrough .step-card summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.walkthrough .step-card .fold > div { margin-top: 8px; font-size: 14px; line-height: 1.6; }
+
+.walkthrough .card-sources ol { margin: 8px 0 0; padding-left: 26px; font-size: 13px; line-height: 1.4; display: grid; gap: 6px; }
+.walkthrough .card-sources li::marker { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+.walkthrough .card-sources a { color: var(--ink); text-underline-offset: 2px; }
+.walkthrough .card-sources a:hover { color: var(--accent); }
+
+/* the piece asked about on the map, in the flow of its own card */
+.walkthrough .step-sel { border-block: 2px solid var(--accent); margin: 12px 0; padding-block: 12px; font-size: 13px; line-height: 1.4; animation: sel-pop .26s cubic-bezier(.2, .8, .3, 1) both; }
+.walkthrough .step-sel[hidden] { display: none; }
+@keyframes sel-pop { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .walkthrough .step-sel { animation: none; } .walkthrough .step-card { transition: none; } }
+.walkthrough .step-sel .sel-head { display: grid; gap: 2px; margin-bottom: 10px; }
+.walkthrough .step-sel .sel-kicker { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.walkthrough .step-sel .sel-name { font-weight: 800; font-size: 15px; line-height: 1.2; }
+.walkthrough .step-sel .sel-box + .sel-box { margin-top: 10px; border-top: 1px solid var(--rule); padding-top: 8px; }
+.walkthrough .step-sel .sel-title { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.walkthrough .step-sel .sel-row { display: grid; gap: 1px; margin-top: 6px; }
+.walkthrough .step-sel .sel-label { font-weight: 600; }
+.walkthrough .step-sel .sel-how { font-size: 11px; color: var(--muted); }
+.walkthrough .step-sel .sel-srcs { display: grid; gap: 4px; }
+.walkthrough .step-sel .sel-src { font-size: 11px; line-height: 1.35; color: var(--accent); text-decoration: none; border-left: 2px solid var(--rule); padding-left: 8px; }
+.walkthrough .step-sel .sel-src:hover { text-decoration: underline; }
+.walkthrough .step-sel .sel-more { font-size: 11px; color: var(--muted); text-decoration: none; border-left: 2px solid transparent; padding-left: 8px; }
+.walkthrough .step-sel .sel-more:hover { text-decoration: underline; }
+
+/* what the day closes on, past the map */
+.walkthrough .walk-close { background: var(--paper); position: relative; z-index: 3; }
+.walkthrough .band-head h2, .walkthrough .prose-row h2 { margin: 0; font-weight: 800; font-size: clamp(24px, 2.4vw, 30px); line-height: 1.08; letter-spacing: -.02em; }
+.walkthrough .prose-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 16px 48px; }
+.walkthrough .prose-row::before { content: ""; grid-column: 1 / -1; border-top: 1px solid var(--rule-strong); }
+.walkthrough .prose-row { padding-block: 0 44px; }
+.walkthrough .prose-row .cited { max-width: 66ch; font-size: 17px; line-height: 1.6; }
+.walkthrough .risks { padding-block: 28px 56px; }
+.walkthrough .band-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 8px 48px; align-items: baseline; margin-bottom: 20px; }
+.walkthrough .risks .cols .cited { font-size: 14px; line-height: 1.52; }
+
+
+/* the one loud thing on the page: the odds of the base case, on the accent */
+.walkthrough .walk-outlook { background: var(--feature); color: var(--feature-ink); padding-block: 36px 44px; }
+.walkthrough .walk-outlook .kicker { color: inherit; margin-bottom: 8px; }
+.walkthrough .outlook-body { display: grid; gap: 24px; }
+.walkthrough .odds { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 22px; }
+.walkthrough .odds-figure { font-size: clamp(84px, 13cqw, 152px); font-weight: 800; line-height: .9; letter-spacing: -.05em; white-space: nowrap; }
+.walkthrough .odds-meter { display: grid; gap: 6px; padding-bottom: 6px; }
+.walkthrough .tiles { display: flex; gap: 4px; }
+.walkthrough .tile { width: 40px; height: 40px; border: 1.5px solid currentColor; }
+.walkthrough .tile.on { background: currentColor; }
+.walkthrough .odds-label { font-size: 14px; font-weight: 600; }
+.walkthrough .outlook-text { max-width: 62ch; font-size: 19px; line-height: 1.45; font-weight: 600; }
+.walkthrough .walk-outlook .cited a { color: inherit; background: color-mix(in srgb, currentColor 18%, transparent); }
+.walkthrough .walk-outlook .cited a:hover { background: var(--feature-ink); color: var(--feature); }
+.walkthrough .base-tests { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); margin-top: 40px; }
+.walkthrough .base-tests > div { padding: 22px 24px 26px; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--rule-strong); }
+.walkthrough .base-tests > div + div { border-left: 1px solid var(--rule-strong); }
+.walkthrough .base-tests .kicker { margin-bottom: 8px; }
+.walkthrough .base-tests .confirms .kicker { color: var(--ink); }
+.walkthrough .base-tests .overturns .kicker { color: var(--bad); }
+.walkthrough .base-tests .cited { font-size: 16px; line-height: 1.55; }
+.walkthrough .calendar { padding-block: 40px 56px; }
+.walkthrough .calendar-head { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 8px 56px; margin-bottom: 18px; align-items: baseline; }
+.walkthrough .calendar-head .kicker { color: var(--accent); }
+.walkthrough .calendar-head .cited { max-width: 60ch; font-size: 16px; line-height: 1.5; }
+.walkthrough .dates.cols { border-bottom: 0; }
+.walkthrough .dates .num { color: var(--muted); font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+.walkthrough .dates h3 { margin-bottom: 6px; font-size: 22px; letter-spacing: -.02em; }
+.walkthrough .dates p { color: var(--ink); }
+
+@container walk (max-width: 1040px) {
+  .walkthrough .cols { grid-template-columns: repeat(min(var(--cols, 3), 2), minmax(0, 1fr)); }
+  .walkthrough .cols > li { border-top: 1px solid var(--rule); padding-left: 22px; }
+  .walkthrough .cols > li:nth-child(-n+2) { border-top: 0; }
+  .walkthrough .cols > li:nth-child(odd) { border-left: 0; padding-left: 0; }
+}
+@container walk (max-width: 860px) {
+  .walkthrough .walk-hero { padding-block: 24px 28px; }
+  .walkthrough .cols { grid-template-columns: minmax(0, 1fr); }
+  .walkthrough .cols > li, .walkthrough .cols > li:nth-child(odd) { border-left: 0; padding-inline: 0; }
+  .walkthrough .cols > li:nth-child(2) { border-top: 1px solid var(--rule); }
+  .walkthrough .prose-row, .walkthrough .band-head, .walkthrough .outlook-body, .walkthrough .base-tests, .walkthrough .calendar-head { grid-template-columns: minmax(0, 1fr); }
+  .walkthrough .base-tests > div, .walkthrough .base-tests > div + div { border-left: 0; padding-inline: 0; }
+  /* no stage: a phone can't hold a card and the whole map, so each card is
+     headed by its own pieces and the cards simply follow one another */
+  .walkthrough .walk-stage { display: none; }
+  .walkthrough .walk-steps { margin-top: 0; padding-bottom: 8px; pointer-events: auto; }
+  .walkthrough .walk-step { min-height: 0; display: block; padding: 0 var(--gutter) 28px; }
+  .walkthrough .step-card { max-width: none; opacity: 1; padding: 0 0 16px; box-shadow: none; background: none; border-bottom: 1px solid var(--rule); }
+  .walkthrough .step-chain { display: flex; align-items: center; gap: 22px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin-bottom: 14px; padding: 12px 2px; border-bottom: 1px solid var(--rule); }
+  .walkthrough .step-chain::-webkit-scrollbar { display: none; }
+  .walkthrough .on-stage { display: none; }
+  .walkthrough .on-cards { display: block; }
+}

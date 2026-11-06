@@ -4,12 +4,32 @@
 
 ### Added
 
+- **A day reads as a page built around its map.** A headline cover with the
+  forces in play; what changed, the risks and the outlook; the day's events
+  as cards scrolling over the map, each bringing its own piece on, with a
+  press on a piece saying what it pushes on and the reports behind it; the
+  analysis; and a footer of what held, the base case's odds with what would
+  confirm or overturn it, and the calendar. Days written before the steps keep
+  their one diagram in their analysis.
+
+### Changed
+
+- **The briefing says each thing once.** The default prompt drops "The
+  trends": what happened is told in the steps and the analysis keeps to why
+  and where it leads. A prompt you've edited is left as it is, and draws the
+  old page until it asks for steps; reset it on the config page to take this.
+
 - **A provider's User-Agent can be set.** `:user-agent` on a provider, or
   the User-Agent field on the config page, is what its calls name
   themselves as, for an endpoint that wants a client of its own named.
 
 ### Fixed
 
+- **A broken plugin says what broke.** The config page and the log gave only
+  the syntax error wrapped around it, naming the file and not the cause.
+- **A page's scripts can't go stale at a plain address.** A file asked for
+  with no version in its address was cached for good too; now only a versioned
+  one is.
 - **Model calls name themselves.** A call sent no `User-Agent`, and some
   providers' CDNs refuse a request that names nothing: Nous Portal answered
   every call with a 403 challenge page. Every call, streamed or not, now

@@ -141,3 +141,7 @@
         "a report running for days shows its coverage")
     (is (not (re-find #"\[3\][^\[]*Coverage" block)) "an analysis is no coverage")
     (is (not (str/includes? (news/source-block [news-src]) "marked analysis")) "no analysis, no note")))
+
+(deftest an-address-with-spaces-still-links
+  (is (= "A claim [[1]](https://e.com/a%20b)."
+         (news/link-citations "A claim [1]." [{:n 1 :url "https://e.com/a b"}]))))
