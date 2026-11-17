@@ -46,8 +46,15 @@
         ;; handling need (jolt-lang/time) and the router (askonomm/ruuter)
         jlt-commons/lev
         {:git/url "https://github.com/jlt-commons/lev"
-         :git/tag "v0.3.4"
-         :git/sha "e68e5caddb4a07ef01d1c53fe33679a6a09ff720"}
+         :git/tag "v0.3.6"
+         :git/sha "436e37864261e6e8a3995ca41b5c6eaf424d01a2"}
+
+;; jolt-lang/db and toda-jolt pin v0.0.11, whose locale-data docstring has
+        ;; unescaped quotes that a current jolt refuses to read
+        io.github.jolt-lang/time
+        {:git/url "https://github.com/jolt-lang/time"
+         :git/tag "v0.0.17"
+         :git/sha "8daa9dd95d87a57393c17d83a8f9a1e37b966bbe"}
 
 ;; schemas: an imported config is checked against them
         metosin/malli
