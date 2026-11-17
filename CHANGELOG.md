@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A style check reads the briefing before it's filed.** It lists the
+  sentences with a tell of machine writing that a pattern finds reliably:
+  dashes and semicolons, not-X-but-Y contrasts, stock words like pivotal,
+  staged openers and -ing tails. They go back to the analyst with the
+  critic's problems in the same revision, and the check still runs when the
+  critic fails. It runs under `:critique-briefing`.
+
+### Changed
+
+- **The briefing and the digest read less like a model wrote them.** The
+  default prompts' style rules now cover the habits that give machine prose
+  away, taken from the humanizer skill: contrast framing, one-line closers,
+  staged openers, inflated significance, the words models overuse, -ing
+  tails, vague links, unnamed experts and stacked hedges. A last read checks
+  for the ones that most often survive a draft. A prompt that was never
+  edited moves to the new default on the next start.
+
+### Fixed
+
+- **The server answers again on a current jolt.** jolt v0.8.27 changed
+  `jolt.ffi/write-array`, so the HTTP server sent nothing back to any request,
+  and jolt-lang/time v0.0.11 no longer loaded at all. lev moves to v0.3.6,
+  which brings a ring-chez-adapter that writes the new way, and jolt-lang/time
+  is pinned to v0.0.17.
+
 ## v0.15.0 — 5 November 2026
 
 ### Added

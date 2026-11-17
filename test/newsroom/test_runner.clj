@@ -32,6 +32,7 @@
             [newsroom.secrets-test]
             [newsroom.sources-test]
             [newsroom.store-test]
+            [newsroom.style-test]
             [newsroom.trends-test]
             [newsroom.tts-test]
             [newsroom.ui-test]
@@ -58,6 +59,7 @@
     newsroom.screen-test
     newsroom.search-test
     newsroom.store-test
+    newsroom.style-test
     newsroom.trends-test
     newsroom.tts-test
     newsroom.pipeline-test

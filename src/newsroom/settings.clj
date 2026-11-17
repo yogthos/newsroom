@@ -149,8 +149,10 @@
               :doc (str "Once the briefing is written, a critic reads it against the sources and the material "
                         "facts, and lists the claims that don't hold up: plans an actor has no means to carry "
                         "out, interested claims taken at face value, facts the sources don't carry and "
-                        "reasoning that doesn't follow. When it finds any, the analyst rewrites the briefing "
-                        "with them fixed. One model call, two when there is something to fix.")}]}
+                        "reasoning that doesn't follow. A style check also lists the sentences that read as "
+                        "machine-written, such as dashes, not-X-but-Y contrasts and stock words like pivotal. "
+                        "When either finds any, the analyst rewrites the briefing with them fixed. One model "
+                        "call, two when there is something to fix.")}]}
    {:title "Digests"
     :fields [{:key :digests :type :keywords :options [:week :month] :default [:week :month]
               :doc (str "The digests written once a week (Monday to Sunday) or a month is over, ranking "
