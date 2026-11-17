@@ -1035,7 +1035,9 @@
   "A run's ctx whose critic answers `critic`, a string or a fn of its
   prompt, and whose analyst answers a revision request with `revision`.
   Every request is kept in `calls`."
-  [calls critic revision]
+  ([calls critic revision]
+   (critiqued calls critic revision "# Today\n\n> A day.\n\n## Overview\n\nKyiv will launch its own Starlink [1]."))
+  ([calls critic revision draft]
   (-> (ctx [{:type ::fixture :name "A" :ns [1 2]}]
            (fn [_ req]
              (swap! calls conj req)
@@ -1044,9 +1046,8 @@
                  (str/includes? p "You are the critic")
                  {:content (if (fn? critic) (critic p) critic) :model "fake"}
                  (= 3 (count (:messages req))) {:content revision :model "fake"}
-                 :else {:content "# Today\n\n> A day.\n\n## Overview\n\nKyiv will launch its own Starlink [1]."
-                        :model "fake"}))))
-      (update :config merge {:critique-briefing true})))
+                 :else {:content draft :model "fake"}))))
+      (update :config merge {:critique-briefing true}))))
 
 (def ^:private starlink-issue
   (str "{\"issues\": [{\"quote\": \"Kyiv will launch its own Starlink\", \"kind\": \"implausible\","
@@ -1081,6 +1082,27 @@
       (is (some #(str/starts-with? % "Critic, implausible: Ukraine has no launch capability") texts))
       (is (some #(= "Revised the briefing" %) texts)))))
 
+(deftest the-style-check-sends-the-tells-back-with-the-critics-problems
+  (let [calls (atom [])
+        draft "# Today\n\n> A day.\n\n## Overview\n\nKyiv will launch its own Starlink — moreover, a pivotal one [1]."
+        revised "# Today\n\n> A day.\n\n## Overview\n\nKyiv says it will build a satellite network [1]."
+        c (critiqued calls "{\"issues\": []}" revised draft)
+        _ (m/? (pipeline/run-task c "2026-09-30"))
+        revision (some #(when (= 3 (count (:messages %))) %) @calls)
+        texts (map :text (:events @pipeline/status))]
+    (is (str/includes? (-> revision :messages last :content) "(style)"))
+    (is (str/includes? (-> revision :messages last :content) "\"pivotal\""))
+    (is (str/includes? (:markdown (store/day (:store c) "2026-09-30")) "build a satellite network"))
+    (is (some #(= "The style check found 1 sentence with tells of machine writing" %) texts))))
+
+(deftest the-style-check-runs-when-the-critic-fails
+  (let [calls (atom [])
+        draft "# Today\n\n> A day.\n\n## Overview\n\nKyiv will launch its own Starlink; it is pivotal [1]."
+        revised "# Today\n\n> A day.\n\n## Overview\n\nKyiv says it will build a satellite network [1]."
+        c (critiqued calls (fn [_] (throw (ex-info "critic down" {}))) revised draft)
+        _ (m/? (pipeline/run-task c "2026-09-30"))]
+    (is (str/includes? (:markdown (store/day (:store c) "2026-09-30")) "build a satellite network"))))
+
 (deftest a-sound-briefing-is-filed-as-written
   (let [calls (atom [])
         c (critiqued calls "{\"issues\": []}" "not asked for")
@@ -1093,7 +1115,7 @@
   (doseq [[why critic revision log] [["the critic fails" (fn [_] (throw (ex-info "critic down" {}))) "unused"
                                       "The critic's check failed: critic down"]
                                      ["the critic answers with no list" "Looks fine." "unused"
-                                      "The critic's answer held no list of problems, so the briefing stands"]
+                                      "The critic's answer held no list of problems"]
                                      ["the revision is only a note" starlink-issue "I fixed the Starlink claim."
                                       "The revision wasn't a whole briefing, so the draft stands"]]]
     (testing why

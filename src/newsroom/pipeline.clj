@@ -73,6 +73,7 @@
             [newsroom.screen :as screen]
             [newsroom.sources :as sources]
             [newsroom.store :as store]
+            [newsroom.style :as style]
             [newsroom.trends :as trends]
             [newsroom.tts :as tts]))
 
@@ -1093,11 +1094,12 @@
   220)
 
 (defn- critique-task
-  "Task: the briefing `draft` once the critic has checked it, {:answer
-  :reply :issues}: the analyst's revision, written in the conversation
-  that wrote the draft from `prompt`, when the critic found problems, else
-  the draft with `reply`. The draft stands when :critique-briefing is off,
-  or when the critic or the revision fails or gives nothing usable; only a
+  "Task: the briefing `draft` once the critic and the style check have read
+  it, {:answer :reply :issues}: the analyst's revision, written in the
+  conversation that wrote the draft from `prompt`, when either found
+  problems, else the draft with `reply`. The draft stands when
+  :critique-briefing is off, or when the revision fails or gives nothing
+  usable; a critic that fails leaves only the style check's problems. Only a
   cancel propagates."
   [{:keys [config run-id] :as ctx} day numbered analysed llm-config prompt {:keys [answer reply]}]
   (m/sp
@@ -1112,29 +1114,37 @@
               found (m/? (softly run-id "The critic's check"
                                  (ask ctx critic (critique/render-prompt (config/critic-template config)
                                                                          (dated day) answer numbered analysed))))
-              issues (some-> found critique/parse-issues)]
-          (cond
-            (nil? found) draft
-            (nil? issues)
-            (do (log! run-id {:text "The critic's answer held no list of problems, so the briefing stands"
-                              :level :error})
-                draft)
-            (empty? issues)
-            (do (log! run-id {:text "The critic found nothing that doesn't hold up" :level :ok})
-                draft)
-            :else
-            (let [_ (log! run-id {:text (str "The critic found " (count issues)
-                                             (if (= 1 (count issues)) " problem" " problems"))})
-                  _ (doseq [{:keys [kind problem]} issues]
-                      (log! run-id {:text (str "Critic, " kind ": " (critique/clip problem issue-chars))}))
-                  _ (update-status! run-id assoc :state :revising
+              parsed (some-> found critique/parse-issues)
+              critics (cond
+                        (nil? found) []
+                        (nil? parsed)
+                        (do (log! run-id {:text "The critic's answer held no list of problems"
+                                          :level :error})
+                            [])
+                        (empty? parsed)
+                        (do (log! run-id {:text "The critic found nothing that doesn't hold up" :level :ok})
+                            [])
+                        :else
+                        (do (log! run-id {:text (str "The critic found " (count parsed)
+                                                     (if (= 1 (count parsed)) " problem" " problems"))})
+                            (doseq [{:keys [kind problem]} parsed]
+                              (log! run-id {:text (str "Critic, " kind ": " (critique/clip problem issue-chars))}))
+                            parsed))
+              styled (style/issues answer)
+              _ (when (seq styled)
+                  (log! run-id {:text (str "The style check found " (counted (count styled) "sentence" "sentences")
+                                           " with tells of machine writing")}))
+              issues (into (vec critics) styled)]
+          (if (empty? issues)
+            draft
+            (let [_ (update-status! run-id assoc :state :revising
                                     :provider (name (:alias llm-config)) :model (:model llm-config))
                   revised (m/? (softly run-id "The revision"
                                        (write-up ctx llm-config
                                                  [{:role "user" :content prompt}
                                                   {:role "assistant" :content answer}
                                                   {:role "user" :content (critique/revision-request issues)}]
-                                                 "the briefing again with the critic's problems fixed")))]
+                                                 "the briefing again with the problems fixed")))]
               (cond
                 (nil? revised) (assoc draft :issues issues)
                 (not (critique/usable-revision? answer (:answer revised)))

@@ -18,7 +18,7 @@
 
 (def kinds
   "What a problem the critic finds can be."
-  ["implausible" "face-value" "unsupported" "reasoning" "overreach" "repeated"])
+  ["implausible" "face-value" "unsupported" "reasoning" "overreach" "repeated" "style"])
 
 (defn render-prompt
   "The critic's prompt: the Selmer `template` with {{date}}, {{briefing}},
@@ -73,8 +73,8 @@
   "What the analyst is told when the critic found `issues` in its draft:
   the problems, and to answer with the whole briefing rewritten."
   [issues]
-  (str "A critic checked your briefing against the sources and against the material facts on the "
-       "ground, and found these problems:\n\n"
+  (str "Your briefing was checked against the sources, the material facts on the ground and the "
+       "style rules, and these problems were found:\n\n"
        (str/join "\n\n" (map-indexed issue-text issues))
        "\n\nRewrite the briefing with each of them fixed. Where a claim can't happen the way it was "
        "reported, don't present it as a prospect. Either leave it out or say what it really is, an "
@@ -85,7 +85,9 @@
        "support, and follow through on what the fix changes elsewhere in the briefing, in how the "
        "forces connect and in the projections. If you're certain the critic is mistaken about a point, "
        "keep your text there and make its grounds clearer. Where a passage repeats what an earlier part "
-       "already told, cut it, or bring it down to a short reference back and keep only what it adds.\n\n"
+       "already told, cut it, or bring it down to a short reference back and keep only what it adds. "
+       "Where a sentence reads as machine-written, rewrite it around its point in plain words, with "
+       "its facts and citations kept.\n\n"
        "Keep everything else as it was: the structure, the headings, the standfirst, the style rules, "
        "the citations to the numbered sources and any graph. Answer with the whole briefing and "
        "nothing else, no note on what you changed."))

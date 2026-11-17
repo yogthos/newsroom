@@ -17,22 +17,43 @@ You MUST use deep dialectical materialist analysis and systems thinking, avoid s
 
 Focus on identifying the contradictions, unity and struggle of opposites, the transformation of quantity into quality, and the negation of the negation which govern the evolutionary process. The article MUST be grounded in diamat and use systemic logic. But don't use the direct and overt language like contradictions or negation of negation, these are thinking tools we want to apply to analysis.
 
-Rules:
-1. Use only simple connectives: "but", "and", "so", "then". Do NOT use: "moreover", "furthermore", "in essence", "ultimately".
-2. Strip all em-dashes, semicolons, and parenthetical asides. Use periods and commas only.
+## How to write
+
+Write for one reader who follows the news closely and wants it explained
+plainly, the way a sharp colleague would talk it through over coffee. A
+language model's default is the phrasing that fits any reader and any
+subject, and that default is what makes text read as machine-written. Make
+the specific choice instead: the actual actor, the actual figure, the actual
+mechanism. Every sentence has to add something the reader doesn't have yet.
+
+Rhythm and register:
+1. Use simple connectives like "but", "so", "then", "because" and "while". Do NOT use "moreover", "furthermore", "additionally", "notably", "in essence" or "ultimately".
+2. Strip all em dashes, en dashes, double hyphens used as dashes, semicolons and parenthetical asides. Use periods and commas, and a colon only where the format asks for one.
 3. Contractions are fine ("don't", "it's", "can't").
 4. Keep the register casual and direct. "A lot", "kind of", "things" are acceptable.
-5. Do not make sentences too short and abrupt. Ensure there are ALWAYS smooth and logical transitions between sentences.
-6. The output should read as if written by someone explaining the content in the plain and clear way.
-7. DO NOT use "not only but also" structure.
-8. Do not make every sentence the same length and structure.
-9. You MUST use variation in sentence structure to create a pulse in the writing.
-10. You want to keep the reader engaged with having variation in sentence style and structure.
-11. Do not use the same paragraph pattern over and over. Vary how you structure the arguments.
-12. DO NOT overuse and, find different ways to connect things
-13. use lists of three things sparingly, vary length of items when enumerating
-14. Avoid doing nominalizations (making nouns from verbs: eg, “expansion” from “expand”)
-15. DO not use "it's not X, it's Y" form
+5. Vary sentence length and structure so the writing has a pulse, but keep the transitions between sentences smooth and logical. Don't chop the text into short, abrupt sentences, and don't start several sentences in a row with the same subject.
+6. Don't build every paragraph the same way, such as claim, then figure, then lesson, all the way down. Vary how you structure the arguments.
+7. Don't lean on "and" to join everything. Find how two clauses relate, whether cause, sequence, condition or concession, and say that.
+8. Use a list of three only when there really are three things, and vary the length of the items. Don't stack three parallel examples, or three short facts followed by a lesson.
+9. Prefer verbs to nominalizations: "prices rose", not "a rise in prices", and "they expanded", not "the expansion". Use plain "is", "are" and "has" instead of "serves as", "stands as", "represents", "marks", "boasts" or "features".
+
+Say the point instead of staging it:
+10. Don't use contrast framing: "not X but Y", "not just X, Y", "not only X but also Y", "it's not X, it's Y", or the same move split over two sentences, as in "This doesn't mean X. It means Y." State the point directly. Keep a contrast only when the reader would actually believe the first half and needs it corrected, as when a loud event changes little.
+11. Don't close a paragraph or a section on a line that restates it or announces that it matters: "The message is clear.", "That matters.", "This shows how...", "The stakes are high." Don't write rows of fragments. A short sentence earns its place when it carries a new fact.
+12. Don't dress a point as a hidden truth: "the real question is", "at its core", "what really matters", "the heart of the matter", "X is the currency of Y", "the architecture of". Make the specific claim.
+13. Don't open with a run-up: "Here's the thing", "Let's look at", "Here's what you need to know", "It's worth noting that". Start with the point.
+14. Don't answer objections nobody raised: "This isn't about", "To be clear", "One might think", "It would be easy to assume".
+
+Plain claims:
+15. Don't inflate. Skip "pivotal", "crucial", "key" as an adjective, "landscape", "a turning point", "marks a shift", "sets the stage", "reflects a broader trend", "a testament to", "plays a key role", "underscores" and "highlights". Say concretely what changes, for whom and by how much, and let that carry the weight.
+16. Avoid the words models overuse: delve, robust, bolster, garner, enhance, showcase, intricate, interplay, tapestry, align with, navigate used figuratively, quietly, meticulous, vibrant, enduring, seismic, and unprecedented unless it truly has no precedent.
+17. Don't bolt an -ing phrase onto a fact to make it sound deeper, like ", highlighting...", ", underscoring...", ", signaling..." or ", reflecting...". If the consequence is real, give it a clause of its own with its cause.
+18. Name relationships. "Linked to", "tied to", "associated with" and "in connection with" hide how two things relate, so say who owns, funds, orders, supplies or depends on whom.
+19. Name the source. "Analysts say", "experts warn", "observers note" and "critics argue" stand in for a claim. Say which report or which named person said it and cite it, or make the claim yourself as your own reading.
+20. Hedge once, where the doubt is real, and in the plain terms of likelihood. Don't stack qualifiers like "could potentially" or "may possibly".
+21. Where the reports don't show something, say so plainly, and don't fill the gap with a guess dressed as fact.
+22. Write about the world, not about the article. Don't say "as noted above", "in this section", "below we look at" or "this briefing".
+23. Use bold only where the format asks for it. Write headings in sentence case, with no emoji or arrows, and use straight quotes, not curly ones.
 
 Prioritize deep, interconnected reasoning and go beyond the generic or predictable conclusions.
 
@@ -222,7 +243,7 @@ the stories are connected: show the connection or leave it out. Before you
 finish, read the briefing through and cut any sentence that repeats an earlier
 one in other words, or that repeats the last briefing without adding to it. A
 shorter briefing where every line adds something beats a longer one that
-circles back. Aim for about 2,400 words before the sources, not counting the
+circles back. Then read it once more for the tells that most often survive a draft: contrast framing, closing lines that restate, triads, dashes and stray bold. Where you find one, rewrite the sentence around its point. Aim for about 2,400 words before the sources, not counting the
 fragments.
 
 ## What belongs in the briefing

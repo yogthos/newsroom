@@ -1,7 +1,8 @@
 ;; The sha-256 of every version of each default prompt that has shipped, by
 ;; setting. A stored prompt that is one of them was never edited, so a start
 ;; brings it up to the current default. Add the new hash when a default changes.
-{:prompt #{"e2ab868517b99a38554f91d33bb5fd2fc4a7ec31a58eafbbb0f3941e4342a501"
+{:prompt #{"ef449df386d488a10dc1e17210e65e42dc4887fa5edc11c1d463764044dc8e8a"
+           "e2ab868517b99a38554f91d33bb5fd2fc4a7ec31a58eafbbb0f3941e4342a501"
             "011f1bf67553cd778dbf759a45094dfd6ab51c261b39c97424e78079f66c94e0"
            "13257dfa30a62d824a5e00271f72d71c9a1b455ea956b67e4351853c88c9115c"
            "362895a4bf5e6b7bc5258b2eaf7575bdc12fa892fedbdd2f2f12532effa91869"
@@ -13,7 +14,8 @@
            "9ef4042f59681a0ffc0cec114447f5e65fea726718ed2777d63ee41c1e9406cc"
            "e6f2d974eca26f2b9d26a0792a81c0495a9d2bd3d8597a624f583a096640d68e"
            "f6d61f66ca742f6155d3b91635d7e95a0a9f254df0c467b04bf9bc65aa25bd83"}
- :digest-prompt #{"1da11734818569307ba25ed669912b61ee5845826058d7f03d7499fa6ad4b910"
+ :digest-prompt #{"3145457aa710ba04acee87af56ca292c2f5b1df6a480af4877eabd1369d1101b"
+                  "1da11734818569307ba25ed669912b61ee5845826058d7f03d7499fa6ad4b910"
                   "4339daf553476be0a04531573e0cd26a5e5f385636fbf9c2cac79e9f457531b5"
                   "4861f3add358eb52fb4599f37ac10e9a67d7e302bc598a0838d5c8c2291a705e"
                   "cca401224234289083084e6011d49e30eb3c403242b0ee3f54d73d35887f721f"}
